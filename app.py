@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, date
 from io import BytesIO
 from supabase import create_client, Client
+from streamlit_geolocation import streamlit_geolocation
 
 st.set_page_config(page_title="RBM Office SaaS", page_icon="🏢", layout="wide")
 
@@ -15,6 +16,7 @@ TABLES = {
     "users": "users",
     "employees": "employees",
     "attendance": "attendance",
+    "attendance_visits": "attendance_visits",
     "inout": "inout_register",
     "visitors": "visitors",
     "tasks": "tasks",
@@ -24,7 +26,8 @@ DISPLAY_COLUMNS = {
     "clients": ["id", "client_code", "client_name", "status", "created_at"],
     "users": ["id", "client_code", "username", "password", "role", "full_name", "status"],
     "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "status"],
-    "attendance": ["id", "client_code", "attendance_date", "employee_name", "status", "in_time", "out_time", "working_hours", "remarks", "created_by"],
+    "attendance": ["id", "client_code", "attendance_date", "employee_name", "attendance_type", "office_location", "status", "in_time", "out_time", "working_hours", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
+    "attendance_visits": ["id", "client_code", "visit_date", "employee_name", "visit_place", "in_time", "out_time", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
     "inout": ["id", "client_code", "entry_date", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "visitors": ["id", "client_code", "visit_date", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "tasks": ["id", "client_code", "task_date", "task", "assigned_to", "priority", "due_date", "status", "remarks", "created_by"],
@@ -66,6 +69,22 @@ def is_super_admin():
     return st.session_state.get("role") == "Super Admin"
 
 
+def get_gps():
+    loc = streamlit_geolocation()
+    lat = ""
+    lon = ""
+    if loc:
+        lat = str(loc.get("latitude", "") or "")
+        lon = str(loc.get("longitude", "") or "")
+    return lat, lon
+
+
+def map_link(lat, lon):
+    if str(lat).strip() == "" or str(lon).strip() == "":
+        return ""
+    return f"https://www.google.com/maps?q={lat},{lon}"
+
+
 def rbm_header():
     client_name = st.session_state.get("client_name", get_client_code())
     st.markdown(f"""
@@ -80,7 +99,6 @@ def rbm_header():
 
 def load_table(key, limit_rows=500):
     query = supabase.table(TABLES[key]).select("*")
-
     if key != "clients" and not is_super_admin():
         query = query.eq("client_code", get_client_code())
 
@@ -272,20 +290,22 @@ def login_page():
 def dashboard():
     st.header("Dashboard")
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1:
         show_metric_card("Employees", get_count("employees"))
     with c2:
-        show_metric_card("Attendance", get_count("attendance"))
+        show_metric_card("Office Attendance", get_count("attendance"))
     with c3:
-        show_metric_card("Visitors", get_count("visitors"))
+        show_metric_card("Visit Entries", get_count("attendance_visits"))
     with c4:
+        show_metric_card("Visitors", get_count("visitors"))
+    with c5:
         show_metric_card("Tasks", get_count("tasks"))
 
     st.divider()
-    st.subheader("Latest Tasks")
-    st.dataframe(load_table("tasks", 100), use_container_width=True)
+    st.subheader("Latest Visit Entries")
+    st.dataframe(load_table("attendance_visits", 100), use_container_width=True)
 
 
 def client_master():
@@ -399,43 +419,133 @@ def employee_master():
 
 
 def attendance():
-    st.header("Attendance Management")
+    st.header("Attendance Management with GPS")
 
-    df = load_table("attendance", 500)
     emp = load_table("employees", 1000)
-
     emp_list = emp["employee_name"].dropna().astype(str).tolist() if not emp.empty else []
     if not emp_list:
         emp_list = ["No Employee Found"]
 
-    with st.form("attendance_form"):
+    st.info("Mobile/browser location permission Allow karna hoga. GPS tabhi capture hoga.")
+
+    lat, lon = get_gps()
+
+    if lat and lon:
+        st.success(f"GPS Captured: {lat}, {lon}")
+        st.markdown(f"[Open Current Location in Google Maps]({map_link(lat, lon)})")
+    else:
+        st.warning("GPS location not captured yet. Browser permission Allow karein.")
+
+    attendance_type = st.radio(
+        "Attendance Type",
+        ["Office", "Visit"],
+        horizontal=True,
+        key="attendance_type_radio"
+    )
+
+    if attendance_type == "Office":
+        office_attendance_form(emp_list, lat, lon)
+    else:
+        visit_attendance_form(emp_list, lat, lon)
+
+    st.divider()
+    st.subheader("Office Attendance Records")
+    show_table_with_edit_delete("attendance", load_table("attendance", 500), "Office Attendance")
+
+    st.divider()
+    st.subheader("Visit / Field Work Records")
+    show_table_with_edit_delete("attendance_visits", load_table("attendance_visits", 500), "Visit Attendance")
+
+
+def office_attendance_form(emp_list, lat, lon):
+    st.subheader("Office Attendance")
+
+    with st.form("office_attendance_form"):
         c1, c2 = st.columns(2)
 
         attendance_date = c1.date_input("Date", value=date.today())
         employee_name = c2.selectbox("Employee Name", emp_list)
-        status = c1.selectbox("Status", ["Present", "Absent", "Half Day", "Leave"])
-        in_time = c2.time_input("In Time")
-        out_time = c1.time_input("Out Time")
+        office_location = c1.text_input("Office Location", value="Office")
+        status = c2.selectbox("Status", ["Present", "Absent", "Half Day", "Leave"])
+
+        in_time = c1.time_input("In Time")
+        out_time = c2.time_input("Out Time")
+
+        gps_for = c1.selectbox("GPS Save For", ["In Location", "Out Location", "Both"])
         remarks = c2.text_input("Remarks")
 
-        if st.form_submit_button("Save Attendance", use_container_width=True):
+        if st.form_submit_button("Save Office Attendance", use_container_width=True):
             if employee_name == "No Employee Found":
                 st.error("Please create employee first.")
-            else:
-                insert_row("attendance", {
-                    "attendance_date": str(attendance_date),
-                    "employee_name": employee_name,
-                    "status": status,
-                    "in_time": str(in_time),
-                    "out_time": str(out_time),
-                    "working_hours": calculate_hours(in_time, out_time),
-                    "remarks": remarks,
-                    "created_by": st.session_state["username"]
-                })
-                st.success("Attendance saved successfully.")
-                st.rerun()
+                return
 
-    show_table_with_edit_delete("attendance", df, "Attendance Records")
+            in_lat = lat if gps_for in ["In Location", "Both"] else ""
+            in_lon = lon if gps_for in ["In Location", "Both"] else ""
+            out_lat = lat if gps_for in ["Out Location", "Both"] else ""
+            out_lon = lon if gps_for in ["Out Location", "Both"] else ""
+
+            insert_row("attendance", {
+                "attendance_date": str(attendance_date),
+                "employee_name": employee_name,
+                "attendance_type": "Office",
+                "office_location": office_location,
+                "status": status,
+                "in_time": str(in_time),
+                "out_time": str(out_time),
+                "working_hours": calculate_hours(in_time, out_time),
+                "in_latitude": in_lat,
+                "in_longitude": in_lon,
+                "out_latitude": out_lat,
+                "out_longitude": out_lon,
+                "remarks": remarks,
+                "created_by": st.session_state["username"]
+            })
+            st.success("Office attendance saved successfully.")
+            st.rerun()
+
+
+def visit_attendance_form(emp_list, lat, lon):
+    st.subheader("Visit / Field Work Attendance")
+
+    with st.form("visit_attendance_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+
+        visit_date = c1.date_input("Visit Date", value=date.today())
+        employee_name = c2.selectbox("Employee Name", emp_list)
+        visit_place = c1.text_input("Visit Place / Client / Vendor / Site")
+        in_time = c2.time_input("Visit In Time")
+        out_time = c1.time_input("Visit Out Time")
+        gps_for = c2.selectbox("GPS Save For", ["In Location", "Out Location", "Both"])
+        remarks = c1.text_input("Remarks")
+
+        if st.form_submit_button("Save Visit Entry", use_container_width=True):
+            if employee_name == "No Employee Found":
+                st.error("Please create employee first.")
+                return
+            if visit_place.strip() == "":
+                st.error("Visit place is required.")
+                return
+
+            in_lat = lat if gps_for in ["In Location", "Both"] else ""
+            in_lon = lon if gps_for in ["In Location", "Both"] else ""
+            out_lat = lat if gps_for in ["Out Location", "Both"] else ""
+            out_lon = lon if gps_for in ["Out Location", "Both"] else ""
+
+            insert_row("attendance_visits", {
+                "visit_date": str(visit_date),
+                "employee_name": employee_name,
+                "visit_place": visit_place,
+                "in_time": str(in_time),
+                "out_time": str(out_time),
+                "in_latitude": in_lat,
+                "in_longitude": in_lon,
+                "out_latitude": out_lat,
+                "out_longitude": out_lon,
+                "remarks": remarks,
+                "created_by": st.session_state["username"]
+            })
+            st.success("Visit entry saved successfully.")
+            st.rerun()
 
 
 def inout_register():
@@ -573,7 +683,7 @@ def task_delegation():
 def export_reports():
     st.header("Excel / CSV Export Reports")
 
-    report_options = ["employees", "attendance", "inout", "visitors", "tasks"]
+    report_options = ["employees", "attendance", "attendance_visits", "inout", "visitors", "tasks"]
 
     if is_super_admin():
         report_options = ["clients", "users"] + report_options
