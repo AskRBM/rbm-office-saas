@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import base64
 from datetime import datetime, date
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -33,8 +34,7 @@ DISPLAY_COLUMNS = {
     "attendance_visits": ["id", "client_code", "visit_date", "financial_year", "employee_name", "visit_place", "in_time", "out_time", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
     "inout": ["id", "client_code", "entry_date", "financial_year", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "visitors": ["id", "client_code", "visit_date", "financial_year", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
-    "tasks": ["id", "client_code", "task_date", "financial_year", "task", "assigned_to", "priority", "due_date", "status", "remarks", "created_by"],
-}
+    "tasks": ["id", "client_code", "task_date", "financial_year", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],}
 
 st.markdown("""
 <style>
@@ -725,6 +725,20 @@ def task_delegation():
         due_date = c2.date_input("Due Date", value=india_now().date(), format="DD-MM-YYYY")
         remarks = c2.text_input("Remarks")
 
+        task_photo = st.file_uploader(
+            "Upload Task Photo / Screenshot",
+            type=["png", "jpg", "jpeg"],
+            key="task_photo_upload"
+        )
+
+        task_photo_name = ""
+        task_photo_data = ""
+
+        if task_photo is not None:
+            task_photo_name = task_photo.name
+            task_photo_bytes = task_photo.read()
+            task_photo_data = base64.b64encode(task_photo_bytes).decode("utf-8")
+
         if st.form_submit_button("Save Task", use_container_width=True):
             if task.strip() == "":
                 st.error("Task is required.")
@@ -739,6 +753,8 @@ def task_delegation():
                     "due_date": str(due_date),
                     "status": status,
                     "remarks": remarks,
+                    "task_photo_name": task_photo_name,
+                    "task_photo_data": task_photo_data,
                     "created_by": st.session_state["username"]
                 })
                 st.success("Task saved successfully.")
@@ -746,6 +762,42 @@ def task_delegation():
 
     show_table_with_edit_delete("tasks", df, "Task Records")
 
+    st.divider()
+    st.subheader("View Task Photo")
+
+    raw_df = safe_df(
+        supabase.table("tasks")
+        .select("*")
+        .eq("client_code", get_client_code())
+        .order("id", desc=True)
+        .limit(500)
+        .execute()
+        .data
+    )
+
+    if raw_df.empty or "task_photo_data" not in raw_df.columns:
+        st.info("No task photo found.")
+    else:
+        photo_df = raw_df[raw_df["task_photo_name"].astype(str).str.strip() != ""]
+
+        if photo_df.empty:
+            st.info("No task photo found.")
+        else:
+            selected_photo_id = st.selectbox(
+                "Select Task ID to View Photo",
+                photo_df["id"].tolist(),
+                key="view_task_photo_id"
+            )
+
+            row = photo_df[photo_df["id"] == selected_photo_id].iloc[0]
+            photo_data = row.get("task_photo_data", "")
+
+            if str(photo_data).strip() != "":
+                st.image(
+                    base64.b64decode(photo_data),
+                    caption=f"Task ID: {selected_photo_id} | {row.get('task_photo_name', '')}",
+                    use_container_width=True
+                )
 
 def export_reports():
     st.header("Excel / CSV Export Reports")
