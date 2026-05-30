@@ -2,10 +2,13 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date
 from io import BytesIO
+from zoneinfo import ZoneInfo
 from supabase import create_client, Client
 from streamlit_geolocation import streamlit_geolocation
 
 st.set_page_config(page_title="RBM Office SaaS", page_icon="🏢", layout="wide")
+
+INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -26,11 +29,11 @@ DISPLAY_COLUMNS = {
     "clients": ["id", "client_code", "client_name", "status", "created_at"],
     "users": ["id", "client_code", "username", "password", "role", "full_name", "status"],
     "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "status"],
-    "attendance": ["id", "client_code", "attendance_date", "employee_name", "attendance_type", "office_location", "status", "in_time", "out_time", "working_hours", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
-    "attendance_visits": ["id", "client_code", "visit_date", "employee_name", "visit_place", "in_time", "out_time", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
-    "inout": ["id", "client_code", "entry_date", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
-    "visitors": ["id", "client_code", "visit_date", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
-    "tasks": ["id", "client_code", "task_date", "task", "assigned_to", "priority", "due_date", "status", "remarks", "created_by"],
+    "attendance": ["id", "client_code", "attendance_date", "financial_year", "employee_name", "attendance_type", "office_location", "status", "in_time", "out_time", "working_hours", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
+    "attendance_visits": ["id", "client_code", "visit_date", "financial_year", "employee_name", "visit_place", "in_time", "out_time", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
+    "inout": ["id", "client_code", "entry_date", "financial_year", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
+    "visitors": ["id", "client_code", "visit_date", "financial_year", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
+    "tasks": ["id", "client_code", "task_date", "financial_year", "task", "assigned_to", "priority", "due_date", "status", "remarks", "created_by"],
 }
 
 st.markdown("""
@@ -57,8 +60,65 @@ header {visibility:hidden;}
 """, unsafe_allow_html=True)
 
 
+def india_now():
+    return datetime.now(INDIA_TZ)
+
+
 def safe_df(data):
     return pd.DataFrame(data or [])
+
+
+def indian_date(value):
+    try:
+        if value in ["", None]:
+            return ""
+        return pd.to_datetime(value).strftime("%d-%m-%Y")
+    except Exception:
+        return value
+
+
+def indian_time(value):
+    try:
+        if value in ["", None]:
+            return ""
+        return str(value)[:5]
+    except Exception:
+        return value
+
+
+def financial_year(value):
+    try:
+        d = pd.to_datetime(value)
+        if d.month >= 4:
+            return f"{d.year}-{str(d.year + 1)[-2:]}"
+        return f"{d.year - 1}-{str(d.year)[-2:]}"
+    except Exception:
+        return ""
+
+
+def format_df_for_display(df):
+    if df.empty:
+        return df
+
+    df = df.copy()
+
+    fy_source_cols = ["attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at"]
+    for col in fy_source_cols:
+        if col in df.columns and "financial_year" not in df.columns:
+            df["financial_year"] = df[col].apply(financial_year)
+            break
+
+    date_cols = ["attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(indian_date)
+
+    time_cols = ["in_time", "out_time"]
+    for col in time_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(indian_time)
+
+    return df
 
 
 def get_client_code():
@@ -104,6 +164,7 @@ def load_table(key, limit_rows=500):
 
     response = query.order("id", desc=True).limit(limit_rows).execute()
     df = safe_df(response.data)
+    df = format_df_for_display(df)
 
     if key in DISPLAY_COLUMNS:
         for col in DISPLAY_COLUMNS[key]:
@@ -121,6 +182,8 @@ def insert_row(key, row):
 
 
 def update_row(key, row_id, row):
+    if "financial_year" in row:
+        row.pop("financial_year")
     supabase.table(TABLES[key]).update(row).eq("id", row_id).execute()
 
 
@@ -183,7 +246,7 @@ def show_metric_card(label, value):
 
 def show_table_with_edit_delete(key, df, title):
     st.subheader(title)
-    st.caption("Latest 500 records shown for speed.")
+    st.caption("Latest 500 records shown for speed. Date format: DD-MM-YYYY. Time format: 24-hour.")
 
     search = st.text_input(f"Search {title}", key=f"search_{key}")
     filtered = filter_dataframe(df, search)
@@ -224,6 +287,8 @@ def show_table_with_edit_delete(key, df, title):
 
             for col in df.columns:
                 if col == "id":
+                    st.text_input(col, value=str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
+                elif col == "financial_year":
                     st.text_input(col, value=str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
                 else:
                     edited_values[col] = st.text_input(col, value=str(selected_row[col]), key=f"edit_{key}_{col}")
@@ -289,6 +354,10 @@ def login_page():
 
 def dashboard():
     st.header("Dashboard")
+
+    today_india = india_now().strftime("%d-%m-%Y")
+    current_fy = financial_year(india_now().date())
+    st.info(f"Today: {today_india} | India Time Zone: Asia/Kolkata | Financial Year: {current_fy}")
 
     c1, c2, c3, c4, c5 = st.columns(5)
 
@@ -449,12 +518,10 @@ def attendance():
         visit_attendance_form(emp_list, lat, lon)
 
     st.divider()
-    st.subheader("Office Attendance Records")
     show_table_with_edit_delete("attendance", load_table("attendance", 500), "Office Attendance")
 
     st.divider()
-    st.subheader("Visit / Field Work Records")
-    show_table_with_edit_delete("attendance_visits", load_table("attendance_visits", 500), "Visit Attendance")
+    show_table_with_edit_delete("attendance_visits", load_table("attendance_visits", 500), "Visit / Field Work Attendance")
 
 
 def office_attendance_form(emp_list, lat, lon):
@@ -463,13 +530,13 @@ def office_attendance_form(emp_list, lat, lon):
     with st.form("office_attendance_form"):
         c1, c2 = st.columns(2)
 
-        attendance_date = c1.date_input("Date", value=date.today())
+        attendance_date = c1.date_input("Date", value=india_now().date(), format="DD-MM-YYYY")
         employee_name = c2.selectbox("Employee Name", emp_list)
         office_location = c1.text_input("Office Location", value="Office")
         status = c2.selectbox("Status", ["Present", "Absent", "Half Day", "Leave"])
 
-        in_time = c1.time_input("In Time")
-        out_time = c2.time_input("Out Time")
+        in_time = c1.time_input("In Time", value=india_now().time())
+        out_time = c2.time_input("Out Time", value=india_now().time())
 
         gps_for = c1.selectbox("GPS Save For", ["In Location", "Out Location", "Both"])
         remarks = c2.text_input("Remarks")
@@ -510,11 +577,11 @@ def visit_attendance_form(emp_list, lat, lon):
     with st.form("visit_attendance_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
 
-        visit_date = c1.date_input("Visit Date", value=date.today())
+        visit_date = c1.date_input("Visit Date", value=india_now().date(), format="DD-MM-YYYY")
         employee_name = c2.selectbox("Employee Name", emp_list)
         visit_place = c1.text_input("Visit Place / Client / Vendor / Site")
-        in_time = c2.time_input("Visit In Time")
-        out_time = c1.time_input("Visit Out Time")
+        in_time = c2.time_input("Visit In Time", value=india_now().time())
+        out_time = c1.time_input("Visit Out Time", value=india_now().time())
         gps_for = c2.selectbox("GPS Save For", ["In Location", "Out Location", "Both"])
         remarks = c1.text_input("Remarks")
 
@@ -556,11 +623,11 @@ def inout_register():
     with st.form("inout_form"):
         c1, c2 = st.columns(2)
 
-        entry_date = c1.date_input("Date", value=date.today())
+        entry_date = c1.date_input("Date", value=india_now().date(), format="DD-MM-YYYY")
         person_name = c2.text_input("Person Name")
         purpose = c1.text_input("Purpose")
-        in_time = c2.time_input("In Time")
-        out_time = c1.time_input("Out Time")
+        in_time = c2.time_input("In Time", value=india_now().time())
+        out_time = c1.time_input("Out Time", value=india_now().time())
         remarks = c2.text_input("Remarks")
 
         if st.form_submit_button("Save IN / OUT Entry", use_container_width=True):
@@ -590,14 +657,14 @@ def visitor_register():
     with st.form("visitor_form"):
         c1, c2 = st.columns(2)
 
-        visit_date = c1.date_input("Date", value=date.today())
+        visit_date = c1.date_input("Date", value=india_now().date(), format="DD-MM-YYYY")
         visitor_name = c2.text_input("Visitor Name")
         mobile = c1.text_input("Mobile")
         company = c2.text_input("Company")
         meeting_with = c1.text_input("Meeting With")
         purpose = c2.text_input("Purpose")
-        in_time = c1.time_input("In Time")
-        out_time = c2.time_input("Out Time")
+        in_time = c1.time_input("In Time", value=india_now().time())
+        out_time = c2.time_input("Out Time", value=india_now().time())
         remarks = c1.text_input("Remarks")
 
         if st.form_submit_button("Save Visitor", use_container_width=True):
@@ -641,7 +708,7 @@ def task_delegation():
     with st.form("task_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
 
-        task_date = c1.date_input("Task Date", value=date.today())
+        task_date = c1.date_input("Task Date", value=india_now().date(), format="DD-MM-YYYY")
         task = c2.text_area("Task")
 
         priority = c1.selectbox("Priority", ["Low", "Medium", "High", "Urgent"])
@@ -655,7 +722,7 @@ def task_delegation():
             else:
                 assigned_to = c2.text_input("Assigned To", placeholder="No employee found, type name here")
 
-        due_date = c2.date_input("Due Date", value=date.today())
+        due_date = c2.date_input("Due Date", value=india_now().date(), format="DD-MM-YYYY")
         remarks = c2.text_input("Remarks")
 
         if st.form_submit_button("Save Task", use_container_width=True):
@@ -726,6 +793,8 @@ def main_app():
     st.sidebar.write(f"Client Code: {get_client_code()}")
     st.sidebar.write(f"User: {st.session_state.get('full_name')}")
     st.sidebar.write(f"Role: {st.session_state.get('role')}")
+    st.sidebar.write(f"Date: {india_now().strftime('%d-%m-%Y')}")
+    st.sidebar.write("Time Zone: Asia/Kolkata")
 
     if st.sidebar.button("Logout", use_container_width=True):
         st.session_state.clear()
