@@ -731,14 +731,20 @@ def task_delegation():
             key="task_photo_upload"
         )
 
+        MAX_FILE_SIZE_MB = 2
+
+task_photo_name = ""
+task_photo_data = ""
+
+if task_photo is not None:
+    if task_photo.size > MAX_FILE_SIZE_MB * 1024 * 1024:
+        st.error("Photo size 2 MB se zyada nahi honi chahiye.")
         task_photo_name = ""
         task_photo_data = ""
-
-        if task_photo is not None:
-            task_photo_name = task_photo.name
-            task_photo_bytes = task_photo.read()
-            task_photo_data = base64.b64encode(task_photo_bytes).decode("utf-8")
-
+    else:
+        task_photo_name = task_photo.name
+        task_photo_bytes = task_photo.read()
+        task_photo_data = base64.b64encode(task_photo_bytes).decode("utf-8")
         if st.form_submit_button("Save Task", use_container_width=True):
             if task.strip() == "":
                 st.error("Task is required.")
