@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import base64
-from datetime import datetime, date
+from datetime import datetime
 from io import BytesIO
 from zoneinfo import ZoneInfo
 from supabase import create_client, Client
@@ -10,6 +10,7 @@ from streamlit_geolocation import streamlit_geolocation
 st.set_page_config(page_title="RBM Office SaaS", page_icon="🏢", layout="wide")
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
+MAX_FILE_SIZE_MB = 2
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
@@ -34,7 +35,8 @@ DISPLAY_COLUMNS = {
     "attendance_visits": ["id", "client_code", "visit_date", "financial_year", "employee_name", "visit_place", "in_time", "out_time", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
     "inout": ["id", "client_code", "entry_date", "financial_year", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "visitors": ["id", "client_code", "visit_date", "financial_year", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
-    "tasks": ["id", "client_code", "task_date", "financial_year", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],}
+    "tasks": ["id", "client_code", "task_date", "financial_year", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],
+}
 
 st.markdown("""
 <style>
@@ -159,6 +161,7 @@ def rbm_header():
 
 def load_table(key, limit_rows=500):
     query = supabase.table(TABLES[key]).select("*")
+
     if key != "clients" and not is_super_admin():
         query = query.eq("client_code", get_client_code())
 
@@ -193,8 +196,10 @@ def delete_row(key, row_id):
 
 def get_count(key):
     query = supabase.table(TABLES[key]).select("id", count="exact")
+
     if key != "clients" and not is_super_admin():
         query = query.eq("client_code", get_client_code())
+
     response = query.execute()
     return response.count or 0
 
@@ -202,8 +207,12 @@ def get_count(key):
 def filter_dataframe(df, keyword):
     if keyword.strip() == "":
         return df
+
     keyword = keyword.lower()
-    mask = df.astype(str).apply(lambda row: row.str.lower().str.contains(keyword, na=False).any(), axis=1)
+    mask = df.astype(str).apply(
+        lambda row: row.str.lower().str.contains(keyword, na=False).any(),
+        axis=1
+    )
     return df[mask]
 
 
@@ -226,12 +235,14 @@ def calculate_hours(in_time, out_time):
 def next_employee_id(df):
     if df.empty:
         return "EMP001"
+
     nums = []
     for x in df["employee_id"].dropna().astype(str):
         if x.upper().startswith("EMP"):
             n = x.upper().replace("EMP", "")
             if n.isdigit():
                 nums.append(int(n))
+
     return f"EMP{max(nums) + 1:03d}" if nums else "EMP001"
 
 
@@ -336,8 +347,14 @@ def login_page():
 
                 client_name = client_code
                 client_data = safe_df(
-                    supabase.table("clients").select("*").eq("client_code", client_code).limit(1).execute().data
+                    supabase.table("clients")
+                    .select("*")
+                    .eq("client_code", client_code)
+                    .limit(1)
+                    .execute()
+                    .data
                 )
+
                 if not client_data.empty:
                     client_name = str(client_data.iloc[0].get("client_name", client_code))
 
@@ -492,6 +509,7 @@ def attendance():
 
     emp = load_table("employees", 1000)
     emp_list = emp["employee_name"].dropna().astype(str).tolist() if not emp.empty else []
+
     if not emp_list:
         emp_list = ["No Employee Found"]
 
@@ -589,6 +607,7 @@ def visit_attendance_form(emp_list, lat, lon):
             if employee_name == "No Employee Found":
                 st.error("Please create employee first.")
                 return
+
             if visit_place.strip() == "":
                 st.error("Visit place is required.")
                 return
@@ -726,30 +745,32 @@ def task_delegation():
         remarks = c2.text_input("Remarks")
 
         task_photo = st.file_uploader(
-            "Upload Task Photo / Screenshot",
+            "Upload Task Photo / Screenshot - Max 2 MB",
             type=["png", "jpg", "jpeg"],
             key="task_photo_upload"
         )
 
-        MAX_FILE_SIZE_MB = 2
-
-task_photo_name = ""
-task_photo_data = ""
-
-if task_photo is not None:
-    if task_photo.size > MAX_FILE_SIZE_MB * 1024 * 1024:
-        st.error("Photo size 2 MB se zyada nahi honi chahiye.")
         task_photo_name = ""
         task_photo_data = ""
-    else:
-        task_photo_name = task_photo.name
-        task_photo_bytes = task_photo.read()
-        task_photo_data = base64.b64encode(task_photo_bytes).decode("utf-8")
+        file_size_ok = True
+
+        if task_photo is not None:
+            if task_photo.size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                st.error("Photo size 2 MB se zyada nahi honi chahiye.")
+                file_size_ok = False
+            else:
+                task_photo_name = task_photo.name
+                task_photo_bytes = task_photo.read()
+                task_photo_data = base64.b64encode(task_photo_bytes).decode("utf-8")
+                st.success(f"Photo ready: {task_photo_name}")
+
         if st.form_submit_button("Save Task", use_container_width=True):
             if task.strip() == "":
                 st.error("Task is required.")
             elif str(assigned_to).strip() == "":
                 st.error("Assigned To is required.")
+            elif not file_size_ok:
+                st.error("Task save nahi hoga. Photo size 2 MB se kam rakho.")
             else:
                 insert_row("tasks", {
                     "task_date": str(task_date),
@@ -771,10 +792,13 @@ if task_photo is not None:
     st.divider()
     st.subheader("View Task Photo")
 
+    photo_query = supabase.table("tasks").select("*")
+
+    if not is_super_admin():
+        photo_query = photo_query.eq("client_code", get_client_code())
+
     raw_df = safe_df(
-        supabase.table("tasks")
-        .select("*")
-        .eq("client_code", get_client_code())
+        photo_query
         .order("id", desc=True)
         .limit(500)
         .execute()
@@ -804,6 +828,7 @@ if task_photo is not None:
                     caption=f"Task ID: {selected_photo_id} | {row.get('task_photo_name', '')}",
                     use_container_width=True
                 )
+
 
 def export_reports():
     st.header("Excel / CSV Export Reports")
