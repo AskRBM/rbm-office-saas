@@ -7,7 +7,12 @@ from zoneinfo import ZoneInfo
 from supabase import create_client, Client
 from streamlit_geolocation import streamlit_geolocation
 
-st.set_page_config(page_title="RBM Office SaaS", page_icon="🏢", layout="wide")
+st.set_page_config(
+    page_title="RBM Office SaaS",
+    page_icon="🏢",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 MAX_FILE_SIZE_MB = 2
@@ -42,7 +47,6 @@ st.markdown("""
 <style>
 #MainMenu {visibility:hidden;}
 footer {visibility:hidden;}
-header {visibility:hidden;}
 .block-container {padding-top:1.5rem;padding-bottom:2rem;}
 .rbm-header {
     background:linear-gradient(135deg,#001f54,#003566);
