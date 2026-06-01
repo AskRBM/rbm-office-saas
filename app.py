@@ -35,12 +35,12 @@ TABLES = {
 DISPLAY_COLUMNS = {
     "clients": ["id", "client_code", "client_name", "status", "created_at"],
     "users": ["id", "client_code", "username", "password", "role", "full_name", "status"],
-    "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "status"],
+    "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "branch_division", "status"],
     "attendance": ["id", "client_code", "attendance_date", "financial_year", "employee_name", "attendance_type", "office_location", "status", "in_time", "out_time", "working_hours", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
     "attendance_visits": ["id", "client_code", "visit_date", "financial_year", "employee_name", "visit_place", "in_time", "out_time", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
     "inout": ["id", "client_code", "entry_date", "financial_year", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "visitors": ["id", "client_code", "visit_date", "financial_year", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
-    "tasks": ["id", "client_code", "task_date", "financial_year", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],
+    "tasks": ["id", "client_code", "task_date", "financial_year", "branch_division", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],
 }
 
 st.markdown("""
@@ -487,7 +487,8 @@ def employee_master():
         email = c2.text_input("Email")
         department = c1.text_input("Department")
         designation = c2.text_input("Designation")
-        status = c1.selectbox("Status", ["Active", "Inactive"])
+        branch_division = c1.text_input("Branch / Division")
+        status = c2.selectbox("Status", ["Active", "Inactive"])
 
         if st.form_submit_button("Save Employee", use_container_width=True):
             if employee_name.strip() == "":
@@ -500,13 +501,13 @@ def employee_master():
                     "email": email,
                     "department": department,
                     "designation": designation,
+                    "branch_division": branch_division,
                     "status": status
                 })
                 st.success("Employee saved successfully.")
                 st.rerun()
 
     show_table_with_edit_delete("employees", df, "Employee List")
-
 
 def attendance():
     st.header("Attendance Management with GPS")
@@ -719,6 +720,13 @@ def task_delegation():
     emp = load_table("employees", 1000)
 
     emp_list = emp["employee_name"].dropna().astype(str).tolist() if not emp.empty else []
+    emp_list = ["All"] + emp_list
+
+    if not emp.empty and "branch_division" in emp.columns:
+        branch_list = emp["branch_division"].dropna().astype(str).unique().tolist()
+        branch_list = ["All"] + sorted([x for x in branch_list if x.strip() != ""])
+    else:
+        branch_list = ["All"]
 
     st.subheader("Assign Type")
     assign_mode = st.radio(
@@ -732,6 +740,7 @@ def task_delegation():
         c1, c2 = st.columns(2)
 
         task_date = c1.date_input("Task Date", value=india_now().date(), format="DD-MM-YYYY")
+        branch_division = c1.selectbox("Branch / Division", branch_list)
         task = c2.text_area("Task")
 
         priority = c1.selectbox("Priority", ["Low", "Medium", "High", "Urgent"])
@@ -740,10 +749,7 @@ def task_delegation():
         if assign_mode == "Manual Entry":
             assigned_to = c2.text_input("Assigned To", placeholder="Type manual name here")
         else:
-            if emp_list:
-                assigned_to = c2.selectbox("Assigned To", emp_list)
-            else:
-                assigned_to = c2.text_input("Assigned To", placeholder="No employee found, type name here")
+            assigned_to = c2.selectbox("Assigned To", emp_list)
 
         due_date = c2.date_input("Due Date", value=india_now().date(), format="DD-MM-YYYY")
         remarks = c2.text_input("Remarks")
@@ -778,6 +784,7 @@ def task_delegation():
             else:
                 insert_row("tasks", {
                     "task_date": str(task_date),
+                    "branch_division": branch_division,
                     "task": task,
                     "assigned_to": str(assigned_to),
                     "priority": priority,
@@ -832,7 +839,6 @@ def task_delegation():
                     caption=f"Task ID: {selected_photo_id} | {row.get('task_photo_name', '')}",
                     use_container_width=True
                 )
-
 
 def export_reports():
     st.header("Excel / CSV Export Reports")
