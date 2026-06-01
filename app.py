@@ -370,7 +370,7 @@ def login_page():
                 st.session_state["client_name"] = client_name
                 st.rerun()
 
-        st.info("Super Admin Login: admin / rbm123")
+        st.info("Super Admin Login: RBM / ******")
 
 
 def dashboard():
