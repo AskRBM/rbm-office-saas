@@ -228,9 +228,74 @@ def insert_row(key, row):
         row["client_code"] = get_client_code()
     supabase.table(TABLES[key]).insert(row).execute()
 
+# ---------- SAFE UPDATE HELPERS ----------
+READ_ONLY_UPDATE_COLUMNS = {
+    "id", "financial_year", "created_at"
+}
+
+DATE_COLUMNS = {
+    "attendance_date", "visit_date", "entry_date", "task_date", "due_date",
+    "appointment_date", "invoice_date", "expense_date", "voucher_date",
+    "purchase_date", "action_date", "start_date", "end_date",
+    "books_start_date", "financial_year_start"
+}
+
+TIME_COLUMNS = {"in_time", "out_time", "appointment_time"}
+
+NUMERIC_COLUMNS = {
+    "working_hours", "fees", "opening_balance", "opening_qty", "opening_rate",
+    "opening_value", "gst_rate", "inward_qty", "outward_qty", "closing_qty",
+    "production_qty", "sales_qty", "input_qty", "output_qty", "qty", "rate",
+    "value", "taxable_value", "discount", "freight", "other_exp", "tds",
+    "cgst", "sgst", "igst", "total_value", "gross_value", "net_value",
+    "cost", "depreciation_rate", "amount", "total_amount", "next_no",
+    "total_rows", "success_rows", "failed_rows"
+}
+
+BOOLEAN_COLUMNS = {c for c in DISPLAY_COLUMNS.get("clients", []) if c.startswith("allow_")}
+
+def clean_for_update(col, value):
+    """Convert UI text values safely before sending update to Supabase."""
+    if value is None:
+        return None
+
+    txt = str(value).strip()
+
+    if txt.lower() in ["", "none", "nan", "nat", "null"]:
+        return None
+
+    if col in DATE_COLUMNS:
+        try:
+            return pd.to_datetime(txt, dayfirst=True).strftime("%Y-%m-%d")
+        except Exception:
+            return txt
+
+    if col in TIME_COLUMNS:
+        try:
+            return str(txt)[:8]
+        except Exception:
+            return txt
+
+    if col in NUMERIC_COLUMNS:
+        try:
+            return float(txt.replace(",", ""))
+        except Exception:
+            return 0
+
+    if col in BOOLEAN_COLUMNS:
+        return txt.lower() in ["true", "1", "yes", "y", "on"]
+
+    return txt
+
 def update_row(key, row_id, row):
-    row.pop("financial_year", None)
-    supabase.table(TABLES[key]).update(row).eq("id", int(row_id)).execute()
+    clean = {}
+
+    for col, val in row.items():
+        if col in READ_ONLY_UPDATE_COLUMNS:
+            continue
+        clean[col] = clean_for_update(col, val)
+
+    supabase.table(TABLES[key]).update(clean).eq("id", int(row_id)).execute()
 
 def delete_row(key, row_id): supabase.table(TABLES[key]).delete().eq("id", int(row_id)).execute()
 
