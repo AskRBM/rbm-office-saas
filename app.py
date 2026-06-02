@@ -1324,169 +1324,143 @@ def get_menu_modules(group):
         modules = ["Calculation Book", "ERP Control Center"]
     return modules or ["No module available"]
 
-def main_app():
+def build_group_list():
+    if is_super_admin():
+        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports", "Tools"]
+    return ["Dashboard", "Master", "HR", "Inventory", "Accounts", "Reports", "Tools"]
 
+
+def render_custom_menu():
+    st.markdown("""
+    <div class='erp-box'>
+      <div class='erp-name'>RBM AI</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class='erp-box'>
+      <div class='erp-small'><b>Name:</b> {st.session_state.get('client_name','RBM')}</div>
+      <div class='erp-small'><b>Code:</b> {get_client_code()}</div>
+      <div class='erp-small'><b>Role:</b> {st.session_state.get('role','')}</div>
+      <div class='erp-small'><b>User:</b> {st.session_state.get('full_name','')}</div>
+      <div class='erp-small'><b>Date:</b> {india_now().strftime('%d-%m-%Y')} | IST</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    if c1.button("◀ Hide", use_container_width=True, key="custom_hide_menu"):
+        st.session_state["sidebar_open"] = False
+        st.rerun()
+    if c2.button("Logout", use_container_width=True, key="custom_logout"):
+        st.session_state.clear()
+        st.rerun()
+
+    groups = build_group_list()
+    group = st.selectbox("Group", groups, key="menu_group")
+    modules = get_menu_modules(group)
+    choice = st.radio("Module", modules, key="menu_module")
+    return group, choice
+
+
+def main_app():
     if "sidebar_open" not in st.session_state:
         st.session_state["sidebar_open"] = True
 
-    if not st.session_state["sidebar_open"]:
-        if st.button("☰ Show Menu", key="show_menu_btn"):
-            st.session_state["sidebar_open"] = True
+    # Top reliable button: works even when Streamlit's native sidebar is collapsed.
+    top_col1, top_col2 = st.columns([1, 8])
+    with top_col1:
+        if st.button("☰ Menu", use_container_width=True, key="always_menu_toggle"):
+            st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
             st.rerun()
 
-    rbm_header()
-
     if st.session_state["sidebar_open"]:
-        with st.sidebar:
-            st.markdown("### RBM AI")
-            st.write(f"**Name:** {st.session_state.get('client_name')}")
-            st.write(f"**Code:** {get_client_code()}")
-            st.write(f"**User:** {st.session_state.get('full_name')}")
-            st.write(f"**Role:** {st.session_state.get('role')}")
-            st.write(f"**Date:** {india_now().strftime('%d-%m-%Y')}")
-
-            if st.button("⬅ Hide Menu", use_container_width=True):
-                st.session_state["sidebar_open"] = False
-                st.rerun()
-
-            if st.button("Logout", use_container_width=True):
-                st.session_state.clear()
-                st.rerun()
-
-            if is_super_admin():
-                group = st.selectbox("Group", ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports"])
-            else:
-                group = st.selectbox("Group", ["Dashboard", "Master", "HR", "Inventory", "Accounts", "Reports"])
-
-            menu = []
-
-            if group == "Dashboard":
-                menu = ["Dashboard"]
-
-            elif group == "Master":
-                menu = [
-                    "Ledger Group Master",
-                    "Ledger Master",
-                    "Stock Group Master",
-                    "Stock Ledger Master",
-                    "Employee Master",
-                ]
-
-            elif group == "Admin":
-                menu = ["Client Master", "User Management"]
-
-            elif group == "HR":
-                menu = []
-                if st.session_state.get("allow_attendance", True):
-                    menu.append("Attendance Management")
-                if st.session_state.get("allow_inout", True):
-                    menu.append("IN / OUT Register")
-                if st.session_state.get("allow_visitor", True):
-                    menu.append("Visitor Register")
-                if st.session_state.get("allow_task", True):
-                    menu.append("Task Delegation")
-                menu.append("Appointments")
-
-            elif group == "Inventory":
-                menu = [
-                    "Raw Material Stock",
-                    "Finished Goods Stock",
-                    "WIP Stock",
-                    "Stock Voucher",
-                ]
-
-            elif group == "Accounts":
-                menu = [
-                    "Sales GST Invoice",
-                    "Purchase GST Invoice",
-                    "Expense GST",
-                    "Service Voucher",
-                    "Fixed Assets",
-                    "Accounting Entries",
-                ]
-
-            elif group == "Reports":
-                menu = [
-                    "Excel Export Reports",
-                    "Master Reports",
-                    "Balance Sheet",
-                    "Trial Balance",
-                    "Profit & Loss",
-                    "Sundry Receivable",
-                    "Sundry Payable",
-                    "Stock Report",
-                    "Calculation Book",
-                ]
-
-            choice = st.radio("Module", menu)
-
+        menu_col, content_col = st.columns([1.15, 4.85], gap="large")
+        with menu_col:
+            group, choice = render_custom_menu()
+        with content_col:
+            rbm_header()
+            mapping = {
+                "Dashboard": dashboard,
+                "Client Master": client_master,
+                "User Management": user_management,
+                "Employee Master": employee_master,
+                "Company Profile": company_profile,
+                "Financial Year Master": financial_year_master,
+                "Cost Center Master": cost_center_master,
+                "Document Series": document_series_master,
+                "GST Settings": gst_settings_master,
+                "Ledger Group Master": ledger_group_master,
+                "Ledger Master": ledger_master,
+                "Stock Group Master": stock_group_master,
+                "Stock Ledger Master": stock_ledger_master,
+                "Attendance Management": attendance,
+                "IN / OUT Register": inout_register,
+                "Visitor Register": visitor_register,
+                "Task Delegation": task_delegation,
+                "Appointments": appointment_module,
+                "Raw Material Stock": stock_raw,
+                "Finished Goods Stock": stock_fg,
+                "WIP Stock": stock_wip,
+                "Stock Voucher": stock_voucher,
+                "Sales GST Invoice": sales_invoice,
+                "Purchase GST Invoice": purchase_invoice,
+                "Expense GST": expense_gst,
+                "Service Voucher": service_voucher,
+                "Fixed Assets": fixed_assets,
+                "Accounting Entries": accounting_entries,
+                "Registers / Reports": reports,
+                "Import Center": import_center,
+                "Calculation Book": calculation_book,
+                "ERP Control Center": erp_control_center,
+                "Audit Log": audit_log_report,
+            }
+            mapping.get(choice, placeholder_denied)()
     else:
-        choice = st.session_state.get("last_choice", "Dashboard")
+        rbm_header()
+        st.info("Menu is hidden. Click ☰ Menu at the top-left to show it again.")
+        group = st.session_state.get("menu_group", "Dashboard")
+        modules = get_menu_modules(group)
+        choice = st.session_state.get("menu_module", modules[0])
+        if choice not in modules:
+            choice = modules[0]
+        mapping = {
+            "Dashboard": dashboard,
+            "Client Master": client_master,
+            "User Management": user_management,
+            "Employee Master": employee_master,
+            "Company Profile": company_profile,
+            "Financial Year Master": financial_year_master,
+            "Cost Center Master": cost_center_master,
+            "Document Series": document_series_master,
+            "GST Settings": gst_settings_master,
+            "Ledger Group Master": ledger_group_master,
+            "Ledger Master": ledger_master,
+            "Stock Group Master": stock_group_master,
+            "Stock Ledger Master": stock_ledger_master,
+            "Attendance Management": attendance,
+            "IN / OUT Register": inout_register,
+            "Visitor Register": visitor_register,
+            "Task Delegation": task_delegation,
+            "Appointments": appointment_module,
+            "Raw Material Stock": stock_raw,
+            "Finished Goods Stock": stock_fg,
+            "WIP Stock": stock_wip,
+            "Stock Voucher": stock_voucher,
+            "Sales GST Invoice": sales_invoice,
+            "Purchase GST Invoice": purchase_invoice,
+            "Expense GST": expense_gst,
+            "Service Voucher": service_voucher,
+            "Fixed Assets": fixed_assets,
+            "Accounting Entries": accounting_entries,
+            "Registers / Reports": reports,
+            "Import Center": import_center,
+            "Calculation Book": calculation_book,
+            "ERP Control Center": erp_control_center,
+            "Audit Log": audit_log_report,
+        }
+        mapping.get(choice, placeholder_denied)()
 
-    st.session_state["last_choice"] = choice
-
-    if choice == "Dashboard":
-        dashboard()
-    elif choice == "Client Master":
-        client_master()
-    elif choice == "User Management":
-        user_management()
-    elif choice == "Employee Master":
-        employee_master()
-    elif choice == "Attendance Management":
-        attendance()
-    elif choice == "IN / OUT Register":
-        inout_register()
-    elif choice == "Visitor Register":
-        visitor_register()
-    elif choice == "Task Delegation":
-        task_delegation()
-    elif choice == "Appointments":
-        appointment_module()
-    elif choice == "Ledger Group Master":
-        ledger_group_master()
-    elif choice == "Ledger Master":
-        ledger_master()
-    elif choice == "Stock Group Master":
-        stock_group_master()
-    elif choice == "Stock Ledger Master":
-        stock_ledger_master()
-    elif choice == "Raw Material Stock":
-        stock_raw_material()
-    elif choice == "Finished Goods Stock":
-        stock_finished_goods()
-    elif choice == "WIP Stock":
-        stock_wip()
-    elif choice == "Stock Voucher":
-        stock_voucher()
-    elif choice == "Sales GST Invoice":
-        sales_gst_invoice()
-    elif choice == "Purchase GST Invoice":
-        purchase_gst_invoice()
-    elif choice == "Expense GST":
-        expense_gst()
-    elif choice == "Service Voucher":
-        service_voucher()
-    elif choice == "Fixed Assets":
-        fixed_assets()
-    elif choice == "Accounting Entries":
-        accounting_entries()
-    elif choice == "Excel Export Reports":
-        export_reports()
-    elif choice == "Master Reports":
-        master_reports()
-    elif choice == "Balance Sheet":
-        balance_sheet_report()
-    elif choice == "Trial Balance":
-        trial_balance_report()
-    elif choice == "Profit & Loss":
-        profit_loss_report()
-    elif choice == "Sundry Receivable":
-        sundry_receivable_report()
-    elif choice == "Sundry Payable":
-        sundry_payable_report()
-    elif choice == "Stock Report":
-        stock_report()
-    elif choice == "Calculation Book":
-        calculation_book()else:
+if "logged_in" not in st.session_state:
+    login_page()
+else:
     main_app()
