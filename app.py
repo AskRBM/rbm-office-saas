@@ -86,6 +86,18 @@ for _k in CONTROL_TABLE_KEYS:
             if _c not in DISPLAY_COLUMNS[_k]:
                 DISPLAY_COLUMNS[_k].append(_c)
 
+REVERSIBLE_TABLE_KEYS = [
+    "attendance", "attendance_visits", "inout", "visitors", "tasks", "appointments",
+    "stock_raw", "stock_fg", "stock_wip", "stock_vouchers", "sales", "purchase",
+    "expenses", "service_vouchers", "fixed_assets", "accounting_entries"
+]
+REVERSAL_COLUMNS = ["reversal_status", "reversed_from_id", "reversal_reason", "reversed_by", "reversed_at"]
+for _k in REVERSIBLE_TABLE_KEYS:
+    if _k in DISPLAY_COLUMNS:
+        for _c in REVERSAL_COLUMNS:
+            if _c not in DISPLAY_COLUMNS[_k]:
+                DISPLAY_COLUMNS[_k].append(_c)
+
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility:hidden;}
@@ -261,8 +273,20 @@ def show_table_with_edit_delete(key, df, title):
                 else: edited[col] = st.text_input(col, str(selected_row[col]), key=f"edit_{key}_{col}")
             if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
                 update_row(key, selected_id, edited); st.success("Record updated"); st.rerun()
+        if key in REVERSIBLE_TABLE_KEYS:
+            with st.expander("Reverse / Cancel Posted Entry"):
+                st.warning("This will create a separate reversal entry and mark the original as Reversed. It will not delete original data.")
+                reversal_reason = st.text_input("Reversal Reason", key=f"reverse_reason_{key}")
+                if st.button("Reverse Selected Entry", use_container_width=True, key=f"reverse_{key}"):
+                    ok, msg = reverse_record(key, selected_id, reversal_reason)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
         with st.expander("Delete Selected Record"):
-            st.warning("This will permanently delete selected record.")
+            st.warning("This will permanently delete selected record. Prefer Reverse for posted/saved business entries.")
             if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
                 delete_row(key, selected_id); st.success("Record deleted"); st.rerun()
 
