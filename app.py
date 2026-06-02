@@ -33,7 +33,7 @@ TABLES = {
 }
 
 DISPLAY_COLUMNS = {
-    "clients": ["id", "client_code", "client_name", "status", "created_at"],
+    "clients": ["id", "client_code", "client_name", "allow_task", "allow_attendance", "allow_inout", "allow_visitor", "status", "created_at"],
     "users": ["id", "client_code", "username", "password", "role", "full_name", "status"],
     "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "branch_division", "status"],
     "attendance": ["id", "client_code", "attendance_date", "financial_year", "employee_name", "attendance_type", "office_location", "status", "in_time", "out_time", "working_hours", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
@@ -347,6 +347,11 @@ def login_page():
                 st.error("Wrong username or password")
             else:
                 row = match.iloc[0]
+
+                if "status" in users.columns and str(row.get("status", "Active")) == "Inactive":
+                    st.error("This user is inactive.")
+                    return
+
                 client_code = str(row.get("client_code", "RBM"))
 
                 client_name = client_code
@@ -360,7 +365,18 @@ def login_page():
                 )
 
                 if not client_data.empty:
-                    client_name = str(client_data.iloc[0].get("client_name", client_code))
+                    client_row = client_data.iloc[0]
+                    client_name = str(client_row.get("client_name", client_code))
+
+                    st.session_state["allow_task"] = bool(client_row.get("allow_task", True))
+                    st.session_state["allow_attendance"] = bool(client_row.get("allow_attendance", True))
+                    st.session_state["allow_inout"] = bool(client_row.get("allow_inout", True))
+                    st.session_state["allow_visitor"] = bool(client_row.get("allow_visitor", True))
+                else:
+                    st.session_state["allow_task"] = True
+                    st.session_state["allow_attendance"] = True
+                    st.session_state["allow_inout"] = True
+                    st.session_state["allow_visitor"] = True
 
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
@@ -412,6 +428,15 @@ def client_master():
         client_name = c2.text_input("Client Name", placeholder="Example: Choice Group")
         status = c1.selectbox("Status", ["Active", "Inactive"])
 
+        st.subheader("Module Access")
+
+        m1, m2, m3, m4 = st.columns(4)
+
+        allow_task = m1.checkbox("Task", value=True)
+        allow_attendance = m2.checkbox("Attendance", value=True)
+        allow_inout = m3.checkbox("IN / OUT Register", value=True)
+        allow_visitor = m4.checkbox("Visitor Register", value=True)
+
         if st.form_submit_button("Save Client", use_container_width=True):
             if client_code.strip() == "" or client_name.strip() == "":
                 st.error("Client Code and Client Name are required.")
@@ -419,6 +444,10 @@ def client_master():
                 insert_row("clients", {
                     "client_code": client_code.strip().upper(),
                     "client_name": client_name.strip(),
+                    "allow_task": allow_task,
+                    "allow_attendance": allow_attendance,
+                    "allow_inout": allow_inout,
+                    "allow_visitor": allow_visitor,
                     "status": status
                 })
                 st.success("Client saved successfully.")
@@ -448,7 +477,7 @@ def user_management():
             c1.text_input("Client Code", value=client_code, disabled=True)
 
         username = c1.text_input("Username")
-        password = c2.text_input("Password")
+        password = c2.text_input("Password", type="password")
         role = c1.selectbox("Role", ["Admin", "User"])
         full_name = c2.text_input("Full Name")
         status = c2.selectbox("Status", ["Active", "Inactive"])
@@ -508,6 +537,7 @@ def employee_master():
                 st.rerun()
 
     show_table_with_edit_delete("employees", df, "Employee List")
+
 
 def attendance():
     st.header("Attendance Management with GPS")
@@ -840,10 +870,23 @@ def task_delegation():
                     use_container_width=True
                 )
 
+
 def export_reports():
     st.header("Excel / CSV Export Reports")
 
-    report_options = ["employees", "attendance", "attendance_visits", "inout", "visitors", "tasks"]
+    report_options = ["employees"]
+
+    if st.session_state.get("allow_attendance", True):
+        report_options += ["attendance", "attendance_visits"]
+
+    if st.session_state.get("allow_inout", True):
+        report_options.append("inout")
+
+    if st.session_state.get("allow_visitor", True):
+        report_options.append("visitors")
+
+    if st.session_state.get("allow_task", True):
+        report_options.append("tasks")
 
     if is_super_admin():
         report_options = ["clients", "users"] + report_options
@@ -905,25 +948,44 @@ def main_app():
             "Task Delegation",
             "Excel Export Reports",
         ]
+
     elif st.session_state["role"] == "Admin":
         menu = [
             "Dashboard",
             "User Management",
             "Employee Master",
-            "Attendance Management",
-            "IN / OUT Register",
-            "Visitor Register",
-            "Task Delegation",
-            "Excel Export Reports",
         ]
+
+        if st.session_state.get("allow_attendance", True):
+            menu.append("Attendance Management")
+
+        if st.session_state.get("allow_inout", True):
+            menu.append("IN / OUT Register")
+
+        if st.session_state.get("allow_visitor", True):
+            menu.append("Visitor Register")
+
+        if st.session_state.get("allow_task", True):
+            menu.append("Task Delegation")
+
+        menu.append("Excel Export Reports")
+
     else:
-        menu = [
-            "Attendance Management",
-            "IN / OUT Register",
-            "Visitor Register",
-            "Task Delegation",
-            "Excel Export Reports",
-        ]
+        menu = []
+
+        if st.session_state.get("allow_attendance", True):
+            menu.append("Attendance Management")
+
+        if st.session_state.get("allow_inout", True):
+            menu.append("IN / OUT Register")
+
+        if st.session_state.get("allow_visitor", True):
+            menu.append("Visitor Register")
+
+        if st.session_state.get("allow_task", True):
+            menu.append("Task Delegation")
+
+        menu.append("Excel Export Reports")
 
     choice = st.sidebar.radio("Select Module", menu)
 
