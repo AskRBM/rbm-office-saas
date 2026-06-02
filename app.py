@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import base64
+import json
+import string
 from datetime import datetime, date
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -25,6 +27,13 @@ TABLES = {
     "sales": "sales", "purchase": "purchase", "expenses": "expenses", "service_vouchers": "service_vouchers",
     "fixed_assets": "fixed_assets", "accounting_entries": "accounting_entries", "accounting_entry_lines": "accounting_entry_lines",
     "import_logs": "import_logs",
+    "company_profiles": "company_profiles",
+    "financial_years": "financial_years",
+    "cost_centers": "cost_centers",
+    "document_series": "document_series",
+    "gst_settings": "gst_settings",
+    "calculation_books": "calculation_books",
+    "audit_logs": "audit_logs",
 }
 
 DISPLAY_COLUMNS = {
@@ -53,6 +62,13 @@ DISPLAY_COLUMNS = {
     "accounting_entries": ["id","client_code","entry_date","voucher_type","voucher_no","debit_account","credit_account","amount","cgst","sgst","igst","total_amount","narration","created_by"],
     "accounting_entry_lines": ["id","client_code","entry_id","dr_cr","ledger_name","amount","remarks"],
     "import_logs": ["id","client_code","import_type","module_name","total_rows","success_rows","failed_rows","remarks","created_by"],
+    "company_profiles": ["id","client_code","company_name","legal_name","gst_no","pan_no","tan_no","address","state","email","mobile","financial_year_start","books_start_date","status","created_by"],
+    "financial_years": ["id","client_code","fy_name","start_date","end_date","status","lock_status","created_by"],
+    "cost_centers": ["id","client_code","cost_center_name","department","location","status","created_by"],
+    "document_series": ["id","client_code","module_name","prefix","next_no","suffix","status","created_by"],
+    "gst_settings": ["id","client_code","gst_no","legal_name","state","registration_type","default_tax_type","status","created_by"],
+    "calculation_books": ["id","client_code","book_name","sheet_name","grid_json","remarks","created_by","created_at"],
+    "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -893,6 +909,134 @@ def build_stock_summary_df():
     return pd.DataFrame(rows)
 
 
+
+# ---------- ERP SETUP / CONTROL MODULES ----------
+def company_profile():
+    simple_module_form("company_profiles", "Company Profile / Statutory Details", [
+        ("company_name","Company Name","text"), ("legal_name","Legal Name","text"),
+        ("gst_no","GST No","text"), ("pan_no","PAN No","text"), ("tan_no","TAN No","text"),
+        ("address","Address","text"), ("state","State","text"), ("email","Email","text"),
+        ("mobile","Mobile","text"), ("financial_year_start","Financial Year Start","date"),
+        ("books_start_date","Books Start Date","date"), ("status","Status",["Active","Inactive"])
+    ], "section-master")
+
+def financial_year_master():
+    simple_module_form("financial_years", "Financial Year Master / Period Lock", [
+        ("fy_name","Financial Year Name","text"), ("start_date","Start Date","date"),
+        ("end_date","End Date","date"), ("status","Status",["Open","Closed"]),
+        ("lock_status","Lock Status",["Unlocked","Locked"])
+    ], "section-master")
+
+def cost_center_master():
+    simple_module_form("cost_centers", "Cost Center / Department Master", [
+        ("cost_center_name","Cost Center Name","text"), ("department","Department","text"),
+        ("location","Location","text"), ("status","Status",["Active","Inactive"])
+    ], "section-master")
+
+def document_series_master():
+    simple_module_form("document_series", "Document Numbering Series", [
+        ("module_name","Module Name",["Sales","Purchase","Expense","Service","Stock","Accounting","Appointment"]),
+        ("prefix","Prefix","text"), ("next_no","Next No","number"), ("suffix","Suffix","text"),
+        ("status","Status",["Active","Inactive"])
+    ], "section-master")
+
+def gst_settings_master():
+    simple_module_form("gst_settings", "GST Settings / Tax Registration", [
+        ("gst_no","GST No","text"), ("legal_name","Legal Name","text"), ("state","State","text"),
+        ("registration_type","Registration Type",["Regular","Composition","Unregistered","SEZ","Export"]),
+        ("default_tax_type","Default Tax Type",["CGST+SGST","IGST","None"]),
+        ("status","Status",["Active","Inactive"])
+    ], "section-master")
+
+def audit_log_report():
+    show_header("Audit Log / System Control", "section-rep")
+    st.info("This register is reserved for tracking important user actions, approvals, edits and deletions.")
+    show_table_with_edit_delete("audit_logs", load_table("audit_logs", 5000), "Audit Log")
+
+# ---------- CALCULATION BOOK ----------
+def _blank_calc_df(rows=20, cols=8):
+    letters = list(string.ascii_uppercase[:int(cols)])
+    return pd.DataFrame([[0.0 for _ in letters] for _ in range(int(rows))], columns=letters)
+
+def _safe_apply_formula(df, target_col, formula):
+    data = df.copy()
+    for c in data.columns:
+        data[c] = pd.to_numeric(data[c], errors="coerce").fillna(0)
+    allowed = {c: data[c] for c in data.columns}
+    try:
+        data[target_col] = pd.eval(formula, local_dict=allowed, engine="python")
+        return data, ""
+    except Exception as e:
+        return df, str(e)
+
+def calculation_book():
+    show_header("Calculation Book - Excel Like Working Sheet", "section-rep")
+    st.caption("Use this as an internal working sheet. You can type values, apply simple column formulas like A+B, A*B, A+B-C, save the book and download Excel.")
+
+    old_books = raw_table("calculation_books", 1000)
+    book_options = ["New Calculation Book"]
+    if not old_books.empty and "book_name" in old_books.columns:
+        book_options += old_books["book_name"].dropna().astype(str).unique().tolist()
+
+    c0, c1, c2, c3 = st.columns([2, 2, 1, 1])
+    selected_book = c0.selectbox("Open Existing Book", book_options)
+    book_name = c1.text_input("Book Name", value="Working Calculation" if selected_book == "New Calculation Book" else selected_book)
+    sheet_name = c2.text_input("Sheet", value="Sheet1")
+    rows = c3.number_input("Rows", min_value=5, max_value=200, value=20, step=5)
+    cols = st.slider("Columns", min_value=3, max_value=20, value=8)
+
+    initial_df = _blank_calc_df(rows, cols)
+    if selected_book != "New Calculation Book" and not old_books.empty:
+        row = old_books[old_books["book_name"].astype(str) == selected_book].iloc[0]
+        try:
+            loaded = pd.DataFrame(json.loads(row.get("grid_json", "[]")))
+            if not loaded.empty:
+                initial_df = loaded
+        except Exception:
+            pass
+
+    edited_df = st.data_editor(initial_df, use_container_width=True, num_rows="dynamic", key="calc_grid_editor")
+
+    st.subheader("Formula Bar")
+    f1, f2, f3 = st.columns([1, 3, 1])
+    target_col = f1.selectbox("Target Column", edited_df.columns.tolist())
+    formula = f2.text_input("Formula", placeholder="Example: A+B-C or A*B")
+    if f3.button("Apply Formula", use_container_width=True):
+        new_df, err = _safe_apply_formula(edited_df, target_col, formula)
+        if err:
+            st.error(f"Formula error: {err}")
+        else:
+            st.session_state["calc_result_df"] = new_df
+            st.success("Formula applied. See result below.")
+
+    final_df = st.session_state.get("calc_result_df", edited_df)
+    if "calc_result_df" in st.session_state:
+        st.dataframe(final_df, use_container_width=True)
+
+    st.subheader("Column Totals")
+    numeric_df = final_df.copy()
+    for c in numeric_df.columns:
+        numeric_df[c] = pd.to_numeric(numeric_df[c], errors="coerce").fillna(0)
+    total_df = pd.DataFrame({"Column": numeric_df.columns, "Total": [numeric_df[c].sum() for c in numeric_df.columns]})
+    st.dataframe(total_df, use_container_width=True)
+
+    c4, c5 = st.columns(2)
+    if c4.button("Save Calculation Book", use_container_width=True):
+        insert_row("calculation_books", {
+            "book_name": book_name,
+            "sheet_name": sheet_name,
+            "grid_json": final_df.to_json(orient="records"),
+            "remarks": "Saved from Calculation Book",
+            "created_by": current_user()
+        })
+        st.success("Calculation book saved.")
+        st.rerun()
+    with c5:
+        st.download_button("Download Calculation Excel", to_excel_bytes(final_df), f"{book_name}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+    st.divider()
+    show_table_with_edit_delete("calculation_books", load_table("calculation_books", 100), "Saved Calculation Books")
+
 def reports():
     show_header("Registers / Reports", "section-rep")
 
@@ -904,7 +1048,7 @@ def reports():
     ])
 
     with tab1:
-        opts=["employees","ledgers","stock_ledgers","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks"]
+        opts=["employees","ledgers","stock_ledgers","company_profiles","financial_years","cost_centers","document_series","gst_settings","calculation_books","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks","audit_logs"]
         if is_super_admin(): opts=["clients","users"]+opts
         report = st.selectbox("Select Register", opts, key="general_register_select")
         rows = st.number_input("Rows to load", 100, 50000, 1000, 100, key="general_rows")
@@ -1003,11 +1147,11 @@ def placeholder_denied(): st.warning("This module is not enabled for this client
 # ---------- MAIN MENU ----------
 def main_app():
     rbm_header(); compact_sidebar()
-    groups = ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports"]
+    groups = ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports", "Tools"]
     group = st.sidebar.selectbox("Group", groups, key="menu_group")
     modules = []
     if group == "Dashboard": modules=["Dashboard"]
-    elif group == "Master": modules=["Ledger Group Master","Ledger Master","Stock Group Master","Stock Ledger Master"] if st.session_state.get("allow_master_group", True) else []
+    elif group == "Master": modules=["Company Profile","Financial Year Master","Cost Center Master","Document Series","GST Settings","Ledger Group Master","Ledger Master","Stock Group Master","Stock Ledger Master"] if st.session_state.get("allow_master_group", True) else []
     elif group == "Admin":
         modules=[]
         if is_super_admin(): modules += ["Client Master"]
@@ -1033,16 +1177,19 @@ def main_app():
     elif group == "Reports":
         modules=["Registers / Reports"]
         if st.session_state.get("allow_excel_upload", True) or st.session_state.get("allow_google_sheet_import", True): modules.append("Import Center")
+        modules.append("Audit Log")
+    elif group == "Tools":
+        modules=["Calculation Book"]
     if not modules: modules=["No module available"]
     choice = st.sidebar.radio("Module", modules, key="menu_module")
 
     mapping={
         "Dashboard": dashboard, "Client Master": client_master, "User Management": user_management, "Employee Master": employee_master,
-        "Ledger Group Master": ledger_group_master, "Ledger Master": ledger_master, "Stock Group Master": stock_group_master, "Stock Ledger Master": stock_ledger_master,
+        "Company Profile": company_profile, "Financial Year Master": financial_year_master, "Cost Center Master": cost_center_master, "Document Series": document_series_master, "GST Settings": gst_settings_master, "Ledger Group Master": ledger_group_master, "Ledger Master": ledger_master, "Stock Group Master": stock_group_master, "Stock Ledger Master": stock_ledger_master,
         "Attendance Management": attendance, "IN / OUT Register": inout_register, "Visitor Register": visitor_register, "Task Delegation": task_delegation, "Appointments": appointment_module,
         "Raw Material Stock": stock_raw, "Finished Goods Stock": stock_fg, "WIP Stock": stock_wip, "Stock Voucher": stock_voucher,
         "Sales GST Invoice": sales_invoice, "Purchase GST Invoice": purchase_invoice, "Expense GST": expense_gst, "Service Voucher": service_voucher, "Fixed Assets": fixed_assets, "Accounting Entries": accounting_entries,
-        "Registers / Reports": reports, "Import Center": import_center,
+        "Registers / Reports": reports, "Import Center": import_center, "Calculation Book": calculation_book, "Audit Log": audit_log_report,
     }
     mapping.get(choice, placeholder_denied)()
 
