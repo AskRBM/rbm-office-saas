@@ -74,6 +74,18 @@ DISPLAY_COLUMNS = {
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
 DEFAULT_STOCK_GROUPS = ["Raw Material", "Finished Goods", "Work in Progress", "Packing Material", "Consumables", "Stores & Spares", "Trading Goods"]
 
+COMMON_CONTROL_COLUMNS = ["parking_status", "approval_status", "cost_center", "approved_by", "approval_remarks"]
+CONTROL_TABLE_KEYS = [
+    "attendance", "attendance_visits", "inout", "visitors", "tasks", "appointments",
+    "stock_raw", "stock_fg", "stock_wip", "stock_vouchers", "sales", "purchase",
+    "expenses", "service_vouchers", "fixed_assets", "accounting_entries"
+]
+for _k in CONTROL_TABLE_KEYS:
+    if _k in DISPLAY_COLUMNS:
+        for _c in COMMON_CONTROL_COLUMNS:
+            if _c not in DISPLAY_COLUMNS[_k]:
+                DISPLAY_COLUMNS[_k].append(_c)
+
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility:hidden;}
@@ -98,7 +110,10 @@ st.markdown("""
 .section-rep {background:linear-gradient(135deg,#7f1d1d,#dc2626,#fb7185)!important;}
 .stButton button, .stDownloadButton button {border-radius:12px;font-weight:800;border:0;background:linear-gradient(135deg,#0f172a,#2563eb);color:white;}
 .stButton button:hover, .stDownloadButton button:hover {border:0;color:white;filter:brightness(1.07);}
-[data-testid="stSidebar"] {background:linear-gradient(180deg,#f8fafc,#e0f2fe);}
+[data-testid="stSidebar"] {background:linear-gradient(180deg,#f8fafc,#e0f2fe); min-width:300px!important; max-width:300px!important; transform:translateX(0)!important; visibility:visible!important;}
+[data-testid="stSidebarCollapsedControl"], [data-testid="stSidebarCollapseButton"] {display:none!important;}
+section[data-testid="stSidebar"] button[kind="header"] {display:none!important;}
+.ctrl-card {background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fed7aa;border-radius:14px;padding:12px;margin:10px 0;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -108,6 +123,37 @@ def safe_df(data): return pd.DataFrame(data or [])
 def get_client_code(): return st.session_state.get("client_code", "RBM")
 def is_super_admin(): return st.session_state.get("role") == "Super Admin"
 def current_user(): return st.session_state.get("username", "system")
+
+def get_cost_center_options():
+    try:
+        q = supabase.table("cost_centers").select("cost_center_name,status")
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        df = safe_df(q.execute().data)
+        if not df.empty and "cost_center_name" in df.columns:
+            vals = df[df.get("status", "Active").astype(str).ne("Inactive")]["cost_center_name"].dropna().astype(str).tolist()
+            vals = sorted([v for v in vals if v.strip()])
+            return ["None"] + vals if vals else ["None"]
+    except Exception:
+        pass
+    return ["None"]
+
+def entry_controls(prefix="ctrl"):
+    st.markdown("<div class='ctrl-card'><b>🧾 Parking / Approval / ERP Control</b></div>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    parking_status = c1.selectbox("Parking / Posting", ["Draft", "Parked", "Posted"], key=f"{prefix}_parking")
+    approval_status = c2.selectbox("Approval", ["Pending", "Approved", "Rejected", "Not Required"], key=f"{prefix}_approval")
+    cost_center = c3.selectbox("Cost Center", get_cost_center_options(), key=f"{prefix}_cost_center")
+    c4, c5 = st.columns(2)
+    approved_by = c4.text_input("Approved By", key=f"{prefix}_approved_by")
+    approval_remarks = c5.text_input("Approval / Parking Remarks", key=f"{prefix}_approval_remarks")
+    return {
+        "parking_status": parking_status,
+        "approval_status": approval_status,
+        "cost_center": cost_center,
+        "approved_by": approved_by,
+        "approval_remarks": approval_remarks,
+    }
 
 def money(x):
     try: return f"{float(x):,.2f}"
@@ -540,10 +586,18 @@ def attendance():
         if attendance_type == "Office":
             status = c1.selectbox("Status", ["Present","Absent","Half Day","Leave"]); office_location = c2.text_input("Office Location", "Office")
             in_time = c1.time_input("In Time", value=india_now().time()); out_time = c2.time_input("Out Time", value=india_now().time()); remarks = c1.text_input("Remarks")
-            if st.form_submit_button("Save Office Attendance", use_container_width=True): insert_row("attendance", {"attendance_date":str(d),"financial_year":financial_year(d),"employee_name":empname,"attendance_type":"Office","office_location":office_location,"status":status,"in_time":str(in_time),"out_time":str(out_time),"working_hours":calculate_hours(in_time,out_time),"in_latitude":lat,"in_longitude":lon,"remarks":remarks,"created_by":current_user()}); st.success("Saved"); st.rerun()
+            controls = entry_controls("attendance_office_ctrl")
+            if st.form_submit_button("Save Office Attendance", use_container_width=True):
+                row = {"attendance_date":str(d),"financial_year":financial_year(d),"employee_name":empname,"attendance_type":"Office","office_location":office_location,"status":status,"in_time":str(in_time),"out_time":str(out_time),"working_hours":calculate_hours(in_time,out_time),"in_latitude":lat,"in_longitude":lon,"remarks":remarks,"created_by":current_user()}
+                row.update(controls)
+                insert_row("attendance", row); st.success("Saved"); st.rerun()
         else:
             place = c1.text_input("Visit Place"); in_time = c2.time_input("Visit In", value=india_now().time()); out_time = c1.time_input("Visit Out", value=india_now().time()); remarks = c2.text_input("Remarks")
-            if st.form_submit_button("Save Visit", use_container_width=True): insert_row("attendance_visits", {"visit_date":str(d),"financial_year":financial_year(d),"employee_name":empname,"visit_place":place,"in_time":str(in_time),"out_time":str(out_time),"in_latitude":lat,"in_longitude":lon,"remarks":remarks,"created_by":current_user()}); st.success("Saved"); st.rerun()
+            controls = entry_controls("attendance_visit_ctrl")
+            if st.form_submit_button("Save Visit", use_container_width=True):
+                row = {"visit_date":str(d),"financial_year":financial_year(d),"employee_name":empname,"visit_place":place,"in_time":str(in_time),"out_time":str(out_time),"in_latitude":lat,"in_longitude":lon,"remarks":remarks,"created_by":current_user()}
+                row.update(controls)
+                insert_row("attendance_visits", row); st.success("Saved"); st.rerun()
     show_table_with_edit_delete("attendance", load_table("attendance",500), "Office Attendance")
     show_table_with_edit_delete("attendance_visits", load_table("attendance_visits",500), "Visit Attendance")
 
@@ -558,7 +612,9 @@ def simple_module_form(key, title, fields, cls):
             elif typ=="number": vals[name]=c.number_input(label, value=0.0)
             elif isinstance(typ, list): vals[name]=c.selectbox(label, typ)
             else: vals[name]=c.text_input(label)
+        controls = entry_controls(f"{key}_ctrl")
         if st.form_submit_button(f"Save {title}", use_container_width=True):
+            vals.update(controls)
             vals["created_by"]=current_user(); insert_row(key, vals); st.success("Saved"); st.rerun()
     show_table_with_edit_delete(key, load_table(key,500), f"{title} Register")
 
@@ -573,13 +629,17 @@ def task_delegation():
     with st.form("task_form", clear_on_submit=True):
         c1,c2=st.columns(2); task_date=str(c1.date_input("Task Date", value=india_now().date(), format="DD-MM-YYYY")); branch_division=c1.selectbox("Branch / Division", branches); task=c2.text_area("Task")
         assigned_to=c2.selectbox("Assigned To", emp_list); priority=c1.selectbox("Priority", ["Low","Medium","High","Urgent"]); due_date=str(c2.date_input("Due Date", value=india_now().date(), format="DD-MM-YYYY")); status=c1.selectbox("Status", ["Pending","In Progress","Completed"]); remarks=c2.text_input("Remarks")
+        controls = entry_controls("task_ctrl")
         photo = st.file_uploader("Upload Task Photo - Max 2 MB", type=["png","jpg","jpeg"]); photo_name=""; photo_data=""; ok=True
         if photo:
             if photo.size > MAX_FILE_SIZE_MB*1024*1024: st.error("Photo size 2 MB se zyada nahi honi chahiye."); ok=False
             else: photo_name=photo.name; photo_data=base64.b64encode(photo.read()).decode("utf-8")
         if st.form_submit_button("Save Task", use_container_width=True):
             if not task or not ok: st.error("Task required / photo size check")
-            else: insert_row("tasks", {"task_date":task_date,"financial_year":financial_year(task_date),"branch_division":branch_division,"task":task,"assigned_to":assigned_to,"priority":priority,"due_date":due_date,"status":status,"remarks":remarks,"task_photo_name":photo_name,"task_photo_data":photo_data,"created_by":current_user()}); st.success("Task saved"); st.rerun()
+            else:
+                row = {"task_date":task_date,"financial_year":financial_year(task_date),"branch_division":branch_division,"task":task,"assigned_to":assigned_to,"priority":priority,"due_date":due_date,"status":status,"remarks":remarks,"task_photo_name":photo_name,"task_photo_data":photo_data,"created_by":current_user()}
+                row.update(controls)
+                insert_row("tasks", row); st.success("Task saved"); st.rerun()
     show_table_with_edit_delete("tasks", load_table("tasks",500), "Task Records")
 
 # Inventory modules
@@ -631,10 +691,12 @@ def voucher_invoice(key, title, party_col, party_list, cls):
         tds=a4.number_input("TDS (-)", value=0.0)
         grand=round(gross_total - discount + freight + other_exp - tds, 2)
         remarks=st.text_input("Remarks")
+        controls = entry_controls(f"{key}_voucher_ctrl")
         st.info(f"Taxable: {money(taxable_total)} | GST: {money(gst_total)} | Gross: {money(gross_total)} | Net Payable/Receivable: {money(grand)}")
         if st.form_submit_button(f"Save {title}", use_container_width=True):
             for r in rows:
                 row={"invoice_no":inv_no,"invoice_date":inv_date,party_col:party,"gstin":gstin,"item_name":r['item'],"hsn_sac":r['hsn'],"qty":r['qty'],"rate":r['rate'],"taxable_value":r['taxable'],"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":r['cgst'],"sgst":r['sgst'],"igst":r['igst'],"total_value":r['total'],"remarks":remarks,"created_by":current_user()}
+                row.update(controls)
                 insert_row(key,row)
             st.success("Voucher saved"); st.rerun()
     html=invoice_html(title, inv_no if 'inv_no' in locals() else '', party if 'party' in locals() else '', rows if 'rows' in locals() else [], grand if 'grand' in locals() else 0)
@@ -665,9 +727,12 @@ def expense_gst():
         cgst,sgst,igst,gross_value=gst_calc(taxable_value,gst_rate,gst_type)
         total_value=round(gross_value - discount + freight + other_exp - tds, 2)
         remarks=st.text_input("Remarks")
+        controls = entry_controls("expense_ctrl")
         st.info(f"Gross: {money(gross_value)} | Net Payable: {money(total_value)}")
         if st.form_submit_button("Save Expense GST", use_container_width=True):
-            insert_row("expenses", {"expense_date":expense_date,"vendor_name":vendor_name,"expense_head":expense_head,"invoice_no":invoice_no,"gstin":gstin,"taxable_value":taxable_value,"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":cgst,"sgst":sgst,"igst":igst,"total_value":total_value,"payment_mode":payment_mode,"remarks":remarks,"created_by":current_user()})
+            row = {"expense_date":expense_date,"vendor_name":vendor_name,"expense_head":expense_head,"invoice_no":invoice_no,"gstin":gstin,"taxable_value":taxable_value,"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":cgst,"sgst":sgst,"igst":igst,"total_value":total_value,"payment_mode":payment_mode,"remarks":remarks,"created_by":current_user()}
+            row.update(controls)
+            insert_row("expenses", row)
             st.success("Saved"); st.rerun()
     show_table_with_edit_delete("expenses", load_table("expenses",500), "Expense Register")
 
@@ -680,8 +745,13 @@ def service_voucher():
         mobile=c1.text_input("Mobile"); email=c2.text_input("Email"); service_name=c3.text_input("Service Name")
         sac_code=c1.text_input("SAC Code"); taxable_value=c2.number_input("Taxable Value", value=0.0); gst_rate=c3.number_input("GST %", value=18.0)
         gst_type=c1.selectbox("GST Type", ["CGST+SGST","IGST"]); payment_status=c2.selectbox("Payment Status", ["Pending","Received","Partly Received"])
-        cgst,sgst,igst,total_value=gst_calc(taxable_value,gst_rate,gst_type); remarks=st.text_input("Remarks"); st.info(f"Total: {money(total_value)}")
-        if st.form_submit_button("Save Service Voucher", use_container_width=True): insert_row("service_vouchers", {"voucher_no":voucher_no,"voucher_date":voucher_date,"customer_name":customer_name,"mobile":mobile,"email":email,"service_name":service_name,"sac_code":sac_code,"taxable_value":taxable_value,"cgst":cgst,"sgst":sgst,"igst":igst,"total_value":total_value,"payment_status":payment_status,"remarks":remarks,"created_by":current_user()}); st.success("Saved"); st.rerun()
+        cgst,sgst,igst,total_value=gst_calc(taxable_value,gst_rate,gst_type); remarks=st.text_input("Remarks")
+        controls = entry_controls("service_ctrl")
+        st.info(f"Total: {money(total_value)}")
+        if st.form_submit_button("Save Service Voucher", use_container_width=True):
+            row = {"voucher_no":voucher_no,"voucher_date":voucher_date,"customer_name":customer_name,"mobile":mobile,"email":email,"service_name":service_name,"sac_code":sac_code,"taxable_value":taxable_value,"cgst":cgst,"sgst":sgst,"igst":igst,"total_value":total_value,"payment_status":payment_status,"remarks":remarks,"created_by":current_user()}
+            row.update(controls)
+            insert_row("service_vouchers", row); st.success("Saved"); st.rerun()
     html=invoice_html("Service Voucher", voucher_no if 'voucher_no' in locals() else '', customer_name if 'customer_name' in locals() else '', [{"item":service_name if 'service_name' in locals() else '',"hsn":sac_code if 'sac_code' in locals() else '',"qty":1,"rate":taxable_value if 'taxable_value' in locals() else 0,"taxable":taxable_value if 'taxable_value' in locals() else 0,"gst":(cgst+sgst+igst) if 'cgst' in locals() else 0,"total":total_value if 'total_value' in locals() else 0}], total_value if 'total_value' in locals() else 0)
     st.download_button("Print / Download Service Voucher", html.encode("utf-8"), "service_voucher.html", "text/html", use_container_width=True)
     show_table_with_edit_delete("service_vouchers", load_table("service_vouchers",500), "Service Register")
@@ -708,11 +778,13 @@ def accounting_entries():
         cgst=sgst=igst=0
         if gst_type != "None": cgst,sgst,igst,_=gst_calc(total_dr,gst_rate,gst_type)
         narration=st.text_area("Narration")
+        controls = entry_controls("accounting_ctrl")
         st.info(f"Total Dr: {money(total_dr)} | Total Cr: {money(total_cr)} | GST: {money(cgst+sgst+igst)}")
         if st.form_submit_button("Save Accounting Entry", use_container_width=True):
             if round(total_dr,2) != round(total_cr,2): st.error("Total Debit and Credit must be equal")
             else:
                 header={"entry_date":entry_date,"voucher_type":voucher_type,"voucher_no":voucher_no,"debit_account":"Multiple","credit_account":"Multiple","amount":total_dr,"cgst":cgst,"sgst":sgst,"igst":igst,"total_amount":total_dr+cgst+sgst+igst,"narration":narration,"created_by":current_user()}
+                header.update(controls)
                 if "client_code" not in header: header["client_code"]=get_client_code()
                 res=supabase.table("accounting_entries").insert(header).execute(); entry_id=(res.data or [{}])[0].get("id")
                 for x in debit_lines: insert_row("accounting_entry_lines", {"entry_id":entry_id,"dr_cr":"Dr","ledger_name":x["ledger"],"amount":x["amount"],"remarks":x["remarks"]})
@@ -1144,6 +1216,27 @@ def reports():
 
 def placeholder_denied(): st.warning("This module is not enabled for this client.")
 
+
+def erp_control_center():
+    show_header("ERP Control Center", "section-master")
+    st.info("Use this screen to review parked / pending approval entries across key ERP modules.")
+    keys = ["sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","appointments","tasks"]
+    selected = st.selectbox("Select Module", keys)
+    df = load_table(selected, 5000)
+    if df.empty:
+        st.info("No records found.")
+        return
+    filters = ["All"]
+    if "parking_status" in df.columns: filters += ["Draft", "Parked", "Posted"]
+    parking = st.selectbox("Parking / Posting Filter", filters)
+    if parking != "All" and "parking_status" in df.columns:
+        df = df[df["parking_status"].astype(str) == parking]
+    approval = st.selectbox("Approval Filter", ["All", "Pending", "Approved", "Rejected", "Not Required"])
+    if approval != "All" and "approval_status" in df.columns:
+        df = df[df["approval_status"].astype(str) == approval]
+    st.dataframe(df, use_container_width=True)
+    st.download_button("Download Control Report Excel", to_excel_bytes(df), f"erp_control_{selected}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
 # ---------- MAIN MENU ----------
 def main_app():
     rbm_header(); compact_sidebar()
@@ -1179,7 +1272,7 @@ def main_app():
         if st.session_state.get("allow_excel_upload", True) or st.session_state.get("allow_google_sheet_import", True): modules.append("Import Center")
         modules.append("Audit Log")
     elif group == "Tools":
-        modules=["Calculation Book"]
+        modules=["Calculation Book", "ERP Control Center"]
     if not modules: modules=["No module available"]
     choice = st.sidebar.radio("Module", modules, key="menu_module")
 
@@ -1189,7 +1282,7 @@ def main_app():
         "Attendance Management": attendance, "IN / OUT Register": inout_register, "Visitor Register": visitor_register, "Task Delegation": task_delegation, "Appointments": appointment_module,
         "Raw Material Stock": stock_raw, "Finished Goods Stock": stock_fg, "WIP Stock": stock_wip, "Stock Voucher": stock_voucher,
         "Sales GST Invoice": sales_invoice, "Purchase GST Invoice": purchase_invoice, "Expense GST": expense_gst, "Service Voucher": service_voucher, "Fixed Assets": fixed_assets, "Accounting Entries": accounting_entries,
-        "Registers / Reports": reports, "Import Center": import_center, "Calculation Book": calculation_book, "Audit Log": audit_log_report,
+        "Registers / Reports": reports, "Import Center": import_center, "Calculation Book": calculation_book, "ERP Control Center": erp_control_center, "Audit Log": audit_log_report,
     }
     mapping.get(choice, placeholder_denied)()
 
