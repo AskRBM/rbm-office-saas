@@ -431,17 +431,24 @@ def sidebar_toggle_top():
         st.session_state["sidebar_open"] = True
 
     if not st.session_state["sidebar_open"]:
-        st.markdown("""
-        <style>
-        [data-testid="stSidebar"] {display:none!important;}
-        [data-testid="stAppViewContainer"] {margin-left:0!important;}
-        </style>
-        <div class="rbm-show-menu">Menu is hidden</div>
+        st.sidebar.markdown("""
+        <div class='erp-box'>
+          <div class='erp-name'>RBM AI</div>
+          <div class='erp-small'><b>Menu Hidden</b></div>
+        </div>
         """, unsafe_allow_html=True)
-        if st.button("☰ Show Menu", key="show_sidebar_menu"):
+
+        if st.sidebar.button("☰ Show Menu", use_container_width=True, key="show_sidebar_menu_sidebar"):
             st.session_state["sidebar_open"] = True
             st.rerun()
+
+        if st.button("☰ Show Menu", key="show_sidebar_menu_main"):
+            st.session_state["sidebar_open"] = True
+            st.rerun()
+
+        st.caption("Menu is hidden. Click ☰ Show Menu to bring it back.")
         return False
+
     return True
 
 def compact_sidebar():
