@@ -2178,6 +2178,450 @@ def main_app():
 # ================= END RBM ERP PHASE 3 OVERRIDES =================
 
 
+
+# ================= RBM ERP PHASE 4 MASTER GROUP OVERRIDES =================
+
+TABLES.update({
+    "ledger_groups": "ledger_groups",
+    "stock_groups": "stock_groups",
+    "stock_ledgers": "stock_ledgers",
+})
+
+DISPLAY_COLUMNS.update({
+    "ledger_groups": ["id", "client_code", "group_name", "group_type", "status", "created_by", "created_at"],
+    "ledgers": ["id", "client_code", "ledger_name", "ledger_group", "address", "contact_no", "tan_no", "gst_no", "pan_no", "opening_balance", "balance_type", "status", "created_by", "created_at"],
+    "stock_groups": ["id", "client_code", "stock_group_name", "stock_type", "status", "created_by", "created_at"],
+    "stock_ledgers": ["id", "client_code", "item_name", "item_code", "stock_group", "unit", "hsn_code", "opening_qty", "opening_rate", "opening_value", "gst_rate", "status", "created_by", "created_at"],
+})
+
+MODULE_PERMISSIONS.update({
+    "Ledger Group Master": "allow_master_group",
+    "Ledger Master": "allow_master_group",
+    "Stock Group Master": "allow_master_group",
+    "Stock Ledger Master": "allow_master_group",
+})
+
+DEFAULT_LEDGER_GROUPS = [
+    "Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts",
+    "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand",
+    "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account",
+    "Service Income", "Current Assets", "Current Liabilities", "Suspense Account"
+]
+
+DEFAULT_STOCK_GROUPS = [
+    "Raw Material", "Finished Goods", "Work in Progress", "Packing Material",
+    "Consumables", "Stores & Spares", "Trading Goods", "Service Items"
+]
+
+st.markdown("""
+<style>
+.master-box {background:linear-gradient(135deg,#fef3c7,#fde68a);border-left:7px solid #f59e0b;padding:16px;border-radius:16px;margin-bottom:16px;box-shadow:0 7px 18px rgba(0,0,0,.07);} 
+.master-title {font-size:26px;font-weight:900;color:#78350f;} 
+.master-note {font-size:14px;color:#92400e;font-weight:600;} 
+.group-master {background:linear-gradient(135deg,#fef3c7,#fde68a);padding:12px;border-radius:14px;font-weight:900;color:#78350f;margin-top:8px;border-left:6px solid #f59e0b;}
+</style>
+""", unsafe_allow_html=True)
+
+
+def master_header(title, note="Create and maintain ERP master data"):
+    st.markdown(f"<div class='master-box'><div class='master-title'>🧾 {title}</div><div class='master-note'>{note}</div></div>", unsafe_allow_html=True)
+
+
+def get_ledger_group_options():
+    try:
+        q = supabase.table("ledger_groups").select("group_name")
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        data = q.execute().data or []
+        names = [str(x.get("group_name", "")).strip() for x in data if str(x.get("group_name", "")).strip()]
+    except Exception:
+        names = []
+    return sorted(list(dict.fromkeys(DEFAULT_LEDGER_GROUPS + names)))
+
+
+def get_stock_group_options():
+    try:
+        q = supabase.table("stock_groups").select("stock_group_name")
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        data = q.execute().data or []
+        names = [str(x.get("stock_group_name", "")).strip() for x in data if str(x.get("stock_group_name", "")).strip()]
+    except Exception:
+        names = []
+    return sorted(list(dict.fromkeys(DEFAULT_STOCK_GROUPS + names)))
+
+
+def get_stock_items(group_filter=None):
+    try:
+        q = supabase.table("stock_ledgers").select("*")
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        data = q.order("item_name").execute().data or []
+        df = safe_df(data)
+        if group_filter and not df.empty and "stock_group" in df.columns:
+            df = df[df["stock_group"].astype(str).isin(group_filter)]
+        names = df["item_name"].dropna().astype(str).tolist() if not df.empty and "item_name" in df.columns else []
+    except Exception:
+        names = []
+    fallback = ["Raw Material Item", "Finished Goods Item", "WIP Item", "Service Item"]
+    return sorted(list(dict.fromkeys([x for x in names + fallback if str(x).strip()])))
+
+
+def get_ledgers(group_filter=None):
+    try:
+        q = supabase.table("ledgers").select("*")
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        data = q.order("ledger_name").execute().data or []
+        df = safe_df(data)
+        if group_filter and not df.empty and "ledger_group" in df.columns:
+            df = df[df["ledger_group"].astype(str).isin(group_filter)]
+        names = df["ledger_name"].dropna().astype(str).tolist() if not df.empty and "ledger_name" in df.columns else []
+    except Exception:
+        names = []
+    fallback = [
+        "Cash", "Bank", "Sales Account", "Purchase Account", "Expense Account", "Service Income",
+        "Input CGST", "Input SGST", "Input IGST", "Output CGST", "Output SGST", "Output IGST",
+        "Customer", "Vendor", "Fixed Assets", "Depreciation", "Capital Account"
+    ]
+    return sorted(list(dict.fromkeys([x for x in names + fallback if str(x).strip()])))
+
+
+def ensure_ledger(name, group="General", gstin="", mobile="", email=""):
+    name = str(name).strip()
+    if not name or name == "➕ Add New Ledger":
+        return
+    try:
+        existing = supabase.table("ledgers").select("id").eq("client_code", get_client_code()).eq("ledger_name", name).limit(1).execute().data or []
+        if not existing:
+            insert_row("ledgers", {
+                "ledger_name": name,
+                "ledger_group": group,
+                "address": "",
+                "contact_no": mobile,
+                "tan_no": "",
+                "gst_no": gstin,
+                "pan_no": "",
+                "opening_balance": 0,
+                "balance_type": "Dr",
+                "status": "Active",
+                "created_by": st.session_state.get("username", "")
+            })
+    except Exception:
+        pass
+
+
+def ledger_group_master():
+    master_header("Ledger Group Master", "Create accounting ledger groups used in Ledger Master and voucher dropdowns")
+    df = load_table("ledger_groups", 500)
+    with st.form("ledger_group_form_v4"):
+        c1, c2, c3 = st.columns(3)
+        group_name = c1.text_input("Ledger Group Name", placeholder="Example: Sundry Debtors")
+        group_type = c2.selectbox("Group Type", ["Asset", "Liability", "Income", "Expense", "GST / Tax", "Bank / Cash", "Other"])
+        status = c3.selectbox("Status", ["Active", "Inactive"])
+        if st.form_submit_button("Save Ledger Group", use_container_width=True):
+            if group_name.strip() == "":
+                st.error("Ledger Group Name is required.")
+            else:
+                insert_row("ledger_groups", {
+                    "group_name": group_name.strip(),
+                    "group_type": group_type,
+                    "status": status,
+                    "created_by": st.session_state.get("username", "")
+                })
+                st.success("Ledger Group saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("ledger_groups", df, "Ledger Group List")
+
+
+def ledger_master():
+    master_header("Ledger Master", "Create customer, vendor, bank, GST, expense and income ledgers")
+    df = load_table("ledgers", 500)
+    group_options = get_ledger_group_options()
+    with st.form("ledger_master_form_v4"):
+        c1, c2 = st.columns(2)
+        ledger_name = c1.text_input("Ledger Name")
+        ledger_group = c2.selectbox("Ledger Group", group_options)
+        address = c1.text_area("Address")
+        contact_no = c2.text_input("Contact No")
+        tan_no = c1.text_input("TAN No")
+        gst_no = c2.text_input("GST No")
+        pan_no = c1.text_input("PAN No")
+        opening_balance = c2.number_input("Opening Balance", value=0.0, step=100.0)
+        balance_type = c1.selectbox("Balance Type", ["Dr", "Cr"])
+        status = c2.selectbox("Status", ["Active", "Inactive"])
+        if st.form_submit_button("Save Ledger", use_container_width=True):
+            if ledger_name.strip() == "":
+                st.error("Ledger Name is required.")
+            else:
+                insert_row("ledgers", {
+                    "ledger_name": ledger_name.strip(),
+                    "ledger_group": ledger_group,
+                    "address": address,
+                    "contact_no": contact_no,
+                    "tan_no": tan_no,
+                    "gst_no": gst_no,
+                    "pan_no": pan_no,
+                    "opening_balance": opening_balance,
+                    "balance_type": balance_type,
+                    "status": status,
+                    "created_by": st.session_state.get("username", "")
+                })
+                st.success("Ledger saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("ledgers", df, "Ledger List")
+
+
+def stock_group_master():
+    master_header("Stock Group Master", "Create stock groups for Raw Material, Finished Goods, WIP and other items")
+    df = load_table("stock_groups", 500)
+    with st.form("stock_group_form_v4"):
+        c1, c2, c3 = st.columns(3)
+        stock_group_name = c1.text_input("Stock Group Name", placeholder="Example: Raw Material")
+        stock_type = c2.selectbox("Stock Type", ["Raw Material", "Finished Goods", "Work in Progress", "Packing Material", "Consumables", "Stores & Spares", "Trading Goods", "Service Items", "Other"])
+        status = c3.selectbox("Status", ["Active", "Inactive"])
+        if st.form_submit_button("Save Stock Group", use_container_width=True):
+            if stock_group_name.strip() == "":
+                st.error("Stock Group Name is required.")
+            else:
+                insert_row("stock_groups", {
+                    "stock_group_name": stock_group_name.strip(),
+                    "stock_type": stock_type,
+                    "status": status,
+                    "created_by": st.session_state.get("username", "")
+                })
+                st.success("Stock Group saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("stock_groups", df, "Stock Group List")
+
+
+def stock_ledger_master():
+    master_header("Stock Ledger / Item Master", "Create stock items with HSN, unit, GST rate and opening quantity")
+    df = load_table("stock_ledgers", 500)
+    stock_group_options = get_stock_group_options()
+    with st.form("stock_ledger_form_v4"):
+        c1, c2 = st.columns(2)
+        item_name = c1.text_input("Item / Stock Ledger Name")
+        item_code = c2.text_input("Item Code")
+        stock_group = c1.selectbox("Stock Group", stock_group_options)
+        unit = c2.selectbox("Unit", ["Nos", "Kg", "Meter", "Ltr", "Box", "Pcs", "Set", "Bag", "Roll", "Other"])
+        hsn_code = c1.text_input("HSN Code")
+        gst_rate = c2.number_input("GST Rate %", value=0.0, step=0.5)
+        opening_qty = c1.number_input("Opening Qty", value=0.0, step=1.0)
+        opening_rate = c2.number_input("Opening Rate", value=0.0, step=1.0)
+        opening_value = opening_qty * opening_rate
+        c1.metric("Opening Value", f"{opening_value:,.2f}")
+        status = c2.selectbox("Status", ["Active", "Inactive"])
+        if st.form_submit_button("Save Stock Ledger", use_container_width=True):
+            if item_name.strip() == "":
+                st.error("Item / Stock Ledger Name is required.")
+            else:
+                insert_row("stock_ledgers", {
+                    "item_name": item_name.strip(),
+                    "item_code": item_code,
+                    "stock_group": stock_group,
+                    "unit": unit,
+                    "hsn_code": hsn_code,
+                    "opening_qty": opening_qty,
+                    "opening_rate": opening_rate,
+                    "opening_value": opening_value,
+                    "gst_rate": gst_rate,
+                    "status": status,
+                    "created_by": st.session_state.get("username", "")
+                })
+                st.success("Stock Ledger saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("stock_ledgers", df, "Stock Ledger List")
+
+
+def rows_editor(module_key, default_name="Item"):
+    stock_options = get_stock_items()
+    first_item = stock_options[0] if stock_options else default_name
+    base = pd.DataFrame([
+        {"item_name": first_item, "hsn_sac": "", "qty": 1.0, "rate": 0.0, "cgst_rate": 0.0, "sgst_rate": 0.0, "igst_rate": 0.0}
+    ])
+    rows = st.data_editor(
+        base,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"items_editor_{module_key}_v4",
+        column_config={
+            "item_name": st.column_config.SelectboxColumn("Item / Service Name", options=stock_options + ["Manual Item"], required=True),
+            "hsn_sac": st.column_config.TextColumn("HSN / SAC"),
+            "qty": st.column_config.NumberColumn("Qty", min_value=0.0, step=1.0),
+            "rate": st.column_config.NumberColumn("Rate", min_value=0.0, step=1.0),
+            "cgst_rate": st.column_config.NumberColumn("CGST %", min_value=0.0, step=0.5),
+            "sgst_rate": st.column_config.NumberColumn("SGST %", min_value=0.0, step=0.5),
+            "igst_rate": st.column_config.NumberColumn("IGST %", min_value=0.0, step=0.5),
+        }
+    )
+    rows = rows.fillna("")
+    return rows
+
+
+def client_master():
+    page_header("Client Master", "Control module access client-wise")
+    if not is_super_admin():
+        st.warning("Only Super Admin can access Client Master.")
+        return
+    with st.form("client_form_v4"):
+        c1, c2 = st.columns(2)
+        client_code = c1.text_input("Client Code", placeholder="Example: CHOICE")
+        client_name = c2.text_input("Client Name", placeholder="Example: Choice Group")
+        status = c1.selectbox("Status", ["Active", "Inactive"])
+        st.subheader("Master / Office Module Access")
+        a1, a2, a3, a4, a5 = st.columns(5)
+        allow_master_group = a1.checkbox("Master Group", value=True)
+        allow_task = a2.checkbox("Task", value=True)
+        allow_attendance = a3.checkbox("Attendance", value=True)
+        allow_inout = a4.checkbox("IN / OUT", value=True)
+        allow_visitor = a5.checkbox("Visitor", value=True)
+        a6, a7 = st.columns(2)
+        allow_appointment = a6.checkbox("Appointment", value=True)
+        allow_accounting_entries = a7.checkbox("Accounting / Ledger", value=True)
+        st.subheader("Inventory / Accounting Module Access")
+        e1, e2, e3, e4, e5 = st.columns(5)
+        allow_raw_material = e1.checkbox("Raw Material", value=True)
+        allow_finished_goods = e2.checkbox("Finished Goods", value=True)
+        allow_wip = e3.checkbox("WIP", value=True)
+        allow_stock_voucher = e4.checkbox("Stock Voucher", value=True)
+        allow_sales = e5.checkbox("Sales", value=True)
+        e6, e7, e8, e9 = st.columns(4)
+        allow_purchase = e6.checkbox("Purchase", value=True)
+        allow_expense = e7.checkbox("Expense", value=True)
+        allow_service_voucher = e8.checkbox("Service Voucher", value=True)
+        allow_fixed_assets = e9.checkbox("Fixed Assets", value=True)
+        e10, e11 = st.columns(2)
+        allow_excel_upload = e10.checkbox("Excel Upload", value=True)
+        allow_google_sheet_import = e11.checkbox("Google Sheet Import", value=True)
+        if st.form_submit_button("Save Client", use_container_width=True):
+            if client_code.strip() == "" or client_name.strip() == "":
+                st.error("Client Code and Client Name are required.")
+            else:
+                insert_row("clients", {
+                    "client_code": client_code.strip().upper(), "client_name": client_name.strip(),
+                    "allow_master_group": allow_master_group,
+                    "allow_task": allow_task, "allow_attendance": allow_attendance, "allow_inout": allow_inout, "allow_visitor": allow_visitor,
+                    "allow_appointment": allow_appointment, "allow_raw_material": allow_raw_material, "allow_finished_goods": allow_finished_goods, "allow_wip": allow_wip,
+                    "allow_stock_voucher": allow_stock_voucher, "allow_sales": allow_sales, "allow_purchase": allow_purchase, "allow_expense": allow_expense,
+                    "allow_service_voucher": allow_service_voucher, "allow_fixed_assets": allow_fixed_assets, "allow_accounting_entries": allow_accounting_entries,
+                    "allow_excel_upload": allow_excel_upload, "allow_google_sheet_import": allow_google_sheet_import, "status": status
+                })
+                st.success("Client saved successfully.")
+                st.rerun()
+    df = load_table("clients", 500)
+    show_table_with_edit_delete("clients", df, "Client List")
+
+
+def export_reports():
+    page_header("Reports & Registers", "Sales, Purchase, Stock, Expense, GST, Masters and all registers")
+    report_labels = ["Sales Register", "Purchase Register", "Stock Register", "Expense Register", "Service Register", "GST Register", "Ledger Register", "Ledger Group Register", "Stock Ledger Register", "Stock Group Register", "Accounting Register", "Fixed Assets Register", "All Table Export"]
+    report = st.selectbox("Select Register", report_labels)
+    rows = st.number_input("Rows to load", min_value=100, max_value=20000, value=5000, step=100)
+    if report == "Sales Register":
+        df = load_table("sales", int(rows))
+    elif report == "Purchase Register":
+        df = load_table("purchase", int(rows))
+    elif report == "Stock Register":
+        df = build_stock_register()
+    elif report == "Expense Register":
+        df = load_table("expenses", int(rows))
+    elif report == "Service Register":
+        df = load_table("service_vouchers", int(rows))
+    elif report == "GST Register":
+        df = build_gst_register()
+    elif report == "Ledger Register":
+        df = load_table("ledgers", int(rows))
+    elif report == "Ledger Group Register":
+        df = load_table("ledger_groups", int(rows))
+    elif report == "Stock Ledger Register":
+        df = load_table("stock_ledgers", int(rows))
+    elif report == "Stock Group Register":
+        df = load_table("stock_groups", int(rows))
+    elif report == "Accounting Register":
+        df = load_table("accounting_entries", int(rows))
+    elif report == "Fixed Assets Register":
+        df = load_table("fixed_assets", int(rows))
+    else:
+        options = list(DISPLAY_COLUMNS.keys())
+        table_key = st.selectbox("Select Table", options)
+        df = load_table(table_key, int(rows))
+    show_register_report(report, df)
+
+
+def get_dynamic_menu():
+    if is_super_admin():
+        return ["Dashboard", "Client Master", "User Management", "Employee Master", "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master", "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher", "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries", "Excel Export Reports"]
+    if st.session_state["role"] == "Admin":
+        menu = ["Dashboard", "User Management", "Employee Master"]
+    else:
+        menu = []
+    ordered_modules = ["Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master", "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher", "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries"]
+    for module in ordered_modules:
+        if is_allowed(module):
+            menu.append(module)
+    menu.append("Excel Export Reports")
+    return menu
+
+
+def select_grouped_menu():
+    available = get_dynamic_menu()
+    groups = {
+        "🔵 Admin": ("group-admin", ["Dashboard", "Client Master", "User Management", "Employee Master"]),
+        "🧾 Master": ("group-master", ["Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master"]),
+        "🟢 HR / Office": ("group-hr", ["Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments"]),
+        "🟠 Stock": ("group-stock", ["Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher"]),
+        "🟣 Accounts": ("group-accounts", ["Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries"]),
+        "🔴 Reports": ("group-reports", ["Excel Export Reports"]),
+    }
+    available_groups = [g for g, (_, items) in groups.items() if any(item in available for item in items)]
+    selected_group = st.sidebar.selectbox("Select Group", available_groups, key="selected_group_menu_v4")
+    css_class, items = groups[selected_group]
+    allowed_items = [x for x in items if x in available]
+    st.sidebar.markdown(f"<div class='{css_class}'>{selected_group}</div>", unsafe_allow_html=True)
+    return st.sidebar.radio("Select Module", allowed_items, key=f"module_{selected_group}_v4")
+
+
+def main_app():
+    rbm_header()
+    st.sidebar.title("RBM AI")
+    st.sidebar.write(f"Client: {st.session_state.get('client_name')}")
+    st.sidebar.write(f"Client Code: {get_client_code()}")
+    st.sidebar.write(f"User: {st.session_state.get('full_name')}")
+    st.sidebar.write(f"Role: {st.session_state.get('role')}")
+    st.sidebar.write(f"Date: {india_now().strftime('%d-%m-%Y')}")
+    st.sidebar.write("Time Zone: Asia/Kolkata")
+    if st.sidebar.button("Logout", use_container_width=True):
+        st.session_state.clear(); st.rerun()
+    choice = select_grouped_menu()
+    if choice == "Dashboard": dashboard()
+    elif choice == "Client Master": client_master()
+    elif choice == "User Management": user_management()
+    elif choice == "Employee Master": employee_master()
+    elif choice == "Ledger Group Master": ledger_group_master()
+    elif choice == "Ledger Master": ledger_master()
+    elif choice == "Stock Group Master": stock_group_master()
+    elif choice == "Stock Ledger Master": stock_ledger_master()
+    elif choice == "Attendance Management": attendance()
+    elif choice == "IN / OUT Register": inout_register()
+    elif choice == "Visitor Register": visitor_register()
+    elif choice == "Task Delegation": task_delegation()
+    elif choice == "Appointments": appointment_module()
+    elif choice == "Raw Material Stock": stock_form("stock_raw_material", "Raw Material Stock", "raw")
+    elif choice == "Finished Goods Stock": stock_form("stock_finished_goods", "Finished Goods Stock", "fg")
+    elif choice == "WIP Stock": stock_form("stock_wip", "Work in Progress Stock", "wip")
+    elif choice == "Stock Voucher": stock_voucher_module()
+    elif choice == "Sales GST Invoice": sales_purchase_form("sales", "Sales GST Invoice", "Customer Name")
+    elif choice == "Purchase GST Invoice": sales_purchase_form("purchase", "Purchase GST Invoice", "Vendor Name")
+    elif choice == "Expense GST": expense_module()
+    elif choice == "Service Voucher": service_voucher_module()
+    elif choice == "Fixed Assets": fixed_assets_module()
+    elif choice == "Accounting Entries": accounting_entries_module()
+    elif choice == "Excel Export Reports": export_reports()
+
+# ================= END RBM ERP PHASE 4 MASTER GROUP OVERRIDES =================
+
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
