@@ -223,10 +223,37 @@ def raw_table(key, limit_rows=500):
         query = query.eq("client_code", get_client_code())
     return safe_df(query.order("id", desc=True).limit(limit_rows).execute().data)
 
+def write_audit_log(module_name, action_type, record_id="", details=""):
+    """Write audit trail. This never stops the main transaction if audit logging fails."""
+    try:
+        if "audit_logs" not in TABLES:
+            return
+        supabase.table(TABLES["audit_logs"]).insert({
+            "client_code": get_client_code(),
+            "action_date": india_now().date().isoformat(),
+            "module_name": str(module_name),
+            "action_type": str(action_type),
+            "record_id": str(record_id or ""),
+            "details": str(details or ""),
+            "created_by": current_user()
+        }).execute()
+    except Exception:
+        pass
+
+
 def insert_row(key, row):
     if key != "clients" and "client_code" not in row:
         row["client_code"] = get_client_code()
-    supabase.table(TABLES[key]).insert(row).execute()
+    response = supabase.table(TABLES[key]).insert(row).execute()
+    try:
+        new_id = ""
+        if response.data and isinstance(response.data, list) and len(response.data) > 0:
+            new_id = response.data[0].get("id", "")
+        if key != "audit_logs":
+            write_audit_log(key, "CREATE", new_id, f"Created record in {key}")
+    except Exception:
+        pass
+    return response
 
 # ---------- SAFE UPDATE HELPERS ----------
 READ_ONLY_UPDATE_COLUMNS = {
@@ -295,9 +322,25 @@ def update_row(key, row_id, row):
             continue
         clean[col] = clean_for_update(col, val)
 
-    supabase.table(TABLES[key]).update(clean).eq("id", int(row_id)).execute()
+    response = supabase.table(TABLES[key]).update(clean).eq("id", int(row_id)).execute()
+    if key != "audit_logs":
+        changed_cols = ", ".join(clean.keys())
+        write_audit_log(key, "UPDATE", row_id, f"Updated columns: {changed_cols}")
+    return response
 
-def delete_row(key, row_id): supabase.table(TABLES[key]).delete().eq("id", int(row_id)).execute()
+
+def delete_row(key, row_id):
+    try:
+        old_df = safe_df(supabase.table(TABLES[key]).select("*").eq("id", int(row_id)).limit(1).execute().data)
+        old_details = ""
+        if not old_df.empty:
+            old_details = str(old_df.iloc[0].to_dict())[:1000]
+    except Exception:
+        old_details = ""
+    response = supabase.table(TABLES[key]).delete().eq("id", int(row_id)).execute()
+    if key != "audit_logs":
+        write_audit_log(key, "DELETE", row_id, f"Deleted record. Snapshot: {old_details}")
+    return response
 
 
 def reverse_record(key, row_id, reversal_reason=""):
@@ -363,6 +406,8 @@ def reverse_record(key, row_id, reversal_reason=""):
             "reversed_by": current_user(),
             "reversed_at": india_now().isoformat()
         }).eq("id", row_id).execute()
+
+        write_audit_log(key, "REVERSE", row_id, str(reversal_reason or "Reversed by user"))
 
         # If accounting entry has line table, reverse lines also.
         if key == "accounting_entries":
