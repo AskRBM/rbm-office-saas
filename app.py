@@ -731,10 +731,177 @@ def import_center():
         except Exception as e: st.error(str(e))
     show_table_with_edit_delete("import_logs", load_table("import_logs",500), "Import Logs")
 
+
+# ---------- FINANCIAL / STOCK REPORT HELPERS ----------
+def num_value(value):
+    try:
+        if value in [None, ""]:
+            return 0.0
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def build_trial_balance_df():
+    ledgers = load_table("ledgers", 50000)
+    lines = load_table("accounting_entry_lines", 50000)
+
+    if ledgers.empty:
+        return pd.DataFrame(columns=["ledger_group", "ledger_name", "opening_dr", "opening_cr", "debit", "credit", "closing_dr", "closing_cr", "email", "contact_no"])
+
+    for col in ["ledger_group", "ledger_name", "opening_balance", "balance_type", "email", "contact_no"]:
+        if col not in ledgers.columns:
+            ledgers[col] = ""
+
+    if lines.empty:
+        lines = pd.DataFrame(columns=["ledger_name", "dr_cr", "amount"])
+
+    for col in ["ledger_name", "dr_cr", "amount"]:
+        if col not in lines.columns:
+            lines[col] = ""
+
+    rows = []
+    for _, row in ledgers.iterrows():
+        ledger_name = str(row.get("ledger_name", ""))
+        ledger_lines = lines[lines["ledger_name"].astype(str) == ledger_name].copy()
+        dr_amount = ledger_lines[ledger_lines["dr_cr"].astype(str).str.lower().str.startswith("dr")]["amount"].apply(num_value).sum() if not ledger_lines.empty else 0.0
+        cr_amount = ledger_lines[ledger_lines["dr_cr"].astype(str).str.lower().str.startswith("cr")]["amount"].apply(num_value).sum() if not ledger_lines.empty else 0.0
+
+        opening = num_value(row.get("opening_balance", 0))
+        balance_type = str(row.get("balance_type", "Dr"))
+        opening_dr = opening if balance_type == "Dr" else 0.0
+        opening_cr = opening if balance_type == "Cr" else 0.0
+
+        closing_signed = opening_dr + dr_amount - opening_cr - cr_amount
+        closing_dr = closing_signed if closing_signed >= 0 else 0.0
+        closing_cr = abs(closing_signed) if closing_signed < 0 else 0.0
+
+        rows.append({
+            "ledger_group": row.get("ledger_group", ""),
+            "ledger_name": ledger_name,
+            "opening_dr": round(opening_dr, 2),
+            "opening_cr": round(opening_cr, 2),
+            "debit": round(dr_amount, 2),
+            "credit": round(cr_amount, 2),
+            "closing_dr": round(closing_dr, 2),
+            "closing_cr": round(closing_cr, 2),
+            "email": row.get("email", ""),
+            "contact_no": row.get("contact_no", ""),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def build_profit_loss_df(tb):
+    if tb.empty:
+        return pd.DataFrame(columns=["particulars", "amount"])
+
+    sales_groups = ["Sales Accounts", "Service Income", "Income", "Indirect Income"]
+    purchase_groups = ["Purchase Accounts"]
+    expense_groups = ["Direct Expenses", "Indirect Expenses", "Expense Account", "Expenses"]
+
+    sales = tb[tb["ledger_group"].astype(str).isin(sales_groups)]["closing_cr"].sum() - tb[tb["ledger_group"].astype(str).isin(sales_groups)]["closing_dr"].sum()
+    purchases = tb[tb["ledger_group"].astype(str).isin(purchase_groups)]["closing_dr"].sum() - tb[tb["ledger_group"].astype(str).isin(purchase_groups)]["closing_cr"].sum()
+    expenses = tb[tb["ledger_group"].astype(str).isin(expense_groups)]["closing_dr"].sum() - tb[tb["ledger_group"].astype(str).isin(expense_groups)]["closing_cr"].sum()
+    gross_profit = sales - purchases
+    net_profit = gross_profit - expenses
+
+    return pd.DataFrame([
+        {"particulars": "Sales / Service Income", "amount": round(sales, 2)},
+        {"particulars": "Less: Purchase", "amount": round(purchases, 2)},
+        {"particulars": "Gross Profit / Loss", "amount": round(gross_profit, 2)},
+        {"particulars": "Less: Expenses", "amount": round(expenses, 2)},
+        {"particulars": "Net Profit / Loss", "amount": round(net_profit, 2)},
+    ])
+
+
+def build_balance_sheet_df(tb):
+    if tb.empty:
+        return pd.DataFrame(columns=["side", "group", "amount"])
+
+    asset_groups = ["Fixed Assets", "Bank Accounts", "Cash-in-Hand", "Loans & Advances", "Sundry Debtors", "Duties & Taxes"]
+    liability_groups = ["Capital Account", "Sundry Creditors", "Loans", "Secured Loans", "Unsecured Loans"]
+
+    rows = []
+    for group in sorted(tb["ledger_group"].dropna().astype(str).unique().tolist()):
+        group_df = tb[tb["ledger_group"].astype(str) == group]
+        debit_bal = group_df["closing_dr"].sum()
+        credit_bal = group_df["closing_cr"].sum()
+        net = debit_bal - credit_bal
+
+        if group in asset_groups or net >= 0:
+            rows.append({"side": "Assets", "group": group, "amount": round(abs(net), 2)})
+        elif group in liability_groups or net < 0:
+            rows.append({"side": "Liabilities", "group": group, "amount": round(abs(net), 2)})
+
+    return pd.DataFrame(rows)
+
+
+def build_stock_summary_df():
+    stock = load_table("stock_ledgers", 50000)
+    purchase_df = load_table("purchase", 50000)
+    raw_df = load_table("stock_raw", 50000)
+    fg_df = load_table("stock_fg", 50000)
+    wip_df = load_table("stock_wip", 50000)
+    vouchers = load_table("stock_vouchers", 50000)
+
+    if stock.empty:
+        return pd.DataFrame(columns=["Stock Group", "Item Name", "Item Code", "Unit", "Opening Balance", "Purchase", "Consumed", "Closing Balance"])
+
+    rows = []
+    for _, item in stock.iterrows():
+        item_name = str(item.get("item_name", ""))
+        stock_group = str(item.get("stock_group", ""))
+        opening = num_value(item.get("opening_qty", 0))
+
+        purchase_qty = 0.0
+        if not purchase_df.empty and "item_name" in purchase_df.columns and "qty" in purchase_df.columns:
+            purchase_qty += purchase_df[purchase_df["item_name"].astype(str) == item_name]["qty"].apply(num_value).sum()
+        if not raw_df.empty and "item_name" in raw_df.columns and "inward_qty" in raw_df.columns:
+            purchase_qty += raw_df[raw_df["item_name"].astype(str) == item_name]["inward_qty"].apply(num_value).sum()
+        if not fg_df.empty and "item_name" in fg_df.columns and "production_qty" in fg_df.columns:
+            purchase_qty += fg_df[fg_df["item_name"].astype(str) == item_name]["production_qty"].apply(num_value).sum()
+        if not wip_df.empty and "item_name" in wip_df.columns and "input_qty" in wip_df.columns:
+            purchase_qty += wip_df[wip_df["item_name"].astype(str) == item_name]["input_qty"].apply(num_value).sum()
+        if not vouchers.empty and "item_name" in vouchers.columns and "voucher_type" in vouchers.columns and "qty" in vouchers.columns:
+            receipt_mask = vouchers["voucher_type"].astype(str).str.lower().isin(["receipt", "inward", "purchase", "production"])
+            purchase_qty += vouchers[(vouchers["item_name"].astype(str) == item_name) & receipt_mask]["qty"].apply(num_value).sum()
+
+        consumed = 0.0
+        if not raw_df.empty and "item_name" in raw_df.columns and "outward_qty" in raw_df.columns:
+            consumed += raw_df[raw_df["item_name"].astype(str) == item_name]["outward_qty"].apply(num_value).sum()
+        if not fg_df.empty and "item_name" in fg_df.columns and "sales_qty" in fg_df.columns:
+            consumed += fg_df[fg_df["item_name"].astype(str) == item_name]["sales_qty"].apply(num_value).sum()
+        if not wip_df.empty and "item_name" in wip_df.columns and "output_qty" in wip_df.columns:
+            consumed += wip_df[wip_df["item_name"].astype(str) == item_name]["output_qty"].apply(num_value).sum()
+        if not vouchers.empty and "item_name" in vouchers.columns and "voucher_type" in vouchers.columns and "qty" in vouchers.columns:
+            issue_mask = vouchers["voucher_type"].astype(str).str.lower().isin(["issue", "outward", "sales", "consumed", "consumption"])
+            consumed += vouchers[(vouchers["item_name"].astype(str) == item_name) & issue_mask]["qty"].apply(num_value).sum()
+
+        closing = opening + purchase_qty - consumed
+        rows.append({
+            "Stock Group": stock_group,
+            "Item Name": item_name,
+            "Item Code": item.get("item_code", ""),
+            "Unit": item.get("unit", ""),
+            "Opening Balance": round(opening, 2),
+            "Purchase": round(purchase_qty, 2),
+            "Consumed": round(consumed, 2),
+            "Closing Balance": round(closing, 2),
+        })
+
+    return pd.DataFrame(rows)
+
+
 def reports():
     show_header("Registers / Reports", "section-rep")
 
-    tab1, tab2, tab3 = st.tabs(["General Registers", "Ledger Reports", "Stock Item Reports"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "General Registers",
+        "Ledger / Party Reports",
+        "Financial Statements",
+        "Stock Summary",
+    ])
 
     with tab1:
         opts=["employees","ledgers","stock_ledgers","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks"]
@@ -750,83 +917,86 @@ def reports():
         with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{report}.csv", "text/csv", use_container_width=True, key="general_csv")
 
     with tab2:
-        st.subheader("Ledger Group Wise Download")
+        st.subheader("Ledger Group / Party Reports")
         ledger_df = load_table("ledgers", 50000)
+        tb = build_trial_balance_df()
         if ledger_df.empty:
             st.info("No ledger found.")
         else:
-            if "email" not in ledger_df.columns:
-                ledger_df["email"] = ""
-            preferred = ["All", "Sundry Debtors", "Sundry Creditors", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses"]
+            preferred = ["All", "Sundry Debtors", "Sundry Creditors", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Fixed Assets", "Capital Account"]
             actual = ledger_df["ledger_group"].dropna().astype(str).unique().tolist() if "ledger_group" in ledger_df.columns else []
-            group_list = []
+            group_list=[]
             for g in preferred + sorted(actual):
-                if g not in group_list:
-                    group_list.append(g)
+                if g not in group_list: group_list.append(g)
             selected_group = st.selectbox("First Select Ledger Group", group_list, key="ledger_group_report")
-            if selected_group == "All":
-                show_df = ledger_df.copy()
-            else:
-                show_df = ledger_df[ledger_df["ledger_group"].astype(str) == selected_group].copy()
-
+            if selected_group == "All": show_df = ledger_df.copy()
+            else: show_df = ledger_df[ledger_df["ledger_group"].astype(str) == selected_group].copy()
             ledger_names = ["All"] + sorted(show_df["ledger_name"].dropna().astype(str).unique().tolist()) if not show_df.empty else ["All"]
             selected_ledger = st.selectbox("Then Select Ledger Name", ledger_names, key="ledger_name_report")
-            if selected_ledger != "All":
-                show_df = show_df[show_df["ledger_name"].astype(str) == selected_ledger]
-
+            if selected_ledger != "All": show_df = show_df[show_df["ledger_name"].astype(str) == selected_ledger]
             cols = [c for c in ["ledger_group","ledger_name","address","contact_no","email","tan_no","gst_no","pan_no","opening_balance","balance_type","status"] if c in show_df.columns]
             show_df = show_df[cols] if cols else show_df
-
             st.info(f"Records Found: {len(show_df)}")
             st.dataframe(show_df, use_container_width=True)
-
-            if selected_group in ["Sundry Debtors", "Sundry Creditors"]:
-                email_df = show_df[[c for c in ["ledger_name","contact_no","email"] if c in show_df.columns]].copy()
-                email_df = email_df[email_df.get("email", "").astype(str).str.strip() != ""] if "email" in email_df.columns else email_df
-                st.subheader(f"Email List - {selected_group}")
-                st.dataframe(email_df, use_container_width=True)
-                emails = ";".join(email_df["email"].dropna().astype(str).tolist()) if "email" in email_df.columns else ""
-                if emails:
-                    st.markdown(f"[Open Email Draft](mailto:{emails})")
-
-            safe_group = selected_group.replace(" ", "_").replace("/", "_")
-            safe_ledger = selected_ledger.replace(" ", "_").replace("/", "_")
             c1,c2=st.columns(2)
+            safe_group=selected_group.replace(" ","_").replace("/","_"); safe_ledger=selected_ledger.replace(" ","_").replace("/","_")
             with c1: st.download_button("Download Ledger Excel", to_excel_bytes(show_df), f"ledger_{safe_group}_{safe_ledger}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="ledger_xlsx")
             with c2: st.download_button("Download Ledger CSV", show_df.to_csv(index=False).encode("utf-8"), f"ledger_{safe_group}_{safe_ledger}.csv", "text/csv", use_container_width=True, key="ledger_csv")
 
+            st.divider()
+            c3,c4=st.columns(2)
+            receivable = tb[tb["ledger_group"].astype(str) == "Sundry Debtors"].copy() if not tb.empty else pd.DataFrame()
+            payable = tb[tb["ledger_group"].astype(str) == "Sundry Creditors"].copy() if not tb.empty else pd.DataFrame()
+            with c3:
+                st.subheader("Sundry Receivable Report")
+                if not receivable.empty:
+                    receivable = receivable[["ledger_name","contact_no","email","closing_dr","closing_cr"]]
+                    st.dataframe(receivable, use_container_width=True)
+                    st.download_button("Download Receivable Excel", to_excel_bytes(receivable), "sundry_receivable.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="recv_xlsx")
+                else: st.info("No Sundry Debtors found.")
+            with c4:
+                st.subheader("Sundry Payable Report")
+                if not payable.empty:
+                    payable = payable[["ledger_name","contact_no","email","closing_dr","closing_cr"]]
+                    st.dataframe(payable, use_container_width=True)
+                    st.download_button("Download Payable Excel", to_excel_bytes(payable), "sundry_payable.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="pay_xlsx")
+                else: st.info("No Sundry Creditors found.")
+
     with tab3:
-        st.subheader("Stock Group Wise Download")
-        stock_df = load_table("stock_ledgers", 50000)
-        if stock_df.empty:
+        st.subheader("Financial Statements")
+        tb = build_trial_balance_df()
+        if tb.empty:
+            st.info("No ledger data found for financial reports.")
+        else:
+            report_type = st.selectbox("Select Financial Report", ["Trial Balance", "Profit & Loss", "Balance Sheet"], key="financial_report_type")
+            if report_type == "Trial Balance":
+                show_df = tb[["ledger_group","ledger_name","opening_dr","opening_cr","debit","credit","closing_dr","closing_cr"]].copy()
+            elif report_type == "Profit & Loss":
+                show_df = build_profit_loss_df(tb)
+            else:
+                show_df = build_balance_sheet_df(tb)
+            st.dataframe(show_df, use_container_width=True)
+            st.download_button(f"Download {report_type} Excel", to_excel_bytes(show_df), f"{report_type.replace(' ','_').lower()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="financial_xlsx")
+            st.download_button(f"Download {report_type} CSV", show_df.to_csv(index=False).encode("utf-8"), f"{report_type.replace(' ','_').lower()}.csv", "text/csv", use_container_width=True, key="financial_csv")
+
+    with tab4:
+        st.subheader("Stock Report: Opening Balance / Purchase / Consumed / Closing Balance")
+        stock_summary = build_stock_summary_df()
+        if stock_summary.empty:
             st.info("No stock item found.")
         else:
-            preferred_stock = ["All", "Raw Material", "Finished Goods", "Work in Progress", "Packing Material", "Consumables", "Stores & Spares", "Trading Goods"]
-            actual_stock = stock_df["stock_group"].dropna().astype(str).unique().tolist() if "stock_group" in stock_df.columns else []
-            stock_group_list=[]
-            for g in preferred_stock + sorted(actual_stock):
-                if g not in stock_group_list:
-                    stock_group_list.append(g)
-            selected_stock_group = st.selectbox("First Select Stock Group", stock_group_list, key="stock_group_report")
-            if selected_stock_group == "All":
-                show_stock_df = stock_df.copy()
-            else:
-                show_stock_df = stock_df[stock_df["stock_group"].astype(str) == selected_stock_group].copy()
-
-            item_names = ["All"] + sorted(show_stock_df["item_name"].dropna().astype(str).unique().tolist()) if not show_stock_df.empty else ["All"]
-            selected_item = st.selectbox("Then Select Stock Item", item_names, key="stock_item_report")
-            if selected_item != "All":
-                show_stock_df = show_stock_df[show_stock_df["item_name"].astype(str) == selected_item]
-
-            cols = [c for c in ["stock_group","item_name","item_code","unit","hsn_code","gst_rate","opening_qty","opening_rate","opening_value","status"] if c in show_stock_df.columns]
-            show_stock_df = show_stock_df[cols] if cols else show_stock_df
-            st.info(f"Records Found: {len(show_stock_df)}")
-            st.dataframe(show_stock_df, use_container_width=True)
+            stock_groups = ["All"] + sorted(stock_summary["Stock Group"].dropna().astype(str).unique().tolist())
+            selected_stock_group = st.selectbox("Select Stock Group", stock_groups, key="stock_summary_group")
+            show_stock = stock_summary.copy() if selected_stock_group == "All" else stock_summary[stock_summary["Stock Group"].astype(str) == selected_stock_group].copy()
+            stock_items = ["All"] + sorted(show_stock["Item Name"].dropna().astype(str).unique().tolist()) if not show_stock.empty else ["All"]
+            selected_item = st.selectbox("Select Stock Item", stock_items, key="stock_summary_item")
+            if selected_item != "All": show_stock = show_stock[show_stock["Item Name"].astype(str) == selected_item]
+            st.dataframe(show_stock, use_container_width=True)
             safe_group = selected_stock_group.replace(" ", "_").replace("/", "_")
             safe_item = selected_item.replace(" ", "_").replace("/", "_")
             c1,c2=st.columns(2)
-            with c1: st.download_button("Download Stock Excel", to_excel_bytes(show_stock_df), f"stock_{safe_group}_{safe_item}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="stock_xlsx")
-            with c2: st.download_button("Download Stock CSV", show_stock_df.to_csv(index=False).encode("utf-8"), f"stock_{safe_group}_{safe_item}.csv", "text/csv", use_container_width=True, key="stock_csv")
+            with c1: st.download_button("Download Stock Summary Excel", to_excel_bytes(show_stock), f"stock_summary_{safe_group}_{safe_item}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="stock_summary_xlsx")
+            with c2: st.download_button("Download Stock Summary CSV", show_stock.to_csv(index=False).encode("utf-8"), f"stock_summary_{safe_group}_{safe_item}.csv", "text/csv", use_container_width=True, key="stock_summary_csv")
 
 def placeholder_denied(): st.warning("This module is not enabled for this client.")
 
