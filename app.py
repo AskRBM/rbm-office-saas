@@ -1526,6 +1526,658 @@ def main_app():
         export_reports()
 
 
+# ================= RBM ERP PHASE 3 OVERRIDES =================
+import streamlit.components.v1 as components
+
+# New/updated tables and display columns
+TABLES.update({
+    "ledgers": "ledgers",
+    "stock_vouchers": "stock_vouchers",
+})
+
+DISPLAY_COLUMNS.update({
+    "ledgers": ["id", "client_code", "ledger_name", "ledger_group", "gstin", "mobile", "email", "opening_balance", "status", "created_by", "created_at"],
+    "stock_vouchers": ["id", "client_code", "voucher_no", "voucher_date", "voucher_type", "stock_category", "item_code", "item_name", "uom", "qty", "rate", "value", "stock_ledger", "remarks", "created_by"],
+    "accounting_entries": ["id", "client_code", "entry_date", "financial_year", "voucher_type", "voucher_no", "ledger_dr", "ledger_cr", "taxable_value", "cgst", "sgst", "igst", "amount", "narration", "created_by"],
+})
+
+MODULE_PERMISSIONS.update({
+    "Ledger Master": "allow_accounting_entries",
+    "Stock Voucher": "allow_stock_voucher",
+})
+
+st.markdown("""
+<style>
+.erp-title {
+    background: linear-gradient(135deg,#0f172a,#1d4ed8);
+    color: white;
+    padding: 18px 22px;
+    border-radius: 16px;
+    margin-bottom: 18px;
+    box-shadow: 0 8px 22px rgba(15,23,42,.18);
+    font-size: 30px;
+    font-weight: 900;
+}
+.erp-subtitle {font-size:15px;color:#dbeafe;margin-top:4px;font-weight:500;}
+.erp-card {background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;box-shadow:0 8px 20px rgba(0,0,0,.07);}
+.stFormSubmitButton button {
+    background: linear-gradient(135deg,#2563eb,#0f766e) !important;
+    color:white !important;
+    border:none !important;
+    border-radius:14px !important;
+    font-weight:900 !important;
+    min-height:42px !important;
+}
+.stDownloadButton button {
+    background: linear-gradient(135deg,#7c3aed,#db2777) !important;
+    color:white !important;
+    border:none !important;
+}
+.print-box {background:white;border:1px solid #cbd5e1;border-radius:14px;padding:18px;margin-top:14px;}
+.print-title {font-size:24px;font-weight:900;color:#0f172a;text-align:center;border-bottom:2px solid #0f172a;padding-bottom:8px;margin-bottom:12px;}
+.print-table {width:100%;border-collapse:collapse;font-size:13px;}
+.print-table th {background:#e0f2fe;color:#0f172a;border:1px solid #94a3b8;padding:7px;}
+.print-table td {border:1px solid #cbd5e1;padding:7px;}
+.print-total {font-size:20px;font-weight:900;text-align:right;margin-top:12px;color:#1e3a8a;}
+.group-admin {background:linear-gradient(135deg,#dbeafe,#bfdbfe);padding:12px;border-radius:14px;font-weight:900;color:#1e3a8a;margin-top:8px;border-left:6px solid #2563eb;}
+.group-hr {background:linear-gradient(135deg,#dcfce7,#bbf7d0);padding:12px;border-radius:14px;font-weight:900;color:#14532d;margin-top:8px;border-left:6px solid #16a34a;}
+.group-stock {background:linear-gradient(135deg,#ffedd5,#fed7aa);padding:12px;border-radius:14px;font-weight:900;color:#7c2d12;margin-top:8px;border-left:6px solid #f97316;}
+.group-accounts {background:linear-gradient(135deg,#f3e8ff,#e9d5ff);padding:12px;border-radius:14px;font-weight:900;color:#581c87;margin-top:8px;border-left:6px solid #7c3aed;}
+.group-reports {background:linear-gradient(135deg,#fee2e2,#fecaca);padding:12px;border-radius:14px;font-weight:900;color:#7f1d1d;margin-top:8px;border-left:6px solid #dc2626;}
+</style>
+""", unsafe_allow_html=True)
+
+
+def page_header(title, subtitle=""):
+    st.markdown(f"<div class='erp-title'>{title}<div class='erp-subtitle'>{subtitle}</div></div>", unsafe_allow_html=True)
+
+
+def get_ledgers(group_filter=None):
+    try:
+        q = supabase.table("ledgers").select("*")
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        data = q.order("ledger_name").execute().data or []
+        df = safe_df(data)
+        if group_filter and not df.empty and "ledger_group" in df.columns:
+            df = df[df["ledger_group"].astype(str).isin(group_filter)]
+        names = df["ledger_name"].dropna().astype(str).tolist() if not df.empty and "ledger_name" in df.columns else []
+    except Exception:
+        names = []
+    fallback = [
+        "Cash", "Bank", "Sales Account", "Purchase Account", "Expense Account", "Service Income",
+        "Input CGST", "Input SGST", "Input IGST", "Output CGST", "Output SGST", "Output IGST",
+        "Customer", "Vendor", "Stock Raw Material", "Stock Finished Goods", "Stock WIP"
+    ]
+    final = sorted(list(dict.fromkeys([x for x in names + fallback if str(x).strip() != ""])))
+    return final
+
+
+def ledger_select(label, key, group_filter=None):
+    options = get_ledgers(group_filter) + ["➕ Add New Ledger"]
+    choice = st.selectbox(label, options, key=key)
+    if choice == "➕ Add New Ledger":
+        return st.text_input(f"New {label}", key=f"new_{key}")
+    return choice
+
+
+def ensure_ledger(name, group="General", gstin="", mobile="", email=""):
+    name = str(name).strip()
+    if not name or name == "➕ Add New Ledger":
+        return
+    try:
+        existing = supabase.table("ledgers").select("id").eq("client_code", get_client_code()).eq("ledger_name", name).limit(1).execute().data or []
+        if not existing:
+            insert_row("ledgers", {
+                "ledger_name": name,
+                "ledger_group": group,
+                "gstin": gstin,
+                "mobile": mobile,
+                "email": email,
+                "opening_balance": 0,
+                "status": "Active",
+                "created_by": st.session_state.get("username", "")
+            })
+    except Exception:
+        pass
+
+
+def rows_editor(module_key, default_name="Item"):
+    base = pd.DataFrame([
+        {"item_name": default_name, "hsn_sac": "", "qty": 1.0, "rate": 0.0, "cgst_rate": 0.0, "sgst_rate": 0.0, "igst_rate": 0.0}
+    ])
+    rows = st.data_editor(
+        base,
+        num_rows="dynamic",
+        use_container_width=True,
+        key=f"items_editor_{module_key}",
+        column_config={
+            "item_name": st.column_config.TextColumn("Item / Service Name", required=True),
+            "hsn_sac": st.column_config.TextColumn("HSN / SAC"),
+            "qty": st.column_config.NumberColumn("Qty", min_value=0.0, step=1.0),
+            "rate": st.column_config.NumberColumn("Rate", min_value=0.0, step=1.0),
+            "cgst_rate": st.column_config.NumberColumn("CGST %", min_value=0.0, step=0.5),
+            "sgst_rate": st.column_config.NumberColumn("SGST %", min_value=0.0, step=0.5),
+            "igst_rate": st.column_config.NumberColumn("IGST %", min_value=0.0, step=0.5),
+        }
+    )
+    rows = rows.fillna("")
+    return rows
+
+
+def calculate_items(rows):
+    out = []
+    totals = {"taxable": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total": 0.0}
+    for _, r in rows.iterrows():
+        item = str(r.get("item_name", "")).strip()
+        if not item:
+            continue
+        qty = float(r.get("qty") or 0)
+        rate = float(r.get("rate") or 0)
+        cgst_rate = float(r.get("cgst_rate") or 0)
+        sgst_rate = float(r.get("sgst_rate") or 0)
+        igst_rate = float(r.get("igst_rate") or 0)
+        taxable, cgst, sgst, igst, total = calc_gst(qty, rate, cgst_rate, sgst_rate, igst_rate)
+        row = {
+            "item_name": item,
+            "hsn_sac": str(r.get("hsn_sac", "")),
+            "qty": qty,
+            "rate": rate,
+            "taxable_value": taxable,
+            "cgst": cgst,
+            "sgst": sgst,
+            "igst": igst,
+            "total_value": total,
+        }
+        out.append(row)
+        totals["taxable"] += taxable
+        totals["cgst"] += cgst
+        totals["sgst"] += sgst
+        totals["igst"] += igst
+        totals["total"] += total
+    return out, totals
+
+
+def invoice_html(title, voucher_no, voucher_date, party_label, party_name, gstin, place, items, totals, remarks=""):
+    item_rows = "".join([
+        f"<tr><td>{i+1}</td><td>{r['item_name']}</td><td>{r.get('hsn_sac','')}</td><td style='text-align:right'>{r['qty']:,.2f}</td><td style='text-align:right'>{r['rate']:,.2f}</td><td style='text-align:right'>{r['taxable_value']:,.2f}</td><td style='text-align:right'>{r['cgst']:,.2f}</td><td style='text-align:right'>{r['sgst']:,.2f}</td><td style='text-align:right'>{r['igst']:,.2f}</td><td style='text-align:right'>{r['total_value']:,.2f}</td></tr>"
+        for i, r in enumerate(items)
+    ])
+    html = f"""
+    <div class='print-box' id='invoice_print_area'>
+      <div class='print-title'>{title}</div>
+      <table style='width:100%;margin-bottom:12px;'>
+        <tr><td><b>No:</b> {voucher_no}</td><td><b>Date:</b> {voucher_date}</td></tr>
+        <tr><td><b>{party_label}:</b> {party_name}</td><td><b>GSTIN:</b> {gstin}</td></tr>
+        <tr><td><b>Place:</b> {place}</td><td><b>Client:</b> {get_client_code()}</td></tr>
+      </table>
+      <table class='print-table'>
+        <tr><th>#</th><th>Item</th><th>HSN/SAC</th><th>Qty</th><th>Rate</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th></tr>
+        {item_rows}
+      </table>
+      <div class='print-total'>Grand Total: ₹ {totals['total']:,.2f}</div>
+      <p><b>Remarks:</b> {remarks}</p>
+    </div>
+    """
+    return html
+
+
+def render_print_invoice(html, file_name):
+    st.markdown(html, unsafe_allow_html=True)
+    components.html(f"""
+    <html><body>
+    <button onclick='window.print()' style='background:#2563eb;color:white;border:none;padding:10px 20px;border-radius:10px;font-weight:bold;'>Print Invoice / Voucher</button>
+    <div>{html}</div>
+    </body></html>
+    """, height=80, scrolling=False)
+    st.download_button("Download Printable HTML", data=html.encode("utf-8"), file_name=file_name, mime="text/html", use_container_width=True)
+
+
+def ledger_master():
+    page_header("Ledger Master", "Create ledgers for Customers, Vendors, GST, Bank, Cash and Stock accounts")
+    df = load_table("ledgers", 500)
+    with st.form("ledger_form"):
+        c1, c2 = st.columns(2)
+        ledger_name = c1.text_input("Ledger Name")
+        ledger_group = c2.selectbox("Ledger Group", ["Customer", "Vendor", "Sales", "Purchase", "Expense", "Service", "GST", "Bank", "Cash", "Stock", "Asset", "General"])
+        gstin = c1.text_input("GSTIN")
+        mobile = c2.text_input("Mobile")
+        email = c1.text_input("Email")
+        opening_balance = c2.number_input("Opening Balance", value=0.0)
+        status = c1.selectbox("Status", ["Active", "Inactive"])
+        if st.form_submit_button("Save Ledger", use_container_width=True):
+            if ledger_name.strip() == "":
+                st.error("Ledger Name is required.")
+            else:
+                insert_row("ledgers", {"ledger_name": ledger_name, "ledger_group": ledger_group, "gstin": gstin, "mobile": mobile, "email": email, "opening_balance": opening_balance, "status": status, "created_by": st.session_state.get("username", "")})
+                st.success("Ledger saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("ledgers", df, "Ledger Register")
+    excel_upload_section("ledgers", "Ledgers", ["ledger_name"])
+
+
+def sales_purchase_form(module_key, title, party_label):
+    page_header(title, "Multiple items, GST calculation, ledger dropdown and printable invoice")
+    df = load_table(module_key, 500)
+    is_sales = module_key == "sales"
+    party_col = "customer_name" if is_sales else "vendor_name"
+    ledger_group = ["Customer"] if is_sales else ["Vendor"]
+
+    c1, c2 = st.columns(2)
+    invoice_no = c1.text_input("Invoice / Voucher No", key=f"{module_key}_no")
+    invoice_date = c2.date_input("Invoice Date", value=india_now().date(), format="DD-MM-YYYY", key=f"{module_key}_date")
+    party_name = ledger_select(party_label, f"{module_key}_party", ledger_group)
+    gstin = c2.text_input("GSTIN", key=f"{module_key}_gstin")
+    place_of_supply = c1.text_input("Place of Supply", key=f"{module_key}_place")
+    remarks = c2.text_input("Remarks", key=f"{module_key}_remarks")
+
+    st.subheader("Invoice Items")
+    rows = rows_editor(module_key, "Item")
+    items, totals = calculate_items(rows)
+
+    st.info(f"Taxable: ₹ {totals['taxable']:,.2f} | CGST: ₹ {totals['cgst']:,.2f} | SGST: ₹ {totals['sgst']:,.2f} | IGST: ₹ {totals['igst']:,.2f} | Total: ₹ {totals['total']:,.2f}")
+    html = invoice_html(title, invoice_no, invoice_date, party_label, party_name, gstin, place_of_supply, items, totals, remarks)
+    render_print_invoice(html, f"{module_key}_{invoice_no or 'invoice'}.html")
+
+    if st.button("Save Invoice / Voucher", use_container_width=True, key=f"save_{module_key}_voucher"):
+        if invoice_no.strip() == "" or str(party_name).strip() == "":
+            st.error("Invoice No and Party Name are required.")
+        elif not items:
+            st.error("At least one item is required.")
+        else:
+            ensure_ledger(party_name, "Customer" if is_sales else "Vendor", gstin=gstin)
+            for item in items:
+                row = {
+                    "invoice_no": invoice_no,
+                    "invoice_date": str(invoice_date),
+                    party_col: party_name,
+                    "gstin": gstin,
+                    "place_of_supply": place_of_supply,
+                    "item_name": item["item_name"],
+                    "hsn_sac": item.get("hsn_sac", ""),
+                    "qty": item["qty"],
+                    "rate": item["rate"],
+                    "taxable_value": item["taxable_value"],
+                    "cgst": item["cgst"],
+                    "sgst": item["sgst"],
+                    "igst": item["igst"],
+                    "total_value": item["total_value"],
+                    "remarks": remarks,
+                    "created_by": st.session_state.get("username", "")
+                }
+                insert_row(module_key, row)
+            auto_entry_from_voucher("Sales" if is_sales else "Purchase", invoice_no, invoice_date, party_name, totals)
+            st.success("Invoice saved successfully with multiple items.")
+            st.rerun()
+
+    st.divider()
+    show_table_with_edit_delete(module_key, df, title + " Register")
+    excel_upload_section(module_key, title, ["invoice_no", "invoice_date"])
+    google_sheet_import_section(module_key, title)
+
+
+def auto_entry_from_voucher(voucher_type, voucher_no, voucher_date, party_name, totals):
+    try:
+        if voucher_type == "Sales":
+            dr = party_name
+            cr = "Sales Account"
+        elif voucher_type == "Purchase":
+            dr = "Purchase Account"
+            cr = party_name
+        elif voucher_type == "Expense":
+            dr = "Expense Account"
+            cr = party_name
+        elif voucher_type == "Service":
+            dr = party_name
+            cr = "Service Income"
+        else:
+            return
+        insert_row("accounting_entries", {
+            "entry_date": str(voucher_date),
+            "voucher_type": voucher_type,
+            "voucher_no": voucher_no,
+            "ledger_dr": dr,
+            "ledger_cr": cr,
+            "taxable_value": totals.get("taxable", 0),
+            "cgst": totals.get("cgst", 0),
+            "sgst": totals.get("sgst", 0),
+            "igst": totals.get("igst", 0),
+            "amount": totals.get("total", 0),
+            "narration": f"Auto entry for {voucher_type} voucher {voucher_no}",
+            "created_by": st.session_state.get("username", "")
+        })
+    except Exception:
+        pass
+
+
+def expense_module():
+    page_header("Expense GST Voucher", "GST enabled expense voucher with ledger dropdown and register")
+    df = load_table("expenses", 500)
+    with st.form("expense_form_v3"):
+        c1, c2 = st.columns(2)
+        expense_date = c1.date_input("Expense Date", value=india_now().date(), format="DD-MM-YYYY")
+        invoice_no = c2.text_input("Voucher / Invoice No")
+        expense_head = ledger_select("Expense Ledger", "expense_head_ledger", ["Expense"])
+        vendor_name = ledger_select("Vendor / Paid To Ledger", "expense_vendor_ledger", ["Vendor", "Cash", "Bank"])
+        gstin = c1.text_input("GSTIN")
+        taxable = c2.number_input("Taxable Value", value=0.0)
+        cgst_rate = c1.number_input("CGST %", value=0.0)
+        sgst_rate = c2.number_input("SGST %", value=0.0)
+        igst_rate = c1.number_input("IGST %", value=0.0)
+        payment_mode = c2.selectbox("Payment Mode", ["Cash", "Bank", "Credit", "UPI", "Cheque"])
+        remarks = c1.text_input("Remarks")
+        taxable_value, cgst, sgst, igst, total = calc_gst(1, taxable, cgst_rate, sgst_rate, igst_rate)
+        st.info(f"Total Expense Voucher: ₹ {total:,.2f}")
+        if st.form_submit_button("Save Expense Voucher", use_container_width=True):
+            if str(expense_head).strip() == "" or str(vendor_name).strip() == "":
+                st.error("Expense Ledger and Vendor Ledger are required.")
+            else:
+                ensure_ledger(expense_head, "Expense")
+                ensure_ledger(vendor_name, "Vendor", gstin=gstin)
+                insert_row("expenses", {"expense_date": str(expense_date), "expense_head": expense_head, "vendor_name": vendor_name, "gstin": gstin, "invoice_no": invoice_no, "taxable_value": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "total_value": total, "payment_mode": payment_mode, "remarks": remarks, "created_by": st.session_state.get("username", "")})
+                auto_entry_from_voucher("Expense", invoice_no, expense_date, vendor_name, {"taxable": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "total": total})
+                st.success("Expense voucher saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("expenses", df, "Expense Register")
+    excel_upload_section("expenses", "Expense Register", ["expense_date", "expense_head"])
+    google_sheet_import_section("expenses", "Expense Register")
+
+
+def service_voucher_module():
+    page_header("Service Voucher", "Separate service voucher and service register with GST and print option")
+    df = load_table("service_vouchers", 500)
+    c1, c2 = st.columns(2)
+    voucher_no = c1.text_input("Service Voucher No", key="service_no")
+    voucher_date = c2.date_input("Voucher Date", value=india_now().date(), format="DD-MM-YYYY", key="service_date")
+    customer_name = ledger_select("Customer Ledger", "service_customer", ["Customer"])
+    mobile = c2.text_input("Mobile", key="service_mobile")
+    email = c1.text_input("Email", key="service_email")
+    service_name = c2.text_input("Service Name", key="service_name")
+    sac_code = c1.text_input("SAC Code", key="service_sac")
+    taxable = c2.number_input("Taxable Value", value=0.0, key="service_taxable")
+    cgst_rate = c1.number_input("CGST %", value=0.0, key="service_cgst")
+    sgst_rate = c2.number_input("SGST %", value=0.0, key="service_sgst")
+    igst_rate = c1.number_input("IGST %", value=0.0, key="service_igst")
+    payment_status = c2.selectbox("Payment Status", ["Pending", "Received", "Partly Received"], key="service_payment")
+    remarks = c1.text_input("Remarks", key="service_remarks")
+    taxable_value, cgst, sgst, igst, total = calc_gst(1, taxable, cgst_rate, sgst_rate, igst_rate)
+    items = [{"item_name": service_name, "hsn_sac": sac_code, "qty": 1, "rate": taxable, "taxable_value": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "total_value": total}]
+    html = invoice_html("Service Voucher", voucher_no, voucher_date, "Customer", customer_name, "", "", items, {"taxable": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "total": total}, remarks)
+    render_print_invoice(html, f"service_{voucher_no or 'voucher'}.html")
+    if st.button("Save Service Voucher", use_container_width=True, key="save_service_voucher_v3"):
+        if voucher_no.strip() == "" or str(customer_name).strip() == "":
+            st.error("Voucher No and Customer are required.")
+        else:
+            ensure_ledger(customer_name, "Customer", mobile=mobile, email=email)
+            insert_row("service_vouchers", {"voucher_no": voucher_no, "voucher_date": str(voucher_date), "customer_name": customer_name, "mobile": mobile, "email": email, "service_name": service_name, "sac_code": sac_code, "taxable_value": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "total_value": total, "payment_status": payment_status, "remarks": remarks, "created_by": st.session_state.get("username", "")})
+            auto_entry_from_voucher("Service", voucher_no, voucher_date, customer_name, {"taxable": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "total": total})
+            st.success("Service voucher saved successfully.")
+            st.rerun()
+    show_table_with_edit_delete("service_vouchers", df, "Service Register")
+    excel_upload_section("service_vouchers", "Service Register", ["voucher_no", "voucher_date"])
+    google_sheet_import_section("service_vouchers", "Service Register")
+
+
+def accounting_entries_module():
+    page_header("Accounting Entries Form", "Ledger dropdowns with GST fields and voucher preview")
+    df = load_table("accounting_entries", 500)
+    with st.form("accounting_entries_form_v3"):
+        c1, c2 = st.columns(2)
+        entry_date = c1.date_input("Entry Date", value=india_now().date(), format="DD-MM-YYYY")
+        voucher_type = c2.selectbox("Voucher Type", ["Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase", "Expense", "Service", "Stock"])
+        voucher_no = c1.text_input("Voucher No")
+        ledger_dr = ledger_select("Ledger Dr", "entry_ledger_dr")
+        ledger_cr = ledger_select("Ledger Cr", "entry_ledger_cr")
+        taxable_value = c1.number_input("Taxable Value", value=0.0)
+        cgst = c2.number_input("CGST", value=0.0)
+        sgst = c1.number_input("SGST", value=0.0)
+        igst = c2.number_input("IGST", value=0.0)
+        amount = taxable_value + cgst + sgst + igst
+        narration = c1.text_area("Narration")
+        st.markdown(f"""
+        <div class="print-box">
+        <b>Accounting Entry Preview</b><br>
+        {ledger_dr} Dr &nbsp;&nbsp; ₹ {amount:,.2f}<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;To {ledger_cr} &nbsp;&nbsp; ₹ {amount:,.2f}<br>
+        Taxable: ₹ {taxable_value:,.2f} | CGST: ₹ {cgst:,.2f} | SGST: ₹ {sgst:,.2f} | IGST: ₹ {igst:,.2f}<br>
+        <b>Narration:</b> {narration}
+        </div>
+        """, unsafe_allow_html=True)
+        if st.form_submit_button("Save Accounting Entry", use_container_width=True):
+            if str(ledger_dr).strip() == "" or str(ledger_cr).strip() == "":
+                st.error("Ledger Dr and Ledger Cr are required.")
+            else:
+                ensure_ledger(ledger_dr)
+                ensure_ledger(ledger_cr)
+                insert_row("accounting_entries", {"entry_date": str(entry_date), "voucher_type": voucher_type, "voucher_no": voucher_no, "ledger_dr": ledger_dr, "ledger_cr": ledger_cr, "taxable_value": taxable_value, "cgst": cgst, "sgst": sgst, "igst": igst, "amount": amount, "narration": narration, "created_by": st.session_state.get("username", "")})
+                st.success("Accounting entry saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("accounting_entries", df, "Accounting Entries")
+    excel_upload_section("accounting_entries", "Accounting Entries", ["entry_date", "ledger_dr", "ledger_cr"])
+    google_sheet_import_section("accounting_entries", "Accounting Entries")
+
+
+def stock_voucher_module():
+    page_header("Stock Voucher Entries", "Separate stock inward / outward / production / transfer voucher register")
+    df = load_table("stock_vouchers", 500)
+    with st.form("stock_voucher_form"):
+        c1, c2 = st.columns(2)
+        voucher_no = c1.text_input("Stock Voucher No")
+        voucher_date = c2.date_input("Voucher Date", value=india_now().date(), format="DD-MM-YYYY")
+        voucher_type = c1.selectbox("Voucher Type", ["Raw Material Inward", "Raw Material Issue", "Finished Goods Production", "Finished Goods Sales Issue", "WIP Input", "WIP Output", "Stock Transfer", "Adjustment"])
+        stock_category = c2.selectbox("Stock Category", ["Raw Material", "Finished Goods", "WIP"])
+        item_code = c1.text_input("Item Code")
+        item_name = c2.text_input("Item Name")
+        uom = c1.text_input("UOM", value="PCS")
+        qty = c2.number_input("Qty", value=0.0)
+        rate = c1.number_input("Rate", value=0.0)
+        value = round(qty * rate, 2)
+        stock_ledger = ledger_select("Stock Ledger", "stock_voucher_ledger", ["Stock"])
+        remarks = c2.text_input("Remarks")
+        st.info(f"Stock Voucher Value: ₹ {value:,.2f}")
+        if st.form_submit_button("Save Stock Voucher", use_container_width=True):
+            if voucher_no.strip() == "" or item_name.strip() == "":
+                st.error("Voucher No and Item Name are required.")
+            else:
+                ensure_ledger(stock_ledger, "Stock")
+                insert_row("stock_vouchers", {"voucher_no": voucher_no, "voucher_date": str(voucher_date), "voucher_type": voucher_type, "stock_category": stock_category, "item_code": item_code, "item_name": item_name, "uom": uom, "qty": qty, "rate": rate, "value": value, "stock_ledger": stock_ledger, "remarks": remarks, "created_by": st.session_state.get("username", "")})
+                st.success("Stock voucher saved successfully.")
+                st.rerun()
+    show_table_with_edit_delete("stock_vouchers", df, "Stock Voucher Register")
+    excel_upload_section("stock_vouchers", "Stock Voucher Register", ["voucher_no", "voucher_date", "item_name"])
+    google_sheet_import_section("stock_vouchers", "Stock Voucher Register")
+
+
+def show_register_report(title, df):
+    page_header(title, "Register view with search and Excel / CSV download")
+    search = st.text_input(f"Search {title}", key=f"search_register_{title}")
+    filtered = filter_dataframe(df, search)
+    st.dataframe(filtered, use_container_width=True)
+    c1, c2 = st.columns(2)
+    c1.download_button("Download Register CSV", data=filtered.to_csv(index=False).encode("utf-8"), file_name=f"{title.replace(' ','_').lower()}.csv", mime="text/csv", use_container_width=True)
+    c2.download_button("Download Register Excel", data=to_excel_bytes(filtered), file_name=f"{title.replace(' ','_').lower()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+
+def build_gst_register():
+    frames = []
+    mapping = [("Sales", "sales", "invoice_date"), ("Purchase", "purchase", "invoice_date"), ("Expense", "expenses", "expense_date"), ("Service", "service_vouchers", "voucher_date")]
+    for source, key, date_col in mapping:
+        try:
+            df = load_table(key, 5000)
+            if not df.empty:
+                df = df.copy()
+                df["source"] = source
+                df["voucher_date"] = df[date_col] if date_col in df.columns else ""
+                keep = [c for c in ["source", "client_code", "voucher_date", "invoice_no", "voucher_no", "customer_name", "vendor_name", "expense_head", "service_name", "gstin", "taxable_value", "cgst", "sgst", "igst", "total_value"] if c in df.columns]
+                frames.append(df[keep])
+        except Exception:
+            pass
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def build_stock_register():
+    frames = []
+    for source, key in [("Raw Material", "stock_raw_material"), ("Finished Goods", "stock_finished_goods"), ("WIP", "stock_wip"), ("Stock Voucher", "stock_vouchers")]:
+        try:
+            df = load_table(key, 5000)
+            if not df.empty:
+                df = df.copy()
+                df["source"] = source
+                frames.append(df)
+        except Exception:
+            pass
+    return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
+
+
+def export_reports():
+    page_header("Reports & Registers", "Sales, Purchase, Stock, Expense, GST and all master registers")
+    report_labels = ["Sales Register", "Purchase Register", "Stock Register", "Expense Register", "Service Register", "GST Register", "Ledger Register", "Accounting Register", "Fixed Assets Register", "All Table Export"]
+    report = st.selectbox("Select Register", report_labels)
+    rows = st.number_input("Rows to load", min_value=100, max_value=20000, value=5000, step=100)
+    if report == "Sales Register":
+        df = load_table("sales", int(rows))
+    elif report == "Purchase Register":
+        df = load_table("purchase", int(rows))
+    elif report == "Stock Register":
+        df = build_stock_register()
+    elif report == "Expense Register":
+        df = load_table("expenses", int(rows))
+    elif report == "Service Register":
+        df = load_table("service_vouchers", int(rows))
+    elif report == "GST Register":
+        df = build_gst_register()
+    elif report == "Ledger Register":
+        df = load_table("ledgers", int(rows))
+    elif report == "Accounting Register":
+        df = load_table("accounting_entries", int(rows))
+    elif report == "Fixed Assets Register":
+        df = load_table("fixed_assets", int(rows))
+    else:
+        options = list(DISPLAY_COLUMNS.keys())
+        table_key = st.selectbox("Select Table", options)
+        df = load_table(table_key, int(rows))
+    show_register_report(report, df)
+
+
+def client_master():
+    page_header("Client Master", "Control module access client-wise")
+    if not is_super_admin():
+        st.warning("Only Super Admin can access Client Master.")
+        return
+    with st.form("client_form_v3"):
+        c1, c2 = st.columns(2)
+        client_code = c1.text_input("Client Code", placeholder="Example: CHOICE")
+        client_name = c2.text_input("Client Name", placeholder="Example: Choice Group")
+        status = c1.selectbox("Status", ["Active", "Inactive"])
+        st.subheader("Office Module Access")
+        o1, o2, o3, o4, o5 = st.columns(5)
+        allow_task = o1.checkbox("Task", value=True)
+        allow_attendance = o2.checkbox("Attendance", value=True)
+        allow_inout = o3.checkbox("IN / OUT", value=True)
+        allow_visitor = o4.checkbox("Visitor", value=True)
+        allow_appointment = o5.checkbox("Appointment", value=True)
+        st.subheader("Inventory / Accounting Module Access")
+        e1, e2, e3, e4, e5 = st.columns(5)
+        allow_raw_material = e1.checkbox("Raw Material", value=True)
+        allow_finished_goods = e2.checkbox("Finished Goods", value=True)
+        allow_wip = e3.checkbox("WIP", value=True)
+        allow_stock_voucher = e4.checkbox("Stock Voucher", value=True)
+        allow_sales = e5.checkbox("Sales", value=True)
+        e6, e7, e8, e9, e10 = st.columns(5)
+        allow_purchase = e6.checkbox("Purchase", value=True)
+        allow_expense = e7.checkbox("Expense", value=True)
+        allow_service_voucher = e8.checkbox("Service Voucher", value=True)
+        allow_fixed_assets = e9.checkbox("Fixed Assets", value=True)
+        allow_accounting_entries = e10.checkbox("Accounting / Ledger", value=True)
+        e11, e12 = st.columns(2)
+        allow_excel_upload = e11.checkbox("Excel Upload", value=True)
+        allow_google_sheet_import = e12.checkbox("Google Sheet Import", value=True)
+        if st.form_submit_button("Save Client", use_container_width=True):
+            if client_code.strip() == "" or client_name.strip() == "":
+                st.error("Client Code and Client Name are required.")
+            else:
+                insert_row("clients", {
+                    "client_code": client_code.strip().upper(), "client_name": client_name.strip(),
+                    "allow_task": allow_task, "allow_attendance": allow_attendance, "allow_inout": allow_inout, "allow_visitor": allow_visitor,
+                    "allow_appointment": allow_appointment, "allow_raw_material": allow_raw_material, "allow_finished_goods": allow_finished_goods, "allow_wip": allow_wip,
+                    "allow_stock_voucher": allow_stock_voucher, "allow_sales": allow_sales, "allow_purchase": allow_purchase, "allow_expense": allow_expense,
+                    "allow_service_voucher": allow_service_voucher, "allow_fixed_assets": allow_fixed_assets, "allow_accounting_entries": allow_accounting_entries,
+                    "allow_excel_upload": allow_excel_upload, "allow_google_sheet_import": allow_google_sheet_import, "status": status
+                })
+                st.success("Client saved successfully.")
+                st.rerun()
+    df = load_table("clients", 500)
+    show_table_with_edit_delete("clients", df, "Client List")
+
+
+def get_dynamic_menu():
+    if is_super_admin():
+        return ["Dashboard", "Client Master", "User Management", "Employee Master", "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher", "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Ledger Master", "Fixed Assets", "Accounting Entries", "Excel Export Reports"]
+    if st.session_state["role"] == "Admin":
+        menu = ["Dashboard", "User Management", "Employee Master"]
+    else:
+        menu = []
+    ordered_modules = ["Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher", "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Ledger Master", "Fixed Assets", "Accounting Entries"]
+    for module in ordered_modules:
+        if is_allowed(module):
+            menu.append(module)
+    menu.append("Excel Export Reports")
+    return menu
+
+
+def select_grouped_menu():
+    available = get_dynamic_menu()
+    groups = {
+        "🔵 Admin": ("group-admin", ["Dashboard", "Client Master", "User Management", "Employee Master", "Appointments"]),
+        "🟢 HR / Office": ("group-hr", ["Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation"]),
+        "🟠 Stock": ("group-stock", ["Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher"]),
+        "🟣 Accounts": ("group-accounts", ["Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Ledger Master", "Fixed Assets", "Accounting Entries"]),
+        "🔴 Reports": ("group-reports", ["Excel Export Reports"]),
+    }
+    available_groups = [g for g, (_, items) in groups.items() if any(item in available for item in items)]
+    selected_group = st.sidebar.selectbox("Select Group", available_groups, key="selected_group_menu")
+    css_class, items = groups[selected_group]
+    allowed_items = [x for x in items if x in available]
+    st.sidebar.markdown(f"<div class='{css_class}'>{selected_group}</div>", unsafe_allow_html=True)
+    return st.sidebar.radio("Select Module", allowed_items, key=f"module_{selected_group}")
+
+
+def main_app():
+    rbm_header()
+    st.sidebar.title("RBM AI")
+    st.sidebar.write(f"Client: {st.session_state.get('client_name')}")
+    st.sidebar.write(f"Client Code: {get_client_code()}")
+    st.sidebar.write(f"User: {st.session_state.get('full_name')}")
+    st.sidebar.write(f"Role: {st.session_state.get('role')}")
+    st.sidebar.write(f"Date: {india_now().strftime('%d-%m-%Y')}")
+    st.sidebar.write("Time Zone: Asia/Kolkata")
+    if st.sidebar.button("Logout", use_container_width=True):
+        st.session_state.clear(); st.rerun()
+    choice = select_grouped_menu()
+    if choice == "Dashboard": dashboard()
+    elif choice == "Client Master": client_master()
+    elif choice == "User Management": user_management()
+    elif choice == "Employee Master": employee_master()
+    elif choice == "Attendance Management": attendance()
+    elif choice == "IN / OUT Register": inout_register()
+    elif choice == "Visitor Register": visitor_register()
+    elif choice == "Task Delegation": task_delegation()
+    elif choice == "Appointments": appointment_module()
+    elif choice == "Raw Material Stock": stock_form("stock_raw_material", "Raw Material Stock", "raw")
+    elif choice == "Finished Goods Stock": stock_form("stock_finished_goods", "Finished Goods Stock", "fg")
+    elif choice == "WIP Stock": stock_form("stock_wip", "Work in Progress Stock", "wip")
+    elif choice == "Stock Voucher": stock_voucher_module()
+    elif choice == "Sales GST Invoice": sales_purchase_form("sales", "Sales GST Invoice", "Customer Name")
+    elif choice == "Purchase GST Invoice": sales_purchase_form("purchase", "Purchase GST Invoice", "Vendor Name")
+    elif choice == "Expense GST": expense_module()
+    elif choice == "Service Voucher": service_voucher_module()
+    elif choice == "Ledger Master": ledger_master()
+    elif choice == "Fixed Assets": fixed_assets_module()
+    elif choice == "Accounting Entries": accounting_entries_module()
+    elif choice == "Excel Export Reports": export_reports()
+# ================= END RBM ERP PHASE 3 OVERRIDES =================
+
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
