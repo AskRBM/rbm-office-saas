@@ -299,6 +299,109 @@ def update_row(key, row_id, row):
 
 def delete_row(key, row_id): supabase.table(TABLES[key]).delete().eq("id", int(row_id)).execute()
 
+
+def reverse_record(key, row_id, reversal_reason=""):
+    """Create a reverse/cancel entry and mark original as Reversed.
+    Original entry is kept for audit trail. Reversal row has negative numeric values where applicable.
+    """
+    try:
+        row_id = int(row_id)
+        table_name = TABLES[key]
+
+        original_df = safe_df(
+            supabase.table(table_name)
+            .select("*")
+            .eq("id", row_id)
+            .limit(1)
+            .execute()
+            .data
+        )
+
+        if original_df.empty:
+            return False, "Original record not found."
+
+        original = original_df.iloc[0].to_dict()
+
+        if str(original.get("reversal_status", "Active")).lower() in ["reversed", "reverse"]:
+            return False, "This entry is already reversed."
+
+        skip_cols = {"id", "created_at", "updated_at"}
+        reverse_row = {}
+
+        for col, val in original.items():
+            if col in skip_cols:
+                continue
+
+            if col in ["reversal_status", "reversed_from_id", "reversal_reason", "reversed_by", "reversed_at"]:
+                continue
+
+            if col in NUMERIC_COLUMNS:
+                try:
+                    reverse_row[col] = -1 * float(val or 0)
+                except Exception:
+                    reverse_row[col] = 0
+            else:
+                reverse_row[col] = val
+
+        reverse_row["reversal_status"] = "Reverse"
+        reverse_row["reversed_from_id"] = row_id
+        reverse_row["reversal_reason"] = str(reversal_reason or "Reversed by user")
+        reverse_row["reversed_by"] = current_user()
+        reverse_row["reversed_at"] = india_now().isoformat()
+
+        if "remarks" in reverse_row:
+            reverse_row["remarks"] = f"REVERSAL of ID {row_id}. {reversal_reason or ''}".strip()
+
+        if "created_by" in reverse_row:
+            reverse_row["created_by"] = current_user()
+
+        supabase.table(table_name).insert(reverse_row).execute()
+
+        supabase.table(table_name).update({
+            "reversal_status": "Reversed",
+            "reversal_reason": str(reversal_reason or "Reversed by user"),
+            "reversed_by": current_user(),
+            "reversed_at": india_now().isoformat()
+        }).eq("id", row_id).execute()
+
+        # If accounting entry has line table, reverse lines also.
+        if key == "accounting_entries":
+            lines = safe_df(
+                supabase.table("accounting_entry_lines")
+                .select("*")
+                .eq("entry_id", row_id)
+                .execute()
+                .data
+            )
+            if not lines.empty:
+                for _, line in lines.iterrows():
+                    l = line.to_dict()
+                    new_line = {}
+                    for c, v in l.items():
+                        if c in ["id", "created_at"]:
+                            continue
+                        if c == "entry_id":
+                            # Generic reversal line cannot know new inserted header id from Supabase API response here.
+                            # Keep reference to original entry id for traceability.
+                            new_line[c] = row_id
+                        elif c == "dr_cr":
+                            new_line[c] = "Cr" if str(v).lower() == "dr" else "Dr"
+                        elif c == "amount":
+                            try:
+                                new_line[c] = float(v or 0)
+                            except Exception:
+                                new_line[c] = 0
+                        else:
+                            new_line[c] = v
+                    if "remarks" in new_line:
+                        new_line["remarks"] = f"Reversal line of entry {row_id}"
+                    supabase.table("accounting_entry_lines").insert(new_line).execute()
+
+        return True, "Entry reversed successfully. Original is marked as Reversed and separate reverse entry is created."
+
+    except Exception as e:
+        return False, f"Reverse failed: {e}"
+
 def get_count(key):
     query = supabase.table(TABLES[key]).select("id", count="exact")
     if key != "clients" and not is_super_admin(): query = query.eq("client_code", get_client_code())
@@ -321,6 +424,9 @@ def show_metric_card(label, value):
 
 def show_table_with_edit_delete(key, df, title):
     st.subheader(title)
+    msg_key = f"last_action_msg_{key}"
+    if msg_key in st.session_state:
+        st.success(st.session_state.pop(msg_key))
     search = st.text_input(f"Search {title}", key=f"search_{key}")
     filtered = filter_dataframe(df, search)
     st.dataframe(filtered, use_container_width=True)
@@ -337,7 +443,7 @@ def show_table_with_edit_delete(key, df, title):
                 if col in ["id","financial_year"]: st.text_input(col, str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
                 else: edited[col] = st.text_input(col, str(selected_row[col]), key=f"edit_{key}_{col}")
             if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
-                update_row(key, selected_id, edited); st.success("Record updated"); st.rerun()
+                update_row(key, selected_id, edited); st.session_state[f"last_action_msg_{key}"] = "Record updated successfully. Details closed."; st.rerun()
         if key in REVERSIBLE_TABLE_KEYS:
             with st.expander("Reverse / Cancel Posted Entry"):
                 st.warning("This will create a separate reversal entry and mark the original as Reversed. It will not delete original data.")
@@ -345,7 +451,7 @@ def show_table_with_edit_delete(key, df, title):
                 if st.button("Reverse Selected Entry", use_container_width=True, key=f"reverse_{key}"):
                     ok, msg = reverse_record(key, selected_id, reversal_reason)
                     if ok:
-                        st.success(msg)
+                        st.session_state[f"last_action_msg_{key}"] = msg
                         st.rerun()
                     else:
                         st.error(msg)
@@ -353,7 +459,7 @@ def show_table_with_edit_delete(key, df, title):
         with st.expander("Delete Selected Record"):
             st.warning("This will permanently delete selected record. Prefer Reverse for posted/saved business entries.")
             if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
-                delete_row(key, selected_id); st.success("Record deleted"); st.rerun()
+                delete_row(key, selected_id); st.session_state[f"last_action_msg_{key}"] = "Record deleted successfully. Details closed."; st.rerun()
 
 # ---------- MASTER DATA HELPERS ----------
 def get_ledger_names(group_name=None, include_all=False):
