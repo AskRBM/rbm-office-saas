@@ -110,9 +110,11 @@ st.markdown("""
 .section-rep {background:linear-gradient(135deg,#7f1d1d,#dc2626,#fb7185)!important;}
 .stButton button, .stDownloadButton button {border-radius:12px;font-weight:800;border:0;background:linear-gradient(135deg,#0f172a,#2563eb);color:white;}
 .stButton button:hover, .stDownloadButton button:hover {border:0;color:white;filter:brightness(1.07);}
-[data-testid="stSidebar"] {background:linear-gradient(180deg,#f8fafc,#e0f2fe); min-width:300px!important; max-width:300px!important; transform:translateX(0)!important; visibility:visible!important;}
+[data-testid="stSidebar"] {background:linear-gradient(180deg,#f8fafc,#e0f2fe); min-width:300px!important; max-width:300px!important;}
 [data-testid="stSidebarCollapsedControl"], [data-testid="stSidebarCollapseButton"] {display:none!important;}
 section[data-testid="stSidebar"] button[kind="header"] {display:none!important;}
+.rbm-show-menu {position:fixed;top:86px;left:12px;z-index:999999;background:linear-gradient(135deg,#0f172a,#2563eb);color:white;padding:8px 12px;border-radius:12px;font-weight:900;box-shadow:0 10px 24px rgba(15,23,42,.25);}
+.rbm-menu-note {font-size:12px;color:#64748b;margin-bottom:8px;}
 .ctrl-card {background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fed7aa;border-radius:14px;padding:12px;margin:10px 0;}
 </style>
 """, unsafe_allow_html=True)
@@ -424,6 +426,24 @@ def login_page():
                 st.rerun()
         st.info("Default Super Admin: admin / rbm123")
 
+def sidebar_toggle_top():
+    if "sidebar_open" not in st.session_state:
+        st.session_state["sidebar_open"] = True
+
+    if not st.session_state["sidebar_open"]:
+        st.markdown("""
+        <style>
+        [data-testid="stSidebar"] {display:none!important;}
+        [data-testid="stAppViewContainer"] {margin-left:0!important;}
+        </style>
+        <div class="rbm-show-menu">Menu is hidden</div>
+        """, unsafe_allow_html=True)
+        if st.button("☰ Show Menu", key="show_sidebar_menu"):
+            st.session_state["sidebar_open"] = True
+            st.rerun()
+        return False
+    return True
+
 def compact_sidebar():
     role = st.session_state.get("role", "")
     st.sidebar.markdown(f"""
@@ -435,7 +455,14 @@ def compact_sidebar():
       <div class='erp-small'><b>Date:</b> {india_now().strftime('%d-%m-%Y')} | IST</div>
     </div>
     """, unsafe_allow_html=True)
-    if st.sidebar.button("Logout", use_container_width=True): st.session_state.clear(); st.rerun()
+    c1, c2 = st.sidebar.columns(2)
+    if c1.button("◀ Hide", use_container_width=True, key="hide_sidebar_menu"):
+        st.session_state["sidebar_open"] = False
+        st.rerun()
+    if c2.button("Logout", use_container_width=True, key="logout_sidebar"):
+        st.session_state.clear()
+        st.rerun()
+    st.sidebar.markdown("<div class='rbm-menu-note'>Use ◀ Hide to hide menu. Use ☰ Show Menu to bring it back.</div>", unsafe_allow_html=True)
 
 # ---------- MODULES ----------
 def dashboard():
@@ -1238,45 +1265,80 @@ def erp_control_center():
     st.download_button("Download Control Report Excel", to_excel_bytes(df), f"erp_control_{selected}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 # ---------- MAIN MENU ----------
-def main_app():
-    rbm_header(); compact_sidebar()
-    groups = ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports", "Tools"]
-    group = st.sidebar.selectbox("Group", groups, key="menu_group")
+def get_menu_modules(group):
     modules = []
-    if group == "Dashboard": modules=["Dashboard"]
-    elif group == "Master": modules=["Company Profile","Financial Year Master","Cost Center Master","Document Series","GST Settings","Ledger Group Master","Ledger Master","Stock Group Master","Stock Ledger Master"] if st.session_state.get("allow_master_group", True) else []
+    if group == "Dashboard":
+        modules = ["Dashboard"]
+    elif group == "Master":
+        modules = ["Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings", "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master"] if st.session_state.get("allow_master_group", True) else []
     elif group == "Admin":
-        modules=[]
-        if is_super_admin(): modules += ["Client Master"]
-        if st.session_state.get("role") in ["Admin","Super Admin"]: modules += ["User Management","Employee Master"]
-        if st.session_state.get("allow_appointment", True): modules += ["Appointments"]
+        if is_super_admin():
+            modules += ["Client Master"]
+        if st.session_state.get("role") in ["Admin", "Super Admin"]:
+            modules += ["User Management", "Employee Master"]
+        if st.session_state.get("allow_appointment", True):
+            modules += ["Appointments"]
     elif group == "HR":
-        if st.session_state.get("allow_attendance", True): modules.append("Attendance Management")
-        if st.session_state.get("allow_inout", True): modules.append("IN / OUT Register")
-        if st.session_state.get("allow_visitor", True): modules.append("Visitor Register")
-        if st.session_state.get("allow_task", True): modules.append("Task Delegation")
+        if st.session_state.get("allow_attendance", True):
+            modules.append("Attendance Management")
+        if st.session_state.get("allow_inout", True):
+            modules.append("IN / OUT Register")
+        if st.session_state.get("allow_visitor", True):
+            modules.append("Visitor Register")
+        if st.session_state.get("allow_task", True):
+            modules.append("Task Delegation")
     elif group == "Inventory":
-        if st.session_state.get("allow_stock_raw", True): modules.append("Raw Material Stock")
-        if st.session_state.get("allow_stock_fg", True): modules.append("Finished Goods Stock")
-        if st.session_state.get("allow_stock_wip", True): modules.append("WIP Stock")
+        if st.session_state.get("allow_stock_raw", True):
+            modules.append("Raw Material Stock")
+        if st.session_state.get("allow_stock_fg", True):
+            modules.append("Finished Goods Stock")
+        if st.session_state.get("allow_stock_wip", True):
+            modules.append("WIP Stock")
         modules.append("Stock Voucher")
     elif group == "Accounts":
-        if st.session_state.get("allow_sales", True): modules.append("Sales GST Invoice")
-        if st.session_state.get("allow_purchase", True): modules.append("Purchase GST Invoice")
-        if st.session_state.get("allow_expense", True): modules.append("Expense GST")
-        if st.session_state.get("allow_service_voucher", True): modules.append("Service Voucher")
-        if st.session_state.get("allow_fixed_assets", True): modules.append("Fixed Assets")
-        if st.session_state.get("allow_accounting", True): modules.append("Accounting Entries")
+        if st.session_state.get("allow_sales", True):
+            modules.append("Sales GST Invoice")
+        if st.session_state.get("allow_purchase", True):
+            modules.append("Purchase GST Invoice")
+        if st.session_state.get("allow_expense", True):
+            modules.append("Expense GST")
+        if st.session_state.get("allow_service_voucher", True):
+            modules.append("Service Voucher")
+        if st.session_state.get("allow_fixed_assets", True):
+            modules.append("Fixed Assets")
+        if st.session_state.get("allow_accounting", True):
+            modules.append("Accounting Entries")
     elif group == "Reports":
-        modules=["Registers / Reports"]
-        if st.session_state.get("allow_excel_upload", True) or st.session_state.get("allow_google_sheet_import", True): modules.append("Import Center")
+        modules = ["Registers / Reports"]
+        if st.session_state.get("allow_excel_upload", True) or st.session_state.get("allow_google_sheet_import", True):
+            modules.append("Import Center")
         modules.append("Audit Log")
     elif group == "Tools":
-        modules=["Calculation Book", "ERP Control Center"]
-    if not modules: modules=["No module available"]
-    choice = st.sidebar.radio("Module", modules, key="menu_module")
+        modules = ["Calculation Book", "ERP Control Center"]
+    return modules or ["No module available"]
 
-    mapping={
+def main_app():
+    sidebar_open = sidebar_toggle_top()
+    rbm_header()
+
+    groups = ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports", "Tools"]
+
+    if sidebar_open:
+        compact_sidebar()
+        group = st.sidebar.selectbox("Group", groups, key="menu_group")
+        modules = get_menu_modules(group)
+        choice = st.sidebar.radio("Module", modules, key="menu_module")
+    else:
+        group = st.session_state.get("menu_group", "Dashboard")
+        if group not in groups:
+            group = "Dashboard"
+        modules = get_menu_modules(group)
+        choice = st.session_state.get("menu_module", modules[0])
+        if choice not in modules:
+            choice = modules[0]
+        st.caption(f"Current Module: {group} / {choice}")
+
+    mapping = {
         "Dashboard": dashboard, "Client Master": client_master, "User Management": user_management, "Employee Master": employee_master,
         "Company Profile": company_profile, "Financial Year Master": financial_year_master, "Cost Center Master": cost_center_master, "Document Series": document_series_master, "GST Settings": gst_settings_master, "Ledger Group Master": ledger_group_master, "Ledger Master": ledger_master, "Stock Group Master": stock_group_master, "Stock Ledger Master": stock_ledger_master,
         "Attendance Management": attendance, "IN / OUT Register": inout_register, "Visitor Register": visitor_register, "Task Delegation": task_delegation, "Appointments": appointment_module,
