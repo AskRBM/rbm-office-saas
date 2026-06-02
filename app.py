@@ -38,6 +38,7 @@ TABLES = {
     "sales": "sales",
     "purchase": "purchase",
     "expenses": "expenses",
+    "service_vouchers": "service_vouchers",
     "fixed_assets": "fixed_assets",
     "accounting_entries": "accounting_entries",
 }
@@ -47,8 +48,9 @@ DISPLAY_COLUMNS = {
         "id", "client_code", "client_name",
         "allow_task", "allow_attendance", "allow_inout", "allow_visitor",
         "allow_appointment", "allow_raw_material", "allow_finished_goods", "allow_wip",
-        "allow_sales", "allow_purchase", "allow_expense", "allow_fixed_assets",
-        "allow_accounting_entries", "status", "created_at"
+        "allow_sales", "allow_purchase", "allow_expense", "allow_service_voucher",
+        "allow_fixed_assets", "allow_accounting_entries", "allow_excel_upload",
+        "allow_google_sheet_import", "status", "created_at"
     ],
     "users": ["id", "client_code", "username", "password", "role", "full_name", "status"],
     "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "branch_division", "status"],
@@ -57,13 +59,14 @@ DISPLAY_COLUMNS = {
     "inout": ["id", "client_code", "entry_date", "financial_year", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "visitors": ["id", "client_code", "visit_date", "financial_year", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "tasks": ["id", "client_code", "task_date", "financial_year", "branch_division", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],
-    "appointments": ["id", "client_code", "appointment_date", "financial_year", "appointment_time", "customer_name", "mobile", "email", "company", "purpose", "meeting_with", "status", "remarks", "created_by"],
+    "appointments": ["id", "client_code", "appointment_date", "financial_year", "appointment_time", "customer_name", "mobile", "email", "company", "purpose", "meeting_with", "fees", "status", "remarks", "created_by"],
     "stock_raw_material": ["id", "client_code", "entry_date", "financial_year", "item_code", "item_name", "uom", "opening_qty", "inward_qty", "outward_qty", "closing_qty", "rate", "value", "remarks", "created_by"],
     "stock_finished_goods": ["id", "client_code", "entry_date", "financial_year", "item_code", "item_name", "uom", "opening_qty", "production_qty", "sales_qty", "closing_qty", "rate", "value", "remarks", "created_by"],
     "stock_wip": ["id", "client_code", "entry_date", "financial_year", "process_name", "item_name", "uom", "opening_qty", "input_qty", "output_qty", "closing_qty", "rate", "value", "remarks", "created_by"],
     "sales": ["id", "client_code", "invoice_no", "invoice_date", "financial_year", "customer_name", "gstin", "place_of_supply", "item_name", "hsn_sac", "qty", "rate", "taxable_value", "cgst", "sgst", "igst", "total_value", "remarks", "created_by"],
     "purchase": ["id", "client_code", "invoice_no", "invoice_date", "financial_year", "vendor_name", "gstin", "place_of_supply", "item_name", "hsn_sac", "qty", "rate", "taxable_value", "cgst", "sgst", "igst", "total_value", "remarks", "created_by"],
     "expenses": ["id", "client_code", "expense_date", "financial_year", "expense_head", "vendor_name", "gstin", "invoice_no", "taxable_value", "cgst", "sgst", "igst", "total_value", "payment_mode", "remarks", "created_by"],
+    "service_vouchers": ["id", "client_code", "voucher_no", "voucher_date", "financial_year", "customer_name", "mobile", "email", "service_name", "sac_code", "taxable_value", "cgst", "sgst", "igst", "total_value", "payment_status", "remarks", "created_by"],
     "fixed_assets": ["id", "client_code", "asset_code", "asset_name", "purchase_date", "financial_year", "vendor_name", "invoice_no", "asset_category", "location", "cost", "gst_amount", "total_cost", "useful_life_years", "status", "remarks", "created_by"],
     "accounting_entries": ["id", "client_code", "entry_date", "financial_year", "voucher_type", "voucher_no", "ledger_dr", "ledger_cr", "amount", "narration", "created_by"],
 }
@@ -80,6 +83,7 @@ MODULE_PERMISSIONS = {
     "Sales GST Invoice": "allow_sales",
     "Purchase GST Invoice": "allow_purchase",
     "Expense GST": "allow_expense",
+    "Service Voucher": "allow_service_voucher",
     "Fixed Assets": "allow_fixed_assets",
     "Accounting Entries": "allow_accounting_entries",
 }
@@ -104,6 +108,11 @@ footer {visibility:hidden;}
 .metric-label {color:#64748b;font-size:15px;}
 .invoice-box {border:1px solid #d1d5db; padding:18px; border-radius:12px; background:white;}
 .stButton button, .stDownloadButton button {border-radius:12px;font-weight:700;}
+.group-admin {background:#dbeafe;padding:10px;border-radius:12px;font-weight:800;color:#1e3a8a;margin-top:8px;}
+.group-hr {background:#dcfce7;padding:10px;border-radius:12px;font-weight:800;color:#14532d;margin-top:8px;}
+.group-stock {background:#ffedd5;padding:10px;border-radius:12px;font-weight:800;color:#7c2d12;margin-top:8px;}
+.group-accounts {background:#f3e8ff;padding:10px;border-radius:12px;font-weight:800;color:#581c87;margin-top:8px;}
+.group-reports {background:#fee2e2;padding:10px;border-radius:12px;font-weight:800;color:#7f1d1d;margin-top:8px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -151,7 +160,7 @@ def format_df_for_display(df):
 
     fy_source_cols = [
         "attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at",
-        "appointment_date", "invoice_date", "expense_date", "purchase_date"
+        "appointment_date", "invoice_date", "expense_date", "purchase_date", "voucher_date"
     ]
 
     for col in fy_source_cols:
@@ -161,7 +170,7 @@ def format_df_for_display(df):
 
     date_cols = [
         "attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at",
-        "appointment_date", "invoice_date", "expense_date", "purchase_date"
+        "appointment_date", "invoice_date", "expense_date", "purchase_date", "voucher_date"
     ]
 
     for col in date_cols:
@@ -450,6 +459,7 @@ def dashboard():
         ("Sales", "sales"),
         ("Purchase", "purchase"),
         ("Expenses", "expenses"),
+        ("Services", "service_vouchers"),
         ("Assets", "fixed_assets"),
     ]
 
@@ -494,8 +504,13 @@ def client_master():
         e5, e6, e7, e8 = st.columns(4)
         allow_purchase = e5.checkbox("Purchase", value=True)
         allow_expense = e6.checkbox("Expense", value=True)
-        allow_fixed_assets = e7.checkbox("Fixed Assets", value=True)
-        allow_accounting_entries = e8.checkbox("Accounting Entries", value=True)
+        allow_service_voucher = e7.checkbox("Service Voucher", value=True)
+        allow_fixed_assets = e8.checkbox("Fixed Assets", value=True)
+
+        e9, e10, e11 = st.columns(3)
+        allow_accounting_entries = e9.checkbox("Accounting Entries", value=True)
+        allow_excel_upload = e10.checkbox("Excel Upload", value=True)
+        allow_google_sheet_import = e11.checkbox("Google Sheet Import", value=True)
 
         if st.form_submit_button("Save Client", use_container_width=True):
             if client_code.strip() == "" or client_name.strip() == "":
@@ -515,8 +530,11 @@ def client_master():
                     "allow_sales": allow_sales,
                     "allow_purchase": allow_purchase,
                     "allow_expense": allow_expense,
+                    "allow_service_voucher": allow_service_voucher,
                     "allow_fixed_assets": allow_fixed_assets,
                     "allow_accounting_entries": allow_accounting_entries,
+                    "allow_excel_upload": allow_excel_upload,
+                    "allow_google_sheet_import": allow_google_sheet_import,
                     "status": status
                 })
                 st.success("Client saved successfully.")
@@ -884,6 +902,87 @@ def show_task_photo_viewer():
         st.image(base64.b64decode(photo_data), caption=f"Task ID: {selected_photo_id} | {row.get('task_photo_name', '')}", use_container_width=True)
 
 
+
+def excel_upload_section(table_key, title, required_columns=None):
+    if not st.session_state.get("allow_excel_upload", True) and not is_super_admin():
+        return
+
+    with st.expander(f"Excel Upload - {title}"):
+        st.caption("Upload .xlsx or .csv file. Column names should match database column names shown in the register.")
+        uploaded_file = st.file_uploader(f"Upload {title} Excel/CSV", type=["xlsx", "csv"], key=f"upload_{table_key}")
+
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.lower().endswith(".csv"):
+                    upload_df = pd.read_csv(uploaded_file)
+                else:
+                    upload_df = pd.read_excel(uploaded_file)
+
+                st.dataframe(upload_df.head(20), use_container_width=True)
+
+                if required_columns:
+                    missing = [c for c in required_columns if c not in upload_df.columns]
+                    if missing:
+                        st.error("Missing columns: " + ", ".join(missing))
+                        return
+
+                if st.button(f"Import {len(upload_df)} rows to {title}", use_container_width=True, key=f"import_{table_key}"):
+                    ok = 0
+                    fail = 0
+                    allowed_cols = [c for c in DISPLAY_COLUMNS.get(table_key, []) if c not in ["id", "financial_year", "created_at"]]
+
+                    for _, r in upload_df.iterrows():
+                        row = {}
+                        for col in allowed_cols:
+                            if col in upload_df.columns:
+                                val = r[col]
+                                if pd.isna(val):
+                                    val = ""
+                                row[col] = val
+                        row["created_by"] = st.session_state.get("username", "")
+                        try:
+                            insert_row(table_key, row)
+                            ok += 1
+                        except Exception:
+                            fail += 1
+
+                    try:
+                        insert_row("import_logs", {
+                            "import_type": "Excel",
+                            "module_name": table_key,
+                            "total_rows": len(upload_df),
+                            "success_rows": ok,
+                            "failed_rows": fail,
+                            "remarks": uploaded_file.name,
+                            "created_by": st.session_state.get("username", "")
+                        })
+                    except Exception:
+                        pass
+
+                    st.success(f"Import completed. Success: {ok}, Failed: {fail}")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Upload failed: {e}")
+
+
+def google_sheet_import_section(table_key, title):
+    if not st.session_state.get("allow_google_sheet_import", True) and not is_super_admin():
+        return
+
+    with st.expander(f"Google Sheet Import - {title}"):
+        st.caption("Paste public Google Sheet CSV export link. Private Google Sheet integration can be added later using Google service account.")
+        sheet_url = st.text_input("Google Sheet CSV URL", key=f"gsheet_{table_key}")
+        if st.button("Import from Google Sheet", use_container_width=True, key=f"gsheet_import_{table_key}"):
+            if sheet_url.strip() == "":
+                st.error("Please paste Google Sheet CSV URL.")
+            else:
+                try:
+                    gdf = pd.read_csv(sheet_url)
+                    st.dataframe(gdf.head(20), use_container_width=True)
+                    st.info("Preview loaded. For safety, use Excel Upload import button for final import, or ask me to enable direct Google import.")
+                except Exception as e:
+                    st.error(f"Could not read Google Sheet: {e}")
+
 def appointment_module():
     st.header("Appointment of Clients / Customers")
     df = load_table("appointments", 500)
@@ -898,8 +997,9 @@ def appointment_module():
         company = c2.text_input("Company")
         purpose = c1.text_input("Purpose")
         meeting_with = c2.text_input("Meeting With")
-        status = c1.selectbox("Status", ["Scheduled", "Completed", "Cancelled"])
-        remarks = c2.text_input("Remarks")
+        fees = c1.number_input("Fees", value=0.0)
+        status = c2.selectbox("Status", ["Scheduled", "Completed", "Cancelled"])
+        remarks = c1.text_input("Remarks")
 
         if st.form_submit_button("Save Appointment", use_container_width=True):
             if customer_name.strip() == "":
@@ -914,6 +1014,7 @@ def appointment_module():
                     "company": company,
                     "purpose": purpose,
                     "meeting_with": meeting_with,
+                    "fees": fees,
                     "status": status,
                     "remarks": remarks,
                     "created_by": st.session_state["username"]
@@ -922,6 +1023,8 @@ def appointment_module():
                 st.rerun()
 
     show_table_with_edit_delete("appointments", df, "Appointment Records")
+    excel_upload_section("appointments", "Appointments", ["appointment_date", "customer_name"])
+    google_sheet_import_section("appointments", "Appointments")
 
 
 def stock_form(module_key, title, mode):
@@ -985,6 +1088,8 @@ def stock_form(module_key, title, mode):
             st.rerun()
 
     show_table_with_edit_delete(module_key, df, title)
+    excel_upload_section(module_key, title)
+    google_sheet_import_section(module_key, title)
 
 
 def sales_purchase_form(module_key, title, party_label):
@@ -1049,6 +1154,8 @@ def sales_purchase_form(module_key, title, party_label):
                 st.rerun()
 
     show_table_with_edit_delete(module_key, df, title)
+    excel_upload_section(module_key, title, ["invoice_no", "invoice_date"])
+    google_sheet_import_section(module_key, title)
 
 
 def expense_module():
@@ -1097,8 +1204,76 @@ def expense_module():
                 st.success("Expense saved successfully.")
                 st.rerun()
 
-    show_table_with_edit_delete("expenses", df, "Expense Records")
+    show_table_with_edit_delete("expenses", df, "Expense Register")
+    excel_upload_section("expenses", "Expense GST", ["expense_date", "expense_head"])
+    google_sheet_import_section("expenses", "Expense GST")
 
+
+
+def service_voucher_module():
+    st.header("Service Voucher")
+    df = load_table("service_vouchers", 500)
+
+    with st.form("service_voucher_form"):
+        c1, c2 = st.columns(2)
+        voucher_no = c1.text_input("Service Voucher No")
+        voucher_date = c2.date_input("Voucher Date", value=india_now().date(), format="DD-MM-YYYY")
+        customer_name = c1.text_input("Customer Name")
+        mobile = c2.text_input("Mobile")
+        email = c1.text_input("Email")
+        service_name = c2.text_input("Service Name")
+        sac_code = c1.text_input("SAC Code")
+        taxable = c2.number_input("Taxable Value", value=0.0)
+        cgst_rate = c1.number_input("CGST %", value=0.0, key="svc_cgst")
+        sgst_rate = c2.number_input("SGST %", value=0.0, key="svc_sgst")
+        igst_rate = c1.number_input("IGST %", value=0.0, key="svc_igst")
+        payment_status = c2.selectbox("Payment Status", ["Pending", "Partly Received", "Received"])
+        remarks = c1.text_input("Remarks")
+
+        cgst = round(taxable * cgst_rate / 100, 2)
+        sgst = round(taxable * sgst_rate / 100, 2)
+        igst = round(taxable * igst_rate / 100, 2)
+        total = round(taxable + cgst + sgst + igst, 2)
+
+        st.markdown(f"""
+        <div class="invoice-box">
+        <h4>Service Voucher Preview</h4>
+        <b>Voucher No:</b> {voucher_no}<br>
+        <b>Customer:</b> {customer_name}<br>
+        <b>Service:</b> {service_name}<br>
+        <b>Taxable:</b> ₹ {taxable:,.2f}<br>
+        <b>CGST:</b> ₹ {cgst:,.2f} | <b>SGST:</b> ₹ {sgst:,.2f} | <b>IGST:</b> ₹ {igst:,.2f}<br>
+        <h3>Total: ₹ {total:,.2f}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.form_submit_button("Save Service Voucher", use_container_width=True):
+            if voucher_no.strip() == "" or customer_name.strip() == "":
+                st.error("Voucher No and Customer Name are required.")
+            else:
+                insert_row("service_vouchers", {
+                    "voucher_no": voucher_no,
+                    "voucher_date": str(voucher_date),
+                    "customer_name": customer_name,
+                    "mobile": mobile,
+                    "email": email,
+                    "service_name": service_name,
+                    "sac_code": sac_code,
+                    "taxable_value": taxable,
+                    "cgst": cgst,
+                    "sgst": sgst,
+                    "igst": igst,
+                    "total_value": total,
+                    "payment_status": payment_status,
+                    "remarks": remarks,
+                    "created_by": st.session_state["username"]
+                })
+                st.success("Service voucher saved successfully.")
+                st.rerun()
+
+    show_table_with_edit_delete("service_vouchers", df, "Service Voucher Register")
+    excel_upload_section("service_vouchers", "Service Voucher", ["voucher_no", "voucher_date", "customer_name"])
+    google_sheet_import_section("service_vouchers", "Service Voucher")
 
 def fixed_assets_module():
     st.header("Fixed Assets Register")
@@ -1146,6 +1321,8 @@ def fixed_assets_module():
                 st.rerun()
 
     show_table_with_edit_delete("fixed_assets", df, "Fixed Assets Records")
+    excel_upload_section("fixed_assets", "Fixed Assets", ["asset_name"])
+    google_sheet_import_section("fixed_assets", "Fixed Assets")
 
 
 def accounting_entries_module():
@@ -1189,6 +1366,8 @@ def accounting_entries_module():
                 st.rerun()
 
     show_table_with_edit_delete("accounting_entries", df, "Accounting Entries")
+    excel_upload_section("accounting_entries", "Accounting Entries", ["entry_date", "ledger_dr", "ledger_cr"])
+    google_sheet_import_section("accounting_entries", "Accounting Entries")
 
 
 def export_reports():
@@ -1208,6 +1387,7 @@ def export_reports():
         "sales": ("sales", "allow_sales"),
         "purchase": ("purchase", "allow_purchase"),
         "expenses": ("expenses", "allow_expense"),
+        "service_vouchers": ("service_vouchers", "allow_service_voucher"),
         "fixed_assets": ("fixed_assets", "allow_fixed_assets"),
         "accounting_entries": ("accounting_entries", "allow_accounting_entries"),
     }
@@ -1240,7 +1420,7 @@ def get_dynamic_menu():
             "Dashboard", "Client Master", "User Management", "Employee Master",
             "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation",
             "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock",
-            "Sales GST Invoice", "Purchase GST Invoice", "Expense GST",
+            "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher",
             "Fixed Assets", "Accounting Entries", "Excel Export Reports"
         ]
 
@@ -1252,7 +1432,7 @@ def get_dynamic_menu():
     ordered_modules = [
         "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation",
         "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock",
-        "Sales GST Invoice", "Purchase GST Invoice", "Expense GST",
+        "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher",
         "Fixed Assets", "Accounting Entries"
     ]
 
@@ -1262,6 +1442,31 @@ def get_dynamic_menu():
 
     menu.append("Excel Export Reports")
     return menu
+
+
+
+def select_grouped_menu():
+    available = get_dynamic_menu()
+
+    groups = {
+        "🔵 Admin": ("group-admin", ["Dashboard", "Client Master", "User Management", "Employee Master", "Appointments"]),
+        "🟢 HR / Office": ("group-hr", ["Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation"]),
+        "🟠 Stock": ("group-stock", ["Raw Material Stock", "Finished Goods Stock", "WIP Stock"]),
+        "🟣 Accounts": ("group-accounts", ["Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries"]),
+        "🔴 Reports": ("group-reports", ["Excel Export Reports"]),
+    }
+
+    available_groups = []
+    for group_name, (_, items) in groups.items():
+        if any(item in available for item in items):
+            available_groups.append(group_name)
+
+    selected_group = st.sidebar.selectbox("Select Group", available_groups, key="selected_group_menu")
+    css_class, items = groups[selected_group]
+    allowed_items = [x for x in items if x in available]
+
+    st.sidebar.markdown(f"<div class='{css_class}'>{selected_group}</div>", unsafe_allow_html=True)
+    return st.sidebar.radio("Select Module", allowed_items, key=f"module_{selected_group}")
 
 
 def main_app():
@@ -1279,7 +1484,7 @@ def main_app():
         st.session_state.clear()
         st.rerun()
 
-    choice = st.sidebar.radio("Select Module", get_dynamic_menu())
+    choice = select_grouped_menu()
 
     if choice == "Dashboard":
         dashboard()
@@ -1311,6 +1516,8 @@ def main_app():
         sales_purchase_form("purchase", "Purchase GST Invoice", "Vendor Name")
     elif choice == "Expense GST":
         expense_module()
+    elif choice == "Service Voucher":
+        service_voucher_module()
     elif choice == "Fixed Assets":
         fixed_assets_module()
     elif choice == "Accounting Entries":
