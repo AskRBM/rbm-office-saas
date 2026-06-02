@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import base64
@@ -30,10 +31,25 @@ TABLES = {
     "inout": "inout_register",
     "visitors": "visitors",
     "tasks": "tasks",
+    "appointments": "appointments",
+    "stock_raw_material": "stock_raw_material",
+    "stock_finished_goods": "stock_finished_goods",
+    "stock_wip": "stock_wip",
+    "sales": "sales",
+    "purchase": "purchase",
+    "expenses": "expenses",
+    "fixed_assets": "fixed_assets",
+    "accounting_entries": "accounting_entries",
 }
 
 DISPLAY_COLUMNS = {
-    "clients": ["id", "client_code", "client_name", "allow_task", "allow_attendance", "allow_inout", "allow_visitor", "status", "created_at"],
+    "clients": [
+        "id", "client_code", "client_name",
+        "allow_task", "allow_attendance", "allow_inout", "allow_visitor",
+        "allow_appointment", "allow_raw_material", "allow_finished_goods", "allow_wip",
+        "allow_sales", "allow_purchase", "allow_expense", "allow_fixed_assets",
+        "allow_accounting_entries", "status", "created_at"
+    ],
     "users": ["id", "client_code", "username", "password", "role", "full_name", "status"],
     "employees": ["id", "client_code", "employee_id", "employee_name", "mobile", "email", "department", "designation", "branch_division", "status"],
     "attendance": ["id", "client_code", "attendance_date", "financial_year", "employee_name", "attendance_type", "office_location", "status", "in_time", "out_time", "working_hours", "in_latitude", "in_longitude", "out_latitude", "out_longitude", "remarks", "created_by"],
@@ -41,6 +57,31 @@ DISPLAY_COLUMNS = {
     "inout": ["id", "client_code", "entry_date", "financial_year", "person_name", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "visitors": ["id", "client_code", "visit_date", "financial_year", "visitor_name", "mobile", "company", "meeting_with", "purpose", "in_time", "out_time", "remarks", "created_by"],
     "tasks": ["id", "client_code", "task_date", "financial_year", "branch_division", "task", "assigned_to", "priority", "due_date", "status", "remarks", "task_photo_name", "created_by"],
+    "appointments": ["id", "client_code", "appointment_date", "financial_year", "appointment_time", "customer_name", "mobile", "email", "company", "purpose", "meeting_with", "status", "remarks", "created_by"],
+    "stock_raw_material": ["id", "client_code", "entry_date", "financial_year", "item_code", "item_name", "uom", "opening_qty", "inward_qty", "outward_qty", "closing_qty", "rate", "value", "remarks", "created_by"],
+    "stock_finished_goods": ["id", "client_code", "entry_date", "financial_year", "item_code", "item_name", "uom", "opening_qty", "production_qty", "sales_qty", "closing_qty", "rate", "value", "remarks", "created_by"],
+    "stock_wip": ["id", "client_code", "entry_date", "financial_year", "process_name", "item_name", "uom", "opening_qty", "input_qty", "output_qty", "closing_qty", "rate", "value", "remarks", "created_by"],
+    "sales": ["id", "client_code", "invoice_no", "invoice_date", "financial_year", "customer_name", "gstin", "place_of_supply", "item_name", "hsn_sac", "qty", "rate", "taxable_value", "cgst", "sgst", "igst", "total_value", "remarks", "created_by"],
+    "purchase": ["id", "client_code", "invoice_no", "invoice_date", "financial_year", "vendor_name", "gstin", "place_of_supply", "item_name", "hsn_sac", "qty", "rate", "taxable_value", "cgst", "sgst", "igst", "total_value", "remarks", "created_by"],
+    "expenses": ["id", "client_code", "expense_date", "financial_year", "expense_head", "vendor_name", "gstin", "invoice_no", "taxable_value", "cgst", "sgst", "igst", "total_value", "payment_mode", "remarks", "created_by"],
+    "fixed_assets": ["id", "client_code", "asset_code", "asset_name", "purchase_date", "financial_year", "vendor_name", "invoice_no", "asset_category", "location", "cost", "gst_amount", "total_cost", "useful_life_years", "status", "remarks", "created_by"],
+    "accounting_entries": ["id", "client_code", "entry_date", "financial_year", "voucher_type", "voucher_no", "ledger_dr", "ledger_cr", "amount", "narration", "created_by"],
+}
+
+MODULE_PERMISSIONS = {
+    "Attendance Management": "allow_attendance",
+    "IN / OUT Register": "allow_inout",
+    "Visitor Register": "allow_visitor",
+    "Task Delegation": "allow_task",
+    "Appointments": "allow_appointment",
+    "Raw Material Stock": "allow_raw_material",
+    "Finished Goods Stock": "allow_finished_goods",
+    "WIP Stock": "allow_wip",
+    "Sales GST Invoice": "allow_sales",
+    "Purchase GST Invoice": "allow_purchase",
+    "Expense GST": "allow_expense",
+    "Fixed Assets": "allow_fixed_assets",
+    "Accounting Entries": "allow_accounting_entries",
 }
 
 st.markdown("""
@@ -61,6 +102,7 @@ footer {visibility:hidden;}
 .metric-card {background:white;padding:22px;border-radius:18px;box-shadow:0px 6px 18px rgba(0,0,0,0.08);border:1px solid #e5e7eb;text-align:center;}
 .metric-number {font-size:34px;font-weight:800;color:#001f54;}
 .metric-label {color:#64748b;font-size:15px;}
+.invoice-box {border:1px solid #d1d5db; padding:18px; border-radius:12px; background:white;}
 .stButton button, .stDownloadButton button {border-radius:12px;font-weight:700;}
 </style>
 """, unsafe_allow_html=True)
@@ -105,21 +147,28 @@ def financial_year(value):
 def format_df_for_display(df):
     if df.empty:
         return df
-
     df = df.copy()
 
-    fy_source_cols = ["attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at"]
+    fy_source_cols = [
+        "attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at",
+        "appointment_date", "invoice_date", "expense_date", "purchase_date"
+    ]
+
     for col in fy_source_cols:
         if col in df.columns and "financial_year" not in df.columns:
             df["financial_year"] = df[col].apply(financial_year)
             break
 
-    date_cols = ["attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at"]
+    date_cols = [
+        "attendance_date", "visit_date", "entry_date", "task_date", "due_date", "created_at",
+        "appointment_date", "invoice_date", "expense_date", "purchase_date"
+    ]
+
     for col in date_cols:
         if col in df.columns:
             df[col] = df[col].apply(indian_date)
 
-    time_cols = ["in_time", "out_time"]
+    time_cols = ["in_time", "out_time", "appointment_time"]
     for col in time_cols:
         if col in df.columns:
             df[col] = df[col].apply(indian_time)
@@ -133,6 +182,15 @@ def get_client_code():
 
 def is_super_admin():
     return st.session_state.get("role") == "Super Admin"
+
+
+def is_allowed(module_name):
+    if is_super_admin():
+        return True
+    key = MODULE_PERMISSIONS.get(module_name)
+    if not key:
+        return True
+    return st.session_state.get(key, True)
 
 
 def get_gps():
@@ -165,7 +223,6 @@ def rbm_header():
 
 def load_table(key, limit_rows=500):
     query = supabase.table(TABLES[key]).select("*")
-
     if key != "clients" and not is_super_admin():
         query = query.eq("client_code", get_client_code())
 
@@ -178,7 +235,6 @@ def load_table(key, limit_rows=500):
             if col not in df.columns:
                 df[col] = ""
         df = df[DISPLAY_COLUMNS[key]]
-
     return df
 
 
@@ -200,10 +256,8 @@ def delete_row(key, row_id):
 
 def get_count(key):
     query = supabase.table(TABLES[key]).select("id", count="exact")
-
     if key != "clients" and not is_super_admin():
         query = query.eq("client_code", get_client_code())
-
     response = query.execute()
     return response.count or 0
 
@@ -211,12 +265,8 @@ def get_count(key):
 def filter_dataframe(df, keyword):
     if keyword.strip() == "":
         return df
-
     keyword = keyword.lower()
-    mask = df.astype(str).apply(
-        lambda row: row.str.lower().str.contains(keyword, na=False).any(),
-        axis=1
-    )
+    mask = df.astype(str).apply(lambda row: row.str.lower().str.contains(keyword, na=False).any(), axis=1)
     return df[mask]
 
 
@@ -236,18 +286,13 @@ def calculate_hours(in_time, out_time):
         return 0
 
 
-def next_employee_id(df):
-    if df.empty:
-        return "EMP001"
-
-    nums = []
-    for x in df["employee_id"].dropna().astype(str):
-        if x.upper().startswith("EMP"):
-            n = x.upper().replace("EMP", "")
-            if n.isdigit():
-                nums.append(int(n))
-
-    return f"EMP{max(nums) + 1:03d}" if nums else "EMP001"
+def calc_gst(qty, rate, cgst_rate=0, sgst_rate=0, igst_rate=0):
+    taxable = round(float(qty or 0) * float(rate or 0), 2)
+    cgst = round(taxable * float(cgst_rate or 0) / 100, 2)
+    sgst = round(taxable * float(sgst_rate or 0) / 100, 2)
+    igst = round(taxable * float(igst_rate or 0) / 100, 2)
+    total = round(taxable + cgst + sgst + igst, 2)
+    return taxable, cgst, sgst, igst, total
 
 
 def show_metric_card(label, value):
@@ -259,17 +304,27 @@ def show_metric_card(label, value):
     """, unsafe_allow_html=True)
 
 
+def next_employee_id(df):
+    if df.empty:
+        return "EMP001"
+    nums = []
+    for x in df["employee_id"].dropna().astype(str):
+        if x.upper().startswith("EMP"):
+            n = x.upper().replace("EMP", "")
+            if n.isdigit():
+                nums.append(int(n))
+    return f"EMP{max(nums) + 1:03d}" if nums else "EMP001"
+
+
 def show_table_with_edit_delete(key, df, title):
     st.subheader(title)
-    st.caption("Latest 500 records shown for speed. Date format: DD-MM-YYYY. Time format: 24-hour.")
+    st.caption("Latest records shown for speed. Date format: DD-MM-YYYY. Time format: 24-hour.")
 
     search = st.text_input(f"Search {title}", key=f"search_{key}")
     filtered = filter_dataframe(df, search)
-
     st.dataframe(filtered, use_container_width=True)
 
     c1, c2 = st.columns(2)
-
     with c1:
         st.download_button(
             "Download Excel",
@@ -279,7 +334,6 @@ def show_table_with_edit_delete(key, df, title):
             use_container_width=True,
             key=f"xlsx_{key}"
         )
-
     with c2:
         st.download_button(
             "Download CSV",
@@ -293,17 +347,13 @@ def show_table_with_edit_delete(key, df, title):
     if st.session_state.get("role") in ["Admin", "Super Admin"] and not df.empty:
         st.divider()
         st.subheader("Edit / Delete")
-
         selected_id = st.selectbox("Select ID", df["id"].tolist(), key=f"select_id_{key}")
         selected_row = df[df["id"] == selected_id].iloc[0]
 
         with st.expander("Edit Selected Record"):
             edited_values = {}
-
             for col in df.columns:
-                if col == "id":
-                    st.text_input(col, value=str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
-                elif col == "financial_year":
+                if col in ["id", "financial_year"]:
                     st.text_input(col, value=str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
                 else:
                     edited_values[col] = st.text_input(col, value=str(selected_row[col]), key=f"edit_{key}_{col}")
@@ -326,7 +376,6 @@ def login_page():
     st.subheader("Secure Login")
 
     users = safe_df(supabase.table("users").select("*").execute().data)
-
     c1, c2, c3 = st.columns([1, 2, 1])
 
     with c2:
@@ -347,13 +396,11 @@ def login_page():
                 st.error("Wrong username or password")
             else:
                 row = match.iloc[0]
-
                 if "status" in users.columns and str(row.get("status", "Active")) == "Inactive":
                     st.error("This user is inactive.")
                     return
 
                 client_code = str(row.get("client_code", "RBM"))
-
                 client_name = client_code
                 client_data = safe_df(
                     supabase.table("clients")
@@ -364,19 +411,16 @@ def login_page():
                     .data
                 )
 
+                permission_keys = list(set(MODULE_PERMISSIONS.values()))
+
                 if not client_data.empty:
                     client_row = client_data.iloc[0]
                     client_name = str(client_row.get("client_name", client_code))
-
-                    st.session_state["allow_task"] = bool(client_row.get("allow_task", True))
-                    st.session_state["allow_attendance"] = bool(client_row.get("allow_attendance", True))
-                    st.session_state["allow_inout"] = bool(client_row.get("allow_inout", True))
-                    st.session_state["allow_visitor"] = bool(client_row.get("allow_visitor", True))
+                    for key in permission_keys:
+                        st.session_state[key] = bool(client_row.get(key, True))
                 else:
-                    st.session_state["allow_task"] = True
-                    st.session_state["allow_attendance"] = True
-                    st.session_state["allow_inout"] = True
-                    st.session_state["allow_visitor"] = True
+                    for key in permission_keys:
+                        st.session_state[key] = True
 
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
@@ -396,22 +440,27 @@ def dashboard():
     current_fy = financial_year(india_now().date())
     st.info(f"Today: {today_india} | India Time Zone: Asia/Kolkata | Financial Year: {current_fy}")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    metric_items = [
+        ("Employees", "employees"),
+        ("Attendance", "attendance"),
+        ("Visits", "attendance_visits"),
+        ("Visitors", "visitors"),
+        ("Tasks", "tasks"),
+        ("Appointments", "appointments"),
+        ("Sales", "sales"),
+        ("Purchase", "purchase"),
+        ("Expenses", "expenses"),
+        ("Assets", "fixed_assets"),
+    ]
 
-    with c1:
-        show_metric_card("Employees", get_count("employees"))
-    with c2:
-        show_metric_card("Office Attendance", get_count("attendance"))
-    with c3:
-        show_metric_card("Visit Entries", get_count("attendance_visits"))
-    with c4:
-        show_metric_card("Visitors", get_count("visitors"))
-    with c5:
-        show_metric_card("Tasks", get_count("tasks"))
+    cols = st.columns(5)
+    for i, (label, table_key) in enumerate(metric_items):
+        with cols[i % 5]:
+            show_metric_card(label, get_count(table_key))
 
     st.divider()
-    st.subheader("Latest Visit Entries")
-    st.dataframe(load_table("attendance_visits", 100), use_container_width=True)
+    st.subheader("Latest Tasks")
+    st.dataframe(load_table("tasks", 50), use_container_width=True)
 
 
 def client_master():
@@ -423,19 +472,30 @@ def client_master():
 
     with st.form("client_form"):
         c1, c2 = st.columns(2)
-
         client_code = c1.text_input("Client Code", placeholder="Example: CHOICE")
         client_name = c2.text_input("Client Name", placeholder="Example: Choice Group")
         status = c1.selectbox("Status", ["Active", "Inactive"])
 
-        st.subheader("Module Access")
-
-        m1, m2, m3, m4 = st.columns(4)
-
+        st.subheader("Office Module Access")
+        m1, m2, m3, m4, m5 = st.columns(5)
         allow_task = m1.checkbox("Task", value=True)
         allow_attendance = m2.checkbox("Attendance", value=True)
-        allow_inout = m3.checkbox("IN / OUT Register", value=True)
-        allow_visitor = m4.checkbox("Visitor Register", value=True)
+        allow_inout = m3.checkbox("IN / OUT", value=True)
+        allow_visitor = m4.checkbox("Visitor", value=True)
+        allow_appointment = m5.checkbox("Appointment", value=True)
+
+        st.subheader("ERP / Inventory Module Access")
+        e1, e2, e3, e4 = st.columns(4)
+        allow_raw_material = e1.checkbox("Raw Material", value=True)
+        allow_finished_goods = e2.checkbox("Finished Goods", value=True)
+        allow_wip = e3.checkbox("WIP", value=True)
+        allow_sales = e4.checkbox("Sales", value=True)
+
+        e5, e6, e7, e8 = st.columns(4)
+        allow_purchase = e5.checkbox("Purchase", value=True)
+        allow_expense = e6.checkbox("Expense", value=True)
+        allow_fixed_assets = e7.checkbox("Fixed Assets", value=True)
+        allow_accounting_entries = e8.checkbox("Accounting Entries", value=True)
 
         if st.form_submit_button("Save Client", use_container_width=True):
             if client_code.strip() == "" or client_name.strip() == "":
@@ -448,6 +508,15 @@ def client_master():
                     "allow_attendance": allow_attendance,
                     "allow_inout": allow_inout,
                     "allow_visitor": allow_visitor,
+                    "allow_appointment": allow_appointment,
+                    "allow_raw_material": allow_raw_material,
+                    "allow_finished_goods": allow_finished_goods,
+                    "allow_wip": allow_wip,
+                    "allow_sales": allow_sales,
+                    "allow_purchase": allow_purchase,
+                    "allow_expense": allow_expense,
+                    "allow_fixed_assets": allow_fixed_assets,
+                    "allow_accounting_entries": allow_accounting_entries,
                     "status": status
                 })
                 st.success("Client saved successfully.")
@@ -468,7 +537,6 @@ def user_management():
 
     with st.form("user_form"):
         c1, c2 = st.columns(2)
-
         if is_super_admin():
             client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
             client_code = c1.selectbox("Client Code", client_codes)
@@ -509,7 +577,6 @@ def employee_master():
 
     with st.form("employee_form"):
         c1, c2 = st.columns(2)
-
         employee_id = c1.text_input("Employee ID", value=auto_id)
         employee_name = c2.text_input("Employee Name")
         mobile = c1.text_input("Mobile")
@@ -544,12 +611,10 @@ def attendance():
 
     emp = load_table("employees", 1000)
     emp_list = emp["employee_name"].dropna().astype(str).tolist() if not emp.empty else []
-
     if not emp_list:
         emp_list = ["No Employee Found"]
 
     st.info("Mobile/browser location permission Allow karna hoga. GPS tabhi capture hoga.")
-
     lat, lon = get_gps()
 
     if lat and lon:
@@ -558,13 +623,7 @@ def attendance():
     else:
         st.warning("GPS location not captured yet. Browser permission Allow karein.")
 
-    attendance_type = st.radio(
-        "Attendance Type",
-        ["Office", "Visit"],
-        horizontal=True,
-        key="attendance_type_radio"
-    )
-
+    attendance_type = st.radio("Attendance Type", ["Office", "Visit"], horizontal=True, key="attendance_type_radio")
     if attendance_type == "Office":
         office_attendance_form(emp_list, lat, lon)
     else:
@@ -572,7 +631,6 @@ def attendance():
 
     st.divider()
     show_table_with_edit_delete("attendance", load_table("attendance", 500), "Office Attendance")
-
     st.divider()
     show_table_with_edit_delete("attendance_visits", load_table("attendance_visits", 500), "Visit / Field Work Attendance")
 
@@ -582,15 +640,12 @@ def office_attendance_form(emp_list, lat, lon):
 
     with st.form("office_attendance_form"):
         c1, c2 = st.columns(2)
-
         attendance_date = c1.date_input("Date", value=india_now().date(), format="DD-MM-YYYY")
         employee_name = c2.selectbox("Employee Name", emp_list)
         office_location = c1.text_input("Office Location", value="Office")
         status = c2.selectbox("Status", ["Present", "Absent", "Half Day", "Leave"])
-
         in_time = c1.time_input("In Time", value=india_now().time())
         out_time = c2.time_input("Out Time", value=india_now().time())
-
         gps_for = c1.selectbox("GPS Save For", ["In Location", "Out Location", "Both"])
         remarks = c2.text_input("Remarks")
 
@@ -598,11 +653,6 @@ def office_attendance_form(emp_list, lat, lon):
             if employee_name == "No Employee Found":
                 st.error("Please create employee first.")
                 return
-
-            in_lat = lat if gps_for in ["In Location", "Both"] else ""
-            in_lon = lon if gps_for in ["In Location", "Both"] else ""
-            out_lat = lat if gps_for in ["Out Location", "Both"] else ""
-            out_lon = lon if gps_for in ["Out Location", "Both"] else ""
 
             insert_row("attendance", {
                 "attendance_date": str(attendance_date),
@@ -613,10 +663,10 @@ def office_attendance_form(emp_list, lat, lon):
                 "in_time": str(in_time),
                 "out_time": str(out_time),
                 "working_hours": calculate_hours(in_time, out_time),
-                "in_latitude": in_lat,
-                "in_longitude": in_lon,
-                "out_latitude": out_lat,
-                "out_longitude": out_lon,
+                "in_latitude": lat if gps_for in ["In Location", "Both"] else "",
+                "in_longitude": lon if gps_for in ["In Location", "Both"] else "",
+                "out_latitude": lat if gps_for in ["Out Location", "Both"] else "",
+                "out_longitude": lon if gps_for in ["Out Location", "Both"] else "",
                 "remarks": remarks,
                 "created_by": st.session_state["username"]
             })
@@ -629,7 +679,6 @@ def visit_attendance_form(emp_list, lat, lon):
 
     with st.form("visit_attendance_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
-
         visit_date = c1.date_input("Visit Date", value=india_now().date(), format="DD-MM-YYYY")
         employee_name = c2.selectbox("Employee Name", emp_list)
         visit_place = c1.text_input("Visit Place / Client / Vendor / Site")
@@ -642,15 +691,9 @@ def visit_attendance_form(emp_list, lat, lon):
             if employee_name == "No Employee Found":
                 st.error("Please create employee first.")
                 return
-
             if visit_place.strip() == "":
                 st.error("Visit place is required.")
                 return
-
-            in_lat = lat if gps_for in ["In Location", "Both"] else ""
-            in_lon = lon if gps_for in ["In Location", "Both"] else ""
-            out_lat = lat if gps_for in ["Out Location", "Both"] else ""
-            out_lon = lon if gps_for in ["Out Location", "Both"] else ""
 
             insert_row("attendance_visits", {
                 "visit_date": str(visit_date),
@@ -658,10 +701,10 @@ def visit_attendance_form(emp_list, lat, lon):
                 "visit_place": visit_place,
                 "in_time": str(in_time),
                 "out_time": str(out_time),
-                "in_latitude": in_lat,
-                "in_longitude": in_lon,
-                "out_latitude": out_lat,
-                "out_longitude": out_lon,
+                "in_latitude": lat if gps_for in ["In Location", "Both"] else "",
+                "in_longitude": lon if gps_for in ["In Location", "Both"] else "",
+                "out_latitude": lat if gps_for in ["Out Location", "Both"] else "",
+                "out_longitude": lon if gps_for in ["Out Location", "Both"] else "",
                 "remarks": remarks,
                 "created_by": st.session_state["username"]
             })
@@ -671,12 +714,10 @@ def visit_attendance_form(emp_list, lat, lon):
 
 def inout_register():
     st.header("IN / OUT Register")
-
     df = load_table("inout", 500)
 
     with st.form("inout_form"):
         c1, c2 = st.columns(2)
-
         entry_date = c1.date_input("Date", value=india_now().date(), format="DD-MM-YYYY")
         person_name = c2.text_input("Person Name")
         purpose = c1.text_input("Purpose")
@@ -705,12 +746,10 @@ def inout_register():
 
 def visitor_register():
     st.header("Visitor Register")
-
     df = load_table("visitors", 500)
 
     with st.form("visitor_form"):
         c1, c2 = st.columns(2)
-
         visit_date = c1.date_input("Date", value=india_now().date(), format="DD-MM-YYYY")
         visitor_name = c2.text_input("Visitor Name")
         mobile = c1.text_input("Mobile")
@@ -748,7 +787,6 @@ def task_delegation():
 
     df = load_table("tasks", 500)
     emp = load_table("employees", 1000)
-
     emp_list = emp["employee_name"].dropna().astype(str).tolist() if not emp.empty else []
     emp_list = ["All"] + emp_list
 
@@ -759,20 +797,13 @@ def task_delegation():
         branch_list = ["All"]
 
     st.subheader("Assign Type")
-    assign_mode = st.radio(
-        "Choose assign method",
-        ["Select Employee", "Manual Entry"],
-        horizontal=True,
-        key="task_assign_mode_radio"
-    )
+    assign_mode = st.radio("Choose assign method", ["Select Employee", "Manual Entry"], horizontal=True, key="task_assign_mode_radio")
 
     with st.form("task_form", clear_on_submit=True):
         c1, c2 = st.columns(2)
-
         task_date = c1.date_input("Task Date", value=india_now().date(), format="DD-MM-YYYY")
         branch_division = c1.selectbox("Branch / Division", branch_list)
         task = c2.text_area("Task")
-
         priority = c1.selectbox("Priority", ["Low", "Medium", "High", "Urgent"])
         status = c1.selectbox("Status", ["Pending", "In Progress", "Completed"])
 
@@ -783,12 +814,7 @@ def task_delegation():
 
         due_date = c2.date_input("Due Date", value=india_now().date(), format="DD-MM-YYYY")
         remarks = c2.text_input("Remarks")
-
-        task_photo = st.file_uploader(
-            "Upload Task Photo / Screenshot - Max 2 MB",
-            type=["png", "jpg", "jpeg"],
-            key="task_photo_upload"
-        )
+        task_photo = st.file_uploader("Upload Task Photo / Screenshot - Max 2 MB", type=["png", "jpg", "jpeg"], key="task_photo_upload")
 
         task_photo_name = ""
         task_photo_data = ""
@@ -800,8 +826,7 @@ def task_delegation():
                 file_size_ok = False
             else:
                 task_photo_name = task_photo.name
-                task_photo_bytes = task_photo.read()
-                task_photo_data = base64.b64encode(task_photo_bytes).decode("utf-8")
+                task_photo_data = base64.b64encode(task_photo.read()).decode("utf-8")
                 st.success(f"Photo ready: {task_photo_name}")
 
         if st.form_submit_button("Save Task", use_container_width=True):
@@ -829,64 +854,367 @@ def task_delegation():
                 st.rerun()
 
     show_table_with_edit_delete("tasks", df, "Task Records")
+    show_task_photo_viewer()
 
+
+def show_task_photo_viewer():
     st.divider()
     st.subheader("View Task Photo")
-
     photo_query = supabase.table("tasks").select("*")
 
     if not is_super_admin():
         photo_query = photo_query.eq("client_code", get_client_code())
 
-    raw_df = safe_df(
-        photo_query
-        .order("id", desc=True)
-        .limit(500)
-        .execute()
-        .data
-    )
+    raw_df = safe_df(photo_query.order("id", desc=True).limit(500).execute().data)
 
     if raw_df.empty or "task_photo_data" not in raw_df.columns:
         st.info("No task photo found.")
-    else:
-        photo_df = raw_df[raw_df["task_photo_name"].astype(str).str.strip() != ""]
+        return
 
-        if photo_df.empty:
-            st.info("No task photo found.")
+    photo_df = raw_df[raw_df["task_photo_name"].astype(str).str.strip() != ""]
+    if photo_df.empty:
+        st.info("No task photo found.")
+        return
+
+    selected_photo_id = st.selectbox("Select Task ID to View Photo", photo_df["id"].tolist(), key="view_task_photo_id")
+    row = photo_df[photo_df["id"] == selected_photo_id].iloc[0]
+    photo_data = row.get("task_photo_data", "")
+
+    if str(photo_data).strip() != "":
+        st.image(base64.b64decode(photo_data), caption=f"Task ID: {selected_photo_id} | {row.get('task_photo_name', '')}", use_container_width=True)
+
+
+def appointment_module():
+    st.header("Appointment of Clients / Customers")
+    df = load_table("appointments", 500)
+
+    with st.form("appointment_form"):
+        c1, c2 = st.columns(2)
+        appointment_date = c1.date_input("Appointment Date", value=india_now().date(), format="DD-MM-YYYY")
+        appointment_time = c2.time_input("Appointment Time", value=india_now().time())
+        customer_name = c1.text_input("Client / Customer Name")
+        mobile = c2.text_input("Mobile")
+        email = c1.text_input("Email")
+        company = c2.text_input("Company")
+        purpose = c1.text_input("Purpose")
+        meeting_with = c2.text_input("Meeting With")
+        status = c1.selectbox("Status", ["Scheduled", "Completed", "Cancelled"])
+        remarks = c2.text_input("Remarks")
+
+        if st.form_submit_button("Save Appointment", use_container_width=True):
+            if customer_name.strip() == "":
+                st.error("Client / Customer Name is required.")
+            else:
+                insert_row("appointments", {
+                    "appointment_date": str(appointment_date),
+                    "appointment_time": str(appointment_time),
+                    "customer_name": customer_name,
+                    "mobile": mobile,
+                    "email": email,
+                    "company": company,
+                    "purpose": purpose,
+                    "meeting_with": meeting_with,
+                    "status": status,
+                    "remarks": remarks,
+                    "created_by": st.session_state["username"]
+                })
+                st.success("Appointment saved successfully.")
+                st.rerun()
+
+    show_table_with_edit_delete("appointments", df, "Appointment Records")
+
+
+def stock_form(module_key, title, mode):
+    st.header(title)
+    df = load_table(module_key, 500)
+
+    with st.form(f"{module_key}_form"):
+        c1, c2 = st.columns(2)
+        entry_date = c1.date_input("Entry Date", value=india_now().date(), format="DD-MM-YYYY")
+
+        if module_key == "stock_wip":
+            process_name = c2.text_input("Process Name")
+            item_code = ""
         else:
-            selected_photo_id = st.selectbox(
-                "Select Task ID to View Photo",
-                photo_df["id"].tolist(),
-                key="view_task_photo_id"
-            )
+            item_code = c2.text_input("Item Code")
+            process_name = ""
 
-            row = photo_df[photo_df["id"] == selected_photo_id].iloc[0]
-            photo_data = row.get("task_photo_data", "")
+        item_name = c1.text_input("Item Name")
+        uom = c2.text_input("UOM", value="PCS")
 
-            if str(photo_data).strip() != "":
-                st.image(
-                    base64.b64decode(photo_data),
-                    caption=f"Task ID: {selected_photo_id} | {row.get('task_photo_name', '')}",
-                    use_container_width=True
-                )
+        opening_qty = c1.number_input("Opening Qty", value=0.0)
+        if mode == "raw":
+            in_qty = c2.number_input("Inward Qty", value=0.0)
+            out_qty = c1.number_input("Outward Qty", value=0.0)
+        elif mode == "fg":
+            in_qty = c2.number_input("Production Qty", value=0.0)
+            out_qty = c1.number_input("Sales Qty", value=0.0)
+        else:
+            in_qty = c2.number_input("Input Qty", value=0.0)
+            out_qty = c1.number_input("Output Qty", value=0.0)
+
+        closing_qty = opening_qty + in_qty - out_qty
+        rate = c2.number_input("Rate", value=0.0)
+        value = round(closing_qty * rate, 2)
+        remarks = c1.text_input("Remarks")
+
+        st.info(f"Calculated Closing Qty: {closing_qty} | Value: {value}")
+
+        if st.form_submit_button("Save Stock", use_container_width=True):
+            row = {
+                "entry_date": str(entry_date),
+                "item_name": item_name,
+                "uom": uom,
+                "opening_qty": opening_qty,
+                "closing_qty": closing_qty,
+                "rate": rate,
+                "value": value,
+                "remarks": remarks,
+                "created_by": st.session_state["username"]
+            }
+
+            if module_key == "stock_raw_material":
+                row.update({"item_code": item_code, "inward_qty": in_qty, "outward_qty": out_qty})
+            elif module_key == "stock_finished_goods":
+                row.update({"item_code": item_code, "production_qty": in_qty, "sales_qty": out_qty})
+            else:
+                row.update({"process_name": process_name, "input_qty": in_qty, "output_qty": out_qty})
+
+            insert_row(module_key, row)
+            st.success("Stock saved successfully.")
+            st.rerun()
+
+    show_table_with_edit_delete(module_key, df, title)
+
+
+def sales_purchase_form(module_key, title, party_label):
+    st.header(title)
+    df = load_table(module_key, 500)
+
+    with st.form(f"{module_key}_form"):
+        c1, c2 = st.columns(2)
+        invoice_no = c1.text_input("Invoice No")
+        invoice_date = c2.date_input("Invoice Date", value=india_now().date(), format="DD-MM-YYYY")
+        party_name = c1.text_input(party_label)
+        gstin = c2.text_input("GSTIN")
+        place_of_supply = c1.text_input("Place of Supply")
+        item_name = c2.text_input("Item / Service Name")
+        hsn_sac = c1.text_input("HSN / SAC")
+        qty = c2.number_input("Qty", value=1.0)
+        rate = c1.number_input("Rate", value=0.0)
+        cgst_rate = c2.number_input("CGST %", value=0.0)
+        sgst_rate = c1.number_input("SGST %", value=0.0)
+        igst_rate = c2.number_input("IGST %", value=0.0)
+        remarks = c1.text_input("Remarks")
+
+        taxable, cgst, sgst, igst, total = calc_gst(qty, rate, cgst_rate, sgst_rate, igst_rate)
+
+        st.markdown(f"""
+        <div class="invoice-box">
+        <h4>Invoice Preview</h4>
+        <b>Invoice No:</b> {invoice_no}<br>
+        <b>{party_label}:</b> {party_name}<br>
+        <b>GSTIN:</b> {gstin}<br>
+        <b>Item:</b> {item_name}<br>
+        <b>Taxable:</b> ₹ {taxable:,.2f}<br>
+        <b>CGST:</b> ₹ {cgst:,.2f} | <b>SGST:</b> ₹ {sgst:,.2f} | <b>IGST:</b> ₹ {igst:,.2f}<br>
+        <h3>Total: ₹ {total:,.2f}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.form_submit_button("Save Invoice", use_container_width=True):
+            if invoice_no.strip() == "" or party_name.strip() == "":
+                st.error("Invoice No and Party Name are required.")
+            else:
+                party_col = "customer_name" if module_key == "sales" else "vendor_name"
+                insert_row(module_key, {
+                    "invoice_no": invoice_no,
+                    "invoice_date": str(invoice_date),
+                    party_col: party_name,
+                    "gstin": gstin,
+                    "place_of_supply": place_of_supply,
+                    "item_name": item_name,
+                    "hsn_sac": hsn_sac,
+                    "qty": qty,
+                    "rate": rate,
+                    "taxable_value": taxable,
+                    "cgst": cgst,
+                    "sgst": sgst,
+                    "igst": igst,
+                    "total_value": total,
+                    "remarks": remarks,
+                    "created_by": st.session_state["username"]
+                })
+                st.success("Invoice saved successfully.")
+                st.rerun()
+
+    show_table_with_edit_delete(module_key, df, title)
+
+
+def expense_module():
+    st.header("Expense with GST")
+    df = load_table("expenses", 500)
+
+    with st.form("expense_form"):
+        c1, c2 = st.columns(2)
+        expense_date = c1.date_input("Expense Date", value=india_now().date(), format="DD-MM-YYYY")
+        expense_head = c2.text_input("Expense Head")
+        vendor_name = c1.text_input("Vendor Name")
+        gstin = c2.text_input("GSTIN")
+        invoice_no = c1.text_input("Invoice No")
+        taxable = c2.number_input("Taxable Value", value=0.0)
+        cgst_rate = c1.number_input("CGST %", value=0.0)
+        sgst_rate = c2.number_input("SGST %", value=0.0)
+        igst_rate = c1.number_input("IGST %", value=0.0)
+        cgst = round(taxable * cgst_rate / 100, 2)
+        sgst = round(taxable * sgst_rate / 100, 2)
+        igst = round(taxable * igst_rate / 100, 2)
+        total = round(taxable + cgst + sgst + igst, 2)
+        payment_mode = c2.selectbox("Payment Mode", ["Cash", "Bank", "UPI", "Credit"])
+        remarks = c1.text_input("Remarks")
+
+        st.info(f"Taxable: ₹ {taxable:,.2f} | CGST: ₹ {cgst:,.2f} | SGST: ₹ {sgst:,.2f} | IGST: ₹ {igst:,.2f} | Total: ₹ {total:,.2f}")
+
+        if st.form_submit_button("Save Expense", use_container_width=True):
+            if expense_head.strip() == "":
+                st.error("Expense Head is required.")
+            else:
+                insert_row("expenses", {
+                    "expense_date": str(expense_date),
+                    "expense_head": expense_head,
+                    "vendor_name": vendor_name,
+                    "gstin": gstin,
+                    "invoice_no": invoice_no,
+                    "taxable_value": taxable,
+                    "cgst": cgst,
+                    "sgst": sgst,
+                    "igst": igst,
+                    "total_value": total,
+                    "payment_mode": payment_mode,
+                    "remarks": remarks,
+                    "created_by": st.session_state["username"]
+                })
+                st.success("Expense saved successfully.")
+                st.rerun()
+
+    show_table_with_edit_delete("expenses", df, "Expense Records")
+
+
+def fixed_assets_module():
+    st.header("Fixed Assets Register")
+    df = load_table("fixed_assets", 500)
+
+    with st.form("fixed_assets_form"):
+        c1, c2 = st.columns(2)
+        asset_code = c1.text_input("Asset Code")
+        asset_name = c2.text_input("Asset Name")
+        purchase_date = c1.date_input("Purchase Date", value=india_now().date(), format="DD-MM-YYYY")
+        vendor_name = c2.text_input("Vendor Name")
+        invoice_no = c1.text_input("Invoice No")
+        asset_category = c2.text_input("Asset Category")
+        location = c1.text_input("Location")
+        cost = c2.number_input("Cost", value=0.0)
+        gst_amount = c1.number_input("GST Amount", value=0.0)
+        total_cost = round(cost + gst_amount, 2)
+        useful_life_years = c2.number_input("Useful Life Years", value=5.0)
+        status = c1.selectbox("Status", ["Active", "Sold", "Scrapped"])
+        remarks = c2.text_input("Remarks")
+
+        st.info(f"Total Asset Cost: ₹ {total_cost:,.2f}")
+
+        if st.form_submit_button("Save Asset", use_container_width=True):
+            if asset_name.strip() == "":
+                st.error("Asset Name is required.")
+            else:
+                insert_row("fixed_assets", {
+                    "asset_code": asset_code,
+                    "asset_name": asset_name,
+                    "purchase_date": str(purchase_date),
+                    "vendor_name": vendor_name,
+                    "invoice_no": invoice_no,
+                    "asset_category": asset_category,
+                    "location": location,
+                    "cost": cost,
+                    "gst_amount": gst_amount,
+                    "total_cost": total_cost,
+                    "useful_life_years": useful_life_years,
+                    "status": status,
+                    "remarks": remarks,
+                    "created_by": st.session_state["username"]
+                })
+                st.success("Asset saved successfully.")
+                st.rerun()
+
+    show_table_with_edit_delete("fixed_assets", df, "Fixed Assets Records")
+
+
+def accounting_entries_module():
+    st.header("Accounting Entries Form")
+    df = load_table("accounting_entries", 500)
+
+    with st.form("accounting_entries_form"):
+        c1, c2 = st.columns(2)
+        entry_date = c1.date_input("Entry Date", value=india_now().date(), format="DD-MM-YYYY")
+        voucher_type = c2.selectbox("Voucher Type", ["Journal", "Payment", "Receipt", "Contra", "Sales", "Purchase", "Expense"])
+        voucher_no = c1.text_input("Voucher No")
+        ledger_dr = c2.text_input("Ledger Dr")
+        ledger_cr = c1.text_input("Ledger Cr")
+        amount = c2.number_input("Amount", value=0.0)
+        narration = c1.text_area("Narration")
+
+        st.markdown(f"""
+        <div class="invoice-box">
+        <b>Accounting Entry Preview</b><br>
+        {ledger_dr} Dr &nbsp;&nbsp; ₹ {amount:,.2f}<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;To {ledger_cr} &nbsp;&nbsp; ₹ {amount:,.2f}<br>
+        <b>Narration:</b> {narration}
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.form_submit_button("Save Accounting Entry", use_container_width=True):
+            if ledger_dr.strip() == "" or ledger_cr.strip() == "":
+                st.error("Ledger Dr and Ledger Cr are required.")
+            else:
+                insert_row("accounting_entries", {
+                    "entry_date": str(entry_date),
+                    "voucher_type": voucher_type,
+                    "voucher_no": voucher_no,
+                    "ledger_dr": ledger_dr,
+                    "ledger_cr": ledger_cr,
+                    "amount": amount,
+                    "narration": narration,
+                    "created_by": st.session_state["username"]
+                })
+                st.success("Accounting entry saved successfully.")
+                st.rerun()
+
+    show_table_with_edit_delete("accounting_entries", df, "Accounting Entries")
 
 
 def export_reports():
     st.header("Excel / CSV Export Reports")
 
     report_options = ["employees"]
+    module_map = {
+        "attendance": ("attendance", "allow_attendance"),
+        "attendance_visits": ("attendance_visits", "allow_attendance"),
+        "inout": ("inout", "allow_inout"),
+        "visitors": ("visitors", "allow_visitor"),
+        "tasks": ("tasks", "allow_task"),
+        "appointments": ("appointments", "allow_appointment"),
+        "stock_raw_material": ("stock_raw_material", "allow_raw_material"),
+        "stock_finished_goods": ("stock_finished_goods", "allow_finished_goods"),
+        "stock_wip": ("stock_wip", "allow_wip"),
+        "sales": ("sales", "allow_sales"),
+        "purchase": ("purchase", "allow_purchase"),
+        "expenses": ("expenses", "allow_expense"),
+        "fixed_assets": ("fixed_assets", "allow_fixed_assets"),
+        "accounting_entries": ("accounting_entries", "allow_accounting_entries"),
+    }
 
-    if st.session_state.get("allow_attendance", True):
-        report_options += ["attendance", "attendance_visits"]
-
-    if st.session_state.get("allow_inout", True):
-        report_options.append("inout")
-
-    if st.session_state.get("allow_visitor", True):
-        report_options.append("visitors")
-
-    if st.session_state.get("allow_task", True):
-        report_options.append("tasks")
+    for table_key, permission_key in module_map.values():
+        if st.session_state.get(permission_key, True):
+            report_options.append(table_key)
 
     if is_super_admin():
         report_options = ["clients", "users"] + report_options
@@ -897,28 +1225,43 @@ def export_reports():
     df = load_table(report, int(rows))
     search = st.text_input("Search Report")
     filtered = filter_dataframe(df, search)
-
     st.dataframe(filtered, use_container_width=True)
 
     c1, c2 = st.columns(2)
-
     with c1:
-        st.download_button(
-            "Download CSV",
-            data=filtered.to_csv(index=False).encode("utf-8"),
-            file_name=f"{report}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-
+        st.download_button("Download CSV", data=filtered.to_csv(index=False).encode("utf-8"), file_name=f"{report}.csv", mime="text/csv", use_container_width=True)
     with c2:
-        st.download_button(
-            "Download Excel",
-            data=to_excel_bytes(filtered),
-            file_name=f"{report}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+        st.download_button("Download Excel", data=to_excel_bytes(filtered), file_name=f"{report}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+
+def get_dynamic_menu():
+    if is_super_admin():
+        return [
+            "Dashboard", "Client Master", "User Management", "Employee Master",
+            "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation",
+            "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock",
+            "Sales GST Invoice", "Purchase GST Invoice", "Expense GST",
+            "Fixed Assets", "Accounting Entries", "Excel Export Reports"
+        ]
+
+    if st.session_state["role"] == "Admin":
+        menu = ["Dashboard", "User Management", "Employee Master"]
+    else:
+        menu = []
+
+    ordered_modules = [
+        "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation",
+        "Appointments", "Raw Material Stock", "Finished Goods Stock", "WIP Stock",
+        "Sales GST Invoice", "Purchase GST Invoice", "Expense GST",
+        "Fixed Assets", "Accounting Entries"
+    ]
+
+    for module in ordered_modules:
+        if is_allowed(module):
+            menu.append(module)
+
+    menu.append("Excel Export Reports")
+    return menu
 
 
 def main_app():
@@ -936,58 +1279,7 @@ def main_app():
         st.session_state.clear()
         st.rerun()
 
-    if is_super_admin():
-        menu = [
-            "Dashboard",
-            "Client Master",
-            "User Management",
-            "Employee Master",
-            "Attendance Management",
-            "IN / OUT Register",
-            "Visitor Register",
-            "Task Delegation",
-            "Excel Export Reports",
-        ]
-
-    elif st.session_state["role"] == "Admin":
-        menu = [
-            "Dashboard",
-            "User Management",
-            "Employee Master",
-        ]
-
-        if st.session_state.get("allow_attendance", True):
-            menu.append("Attendance Management")
-
-        if st.session_state.get("allow_inout", True):
-            menu.append("IN / OUT Register")
-
-        if st.session_state.get("allow_visitor", True):
-            menu.append("Visitor Register")
-
-        if st.session_state.get("allow_task", True):
-            menu.append("Task Delegation")
-
-        menu.append("Excel Export Reports")
-
-    else:
-        menu = []
-
-        if st.session_state.get("allow_attendance", True):
-            menu.append("Attendance Management")
-
-        if st.session_state.get("allow_inout", True):
-            menu.append("IN / OUT Register")
-
-        if st.session_state.get("allow_visitor", True):
-            menu.append("Visitor Register")
-
-        if st.session_state.get("allow_task", True):
-            menu.append("Task Delegation")
-
-        menu.append("Excel Export Reports")
-
-    choice = st.sidebar.radio("Select Module", menu)
+    choice = st.sidebar.radio("Select Module", get_dynamic_menu())
 
     if choice == "Dashboard":
         dashboard()
@@ -1005,6 +1297,24 @@ def main_app():
         visitor_register()
     elif choice == "Task Delegation":
         task_delegation()
+    elif choice == "Appointments":
+        appointment_module()
+    elif choice == "Raw Material Stock":
+        stock_form("stock_raw_material", "Raw Material Stock", "raw")
+    elif choice == "Finished Goods Stock":
+        stock_form("stock_finished_goods", "Finished Goods Stock", "fg")
+    elif choice == "WIP Stock":
+        stock_form("stock_wip", "Work in Progress Stock", "wip")
+    elif choice == "Sales GST Invoice":
+        sales_purchase_form("sales", "Sales GST Invoice", "Customer Name")
+    elif choice == "Purchase GST Invoice":
+        sales_purchase_form("purchase", "Purchase GST Invoice", "Vendor Name")
+    elif choice == "Expense GST":
+        expense_module()
+    elif choice == "Fixed Assets":
+        fixed_assets_module()
+    elif choice == "Accounting Entries":
+        accounting_entries_module()
     elif choice == "Excel Export Reports":
         export_reports()
 
