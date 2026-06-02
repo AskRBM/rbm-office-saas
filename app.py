@@ -38,16 +38,16 @@ DISPLAY_COLUMNS = {
     "tasks": ["id","client_code","task_date","financial_year","branch_division","task","assigned_to","priority","due_date","status","remarks","task_photo_name","created_by"],
     "appointments": ["id","client_code","appointment_date","appointment_time","customer_name","mobile","email","company","purpose","meeting_with","fees","status","remarks","created_by"],
     "ledger_groups": ["id","client_code","group_name","group_type","status","created_by"],
-    "ledgers": ["id","client_code","ledger_name","ledger_group","address","contact_no","tan_no","gst_no","pan_no","opening_balance","balance_type","status","created_by"],
+    "ledgers": ["id","client_code","ledger_name","ledger_group","address","contact_no","email","tan_no","gst_no","pan_no","opening_balance","balance_type","status","created_by"],
     "stock_groups": ["id","client_code","stock_group_name","stock_type","status","created_by"],
     "stock_ledgers": ["id","client_code","item_name","item_code","stock_group","unit","hsn_code","opening_qty","opening_rate","opening_value","gst_rate","status","created_by"],
     "stock_raw": ["id","client_code","entry_date","item_name","item_code","unit","opening_qty","inward_qty","outward_qty","closing_qty","rate","value","remarks","created_by"],
     "stock_fg": ["id","client_code","entry_date","item_name","item_code","unit","opening_qty","production_qty","sales_qty","closing_qty","rate","value","remarks","created_by"],
     "stock_wip": ["id","client_code","entry_date","process_name","item_name","item_code","unit","opening_qty","input_qty","output_qty","closing_qty","remarks","created_by"],
     "stock_vouchers": ["id","client_code","voucher_no","voucher_date","voucher_type","item_name","stock_group","qty","rate","value","remarks","created_by"],
-    "sales": ["id","client_code","invoice_no","invoice_date","customer_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","cgst","sgst","igst","total_value","remarks","created_by"],
-    "purchase": ["id","client_code","invoice_no","invoice_date","supplier_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","cgst","sgst","igst","total_value","remarks","created_by"],
-    "expenses": ["id","client_code","expense_date","vendor_name","expense_head","invoice_no","gstin","taxable_value","cgst","sgst","igst","total_value","payment_mode","remarks","created_by"],
+    "sales": ["id","client_code","invoice_no","invoice_date","customer_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","remarks","created_by"],
+    "purchase": ["id","client_code","invoice_no","invoice_date","supplier_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","remarks","created_by"],
+    "expenses": ["id","client_code","expense_date","vendor_name","expense_head","invoice_no","gstin","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","payment_mode","remarks","created_by"],
     "service_vouchers": ["id","client_code","voucher_no","voucher_date","customer_name","mobile","email","service_name","sac_code","taxable_value","cgst","sgst","igst","total_value","payment_status","remarks","created_by"],
     "fixed_assets": ["id","client_code","asset_code","asset_name","purchase_date","supplier_name","invoice_no","asset_category","location","cost","depreciation_rate","status","remarks","created_by"],
     "accounting_entries": ["id","client_code","entry_date","voucher_type","voucher_no","debit_account","credit_account","amount","cgst","sgst","igst","total_amount","narration","created_by"],
@@ -227,6 +227,78 @@ def get_groups(table_key, col, defaults):
     names = df[col].dropna().astype(str).unique().tolist() if not df.empty and col in df.columns else []
     return sorted(list(set(defaults + names)))
 
+
+
+def quick_ledger_creator(default_group="Sundry Creditors", key_prefix="quick_ledger"):
+    """Small direct ledger creation box shown inside voucher screens."""
+    with st.expander("➕ Add New Ledger Here"):
+        groups = get_groups("ledger_groups", "group_name", DEFAULT_LEDGER_GROUPS)
+        c1, c2, c3 = st.columns(3)
+        ledger_name = c1.text_input("Ledger Name", key=f"{key_prefix}_name")
+        ledger_group = c2.selectbox("Ledger Group", groups, index=groups.index(default_group) if default_group in groups else 0, key=f"{key_prefix}_group")
+        contact_no = c3.text_input("Contact No", key=f"{key_prefix}_contact")
+        address = st.text_area("Address", key=f"{key_prefix}_address")
+        c4, c5, c6, c7 = st.columns(4)
+        gst_no = c4.text_input("GST No", key=f"{key_prefix}_gst")
+        pan_no = c5.text_input("PAN No", key=f"{key_prefix}_pan")
+        tan_no = c6.text_input("TAN No", key=f"{key_prefix}_tan")
+        opening_balance = c7.number_input("Opening Balance", value=0.0, key=f"{key_prefix}_ob")
+        balance_type = st.selectbox("Balance Type", ["Dr", "Cr"], key=f"{key_prefix}_baltype")
+        if st.button("Save New Ledger", use_container_width=True, key=f"{key_prefix}_save"):
+            if str(ledger_name).strip() == "":
+                st.error("Ledger Name required")
+            else:
+                insert_row("ledgers", {
+                    "ledger_name": ledger_name.strip(),
+                    "ledger_group": ledger_group,
+                    "address": address,
+                    "contact_no": contact_no,
+                    "tan_no": tan_no,
+                    "gst_no": gst_no,
+                    "pan_no": pan_no,
+                    "opening_balance": opening_balance,
+                    "balance_type": balance_type,
+                    "status": "Active",
+                    "created_by": current_user()
+                })
+                st.success("Ledger created. Please refresh/reopen this module to see it in dropdown.")
+
+
+def quick_stock_item_creator(default_group="Finished Goods", key_prefix="quick_item"):
+    """Small direct stock item creation box shown inside invoice screens."""
+    with st.expander("➕ Add New Stock Item Here"):
+        groups = get_groups("stock_groups", "stock_group_name", DEFAULT_STOCK_GROUPS)
+        c1, c2, c3 = st.columns(3)
+        item_name = c1.text_input("Item Name", key=f"{key_prefix}_name")
+        item_code = c2.text_input("Item Code", key=f"{key_prefix}_code")
+        stock_group = c3.selectbox("Stock Group", groups, index=groups.index(default_group) if default_group in groups else 0, key=f"{key_prefix}_group")
+        c4, c5, c6, c7 = st.columns(4)
+        unit = c4.text_input("Unit", value="Nos", key=f"{key_prefix}_unit")
+        hsn_code = c5.text_input("HSN/SAC", key=f"{key_prefix}_hsn")
+        gst_rate = c6.number_input("GST %", value=18.0, key=f"{key_prefix}_gst")
+        opening_qty = c7.number_input("Opening Qty", value=0.0, key=f"{key_prefix}_oqty")
+        opening_rate = c6.number_input("Opening Rate", value=0.0, key=f"{key_prefix}_orate")
+        opening_value = round(opening_qty * opening_rate, 2)
+        st.info(f"Opening Value: {money(opening_value)}")
+        if st.button("Save New Stock Item", use_container_width=True, key=f"{key_prefix}_save"):
+            if str(item_name).strip() == "":
+                st.error("Item Name required")
+            else:
+                insert_row("stock_ledgers", {
+                    "item_name": item_name.strip(),
+                    "item_code": item_code,
+                    "stock_group": stock_group,
+                    "unit": unit,
+                    "hsn_code": hsn_code,
+                    "opening_qty": opening_qty,
+                    "opening_rate": opening_rate,
+                    "opening_value": opening_value,
+                    "gst_rate": gst_rate,
+                    "status": "Active",
+                    "created_by": current_user()
+                })
+                st.success("Stock item created. Please refresh/reopen this module to see it in dropdown.")
+
 def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
     try: taxable = float(taxable); gst_rate = float(gst_rate)
     except Exception: taxable = 0; gst_rate = 0
@@ -391,15 +463,20 @@ def ledger_master():
         ledger_group = c2.selectbox("Ledger Group", groups)
         address = c1.text_area("Address")
         contact_no = c2.text_input("Contact No")
-        tan_no = c1.text_input("TAN No")
-        gst_no = c2.text_input("GST No")
-        pan_no = c1.text_input("PAN No")
-        opening_balance = c2.number_input("Opening Balance", value=0.0)
-        balance_type = c1.selectbox("Balance Type", ["Dr", "Cr"])
-        status = c2.selectbox("Status", ["Active", "Inactive"])
+        email = c1.text_input("Email")
+        tan_no = c2.text_input("TAN No")
+        gst_no = c1.text_input("GST No")
+        pan_no = c2.text_input("PAN No")
+        opening_balance = c1.number_input("Opening Balance", value=0.0)
+        balance_type = c2.selectbox("Balance Type", ["Dr", "Cr"])
+        status = c1.selectbox("Status", ["Active", "Inactive"])
         if st.form_submit_button("Save Ledger", use_container_width=True):
-            if not ledger_name: st.error("Ledger Name required")
-            else: insert_row("ledgers", {"ledger_name":ledger_name,"ledger_group":ledger_group,"address":address,"contact_no":contact_no,"tan_no":tan_no,"gst_no":gst_no,"pan_no":pan_no,"opening_balance":opening_balance,"balance_type":balance_type,"status":status,"created_by":current_user()}); st.success("Ledger saved"); st.rerun()
+            if not ledger_name:
+                st.error("Ledger Name required")
+            else:
+                insert_row("ledgers", {"ledger_name":ledger_name,"ledger_group":ledger_group,"address":address,"contact_no":contact_no,"email":email,"tan_no":tan_no,"gst_no":gst_no,"pan_no":pan_no,"opening_balance":opening_balance,"balance_type":balance_type,"status":status,"created_by":current_user()})
+                st.success("Ledger saved")
+                st.rerun()
     show_table_with_edit_delete("ledgers", load_table("ledgers", 500), "Ledger List")
 
 def stock_group_master():
@@ -501,30 +578,47 @@ def purchase_invoice(): voucher_invoice("purchase", "Purchase GST Invoice", "sup
 
 def voucher_invoice(key, title, party_col, party_list, cls):
     show_header(title, cls)
+    default_group = "Sundry Debtors" if key == "sales" else "Sundry Creditors"
+    quick_ledger_creator(default_group=default_group, key_prefix=f"{key}_party_ledger")
+    quick_stock_item_creator(default_group="Finished Goods" if key == "sales" else "Raw Material", key_prefix=f"{key}_stock_item")
+
+    # Reload lists after possible direct creation on next rerun/reopen
+    party_list = get_ledger_names(default_group)
+    stock_items = get_stock_items()
+
     with st.form(f"{key}_form"):
         c1,c2,c3=st.columns(3)
         inv_no=c1.text_input("Invoice / Voucher No")
         inv_date=str(c2.date_input("Date", value=india_now().date(), format="DD-MM-YYYY"))
-        party=c3.selectbox("Customer / Vendor Ledger", party_list)
+        party=c3.selectbox("Customer Ledger" if key == "sales" else "Vendor Ledger", party_list)
         gstin=c1.text_input("GSTIN")
         gst_type=c2.selectbox("GST Type", ["CGST+SGST","IGST"])
-        no_items=c3.number_input("No. of Items", min_value=1, max_value=10, value=1, step=1)
-        rows=[]; grand=0
+        no_items=c3.number_input("No. of Items", min_value=1, max_value=25, value=1, step=1)
+        rows=[]; gross_total=0; taxable_total=0; gst_total=0
         for i in range(int(no_items)):
             st.markdown(f"**Item {i+1}**")
             a,b,c,d,e=st.columns(5)
-            item=a.selectbox("Item", get_stock_items(), key=f"{key}_item_{i}")
+            item=a.selectbox("Item", stock_items, key=f"{key}_item_{i}")
             hsn=b.text_input("HSN/SAC", key=f"{key}_hsn_{i}")
             qty=c.number_input("Qty", value=1.0, key=f"{key}_qty_{i}")
             rate=d.number_input("Rate", value=0.0, key=f"{key}_rate_{i}")
             gst_rate=e.number_input("GST %", value=18.0, key=f"{key}_gst_{i}")
-            taxable=qty*rate; cgst,sgst,igst,total=gst_calc(taxable,gst_rate,gst_type); grand += total
+            taxable=round(qty*rate,2)
+            cgst,sgst,igst,total=gst_calc(taxable,gst_rate,gst_type)
+            taxable_total += taxable; gst_total += (cgst+sgst+igst); gross_total += total
             rows.append({"item":item,"hsn":hsn,"qty":qty,"rate":rate,"taxable":taxable,"cgst":cgst,"sgst":sgst,"igst":igst,"gst":cgst+sgst+igst,"total":total})
+        st.markdown("### Adjustments")
+        a1,a2,a3,a4=st.columns(4)
+        discount=a1.number_input("Discount (-)", value=0.0)
+        freight=a2.number_input("Freight (+)", value=0.0)
+        other_exp=a3.number_input("Other Exp (+)", value=0.0)
+        tds=a4.number_input("TDS (-)", value=0.0)
+        grand=round(gross_total - discount + freight + other_exp - tds, 2)
         remarks=st.text_input("Remarks")
-        st.info(f"Grand Total: {money(grand)}")
+        st.info(f"Taxable: {money(taxable_total)} | GST: {money(gst_total)} | Gross: {money(gross_total)} | Net Payable/Receivable: {money(grand)}")
         if st.form_submit_button(f"Save {title}", use_container_width=True):
             for r in rows:
-                row={"invoice_no":inv_no,"invoice_date":inv_date,party_col:party,"gstin":gstin,"item_name":r['item'],"hsn_sac":r['hsn'],"qty":r['qty'],"rate":r['rate'],"taxable_value":r['taxable'],"cgst":r['cgst'],"sgst":r['sgst'],"igst":r['igst'],"total_value":r['total'],"remarks":remarks,"created_by":current_user()}
+                row={"invoice_no":inv_no,"invoice_date":inv_date,party_col:party,"gstin":gstin,"item_name":r['item'],"hsn_sac":r['hsn'],"qty":r['qty'],"rate":r['rate'],"taxable_value":r['taxable'],"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":r['cgst'],"sgst":r['sgst'],"igst":r['igst'],"total_value":r['total'],"remarks":remarks,"created_by":current_user()}
                 insert_row(key,row)
             st.success("Voucher saved"); st.rerun()
     html=invoice_html(title, inv_no if 'inv_no' in locals() else '', party if 'party' in locals() else '', rows if 'rows' in locals() else [], grand if 'grand' in locals() else 0)
@@ -533,14 +627,32 @@ def voucher_invoice(key, title, party_col, party_list, cls):
 
 def expense_gst():
     show_header("Expense GST Voucher", "section-acc")
+    quick_ledger_creator(default_group="Sundry Creditors", key_prefix="expense_vendor_ledger")
+    quick_ledger_creator(default_group="Indirect Expenses", key_prefix="expense_head_ledger")
     ledgers=get_ledger_names()
     with st.form("expense_form"):
         c1,c2,c3=st.columns(3)
-        expense_date=str(c1.date_input("Expense Date", value=india_now().date(), format="DD-MM-YYYY")); vendor_name=c2.selectbox("Vendor Ledger", ledgers); expense_head=c3.selectbox("Expense Ledger", ledgers)
-        invoice_no=c1.text_input("Invoice No"); gstin=c2.text_input("GSTIN"); taxable_value=c3.number_input("Taxable Value", value=0.0)
-        gst_rate=c1.number_input("GST %", value=18.0); gst_type=c2.selectbox("GST Type", ["CGST+SGST","IGST"]); payment_mode=c3.selectbox("Payment Mode", ["Cash","Bank","UPI","Credit"])
-        cgst,sgst,igst,total_value=gst_calc(taxable_value,gst_rate,gst_type); remarks=st.text_input("Remarks"); st.info(f"Total: {money(total_value)}")
-        if st.form_submit_button("Save Expense GST", use_container_width=True): insert_row("expenses", {"expense_date":expense_date,"vendor_name":vendor_name,"expense_head":expense_head,"invoice_no":invoice_no,"gstin":gstin,"taxable_value":taxable_value,"cgst":cgst,"sgst":sgst,"igst":igst,"total_value":total_value,"payment_mode":payment_mode,"remarks":remarks,"created_by":current_user()}); st.success("Saved"); st.rerun()
+        expense_date=str(c1.date_input("Expense Date", value=india_now().date(), format="DD-MM-YYYY"))
+        vendor_name=c2.selectbox("Vendor Ledger", ledgers)
+        expense_head=c3.selectbox("Expense Ledger", ledgers)
+        invoice_no=c1.text_input("Invoice No")
+        gstin=c2.text_input("GSTIN")
+        taxable_value=c3.number_input("Taxable Value", value=0.0)
+        gst_rate=c1.number_input("GST %", value=18.0)
+        gst_type=c2.selectbox("GST Type", ["CGST+SGST","IGST"])
+        payment_mode=c3.selectbox("Payment Mode", ["Cash","Bank","UPI","Credit"])
+        a1,a2,a3,a4=st.columns(4)
+        discount=a1.number_input("Discount (-)", value=0.0)
+        freight=a2.number_input("Freight (+)", value=0.0)
+        other_exp=a3.number_input("Other Exp (+)", value=0.0)
+        tds=a4.number_input("TDS (-)", value=0.0)
+        cgst,sgst,igst,gross_value=gst_calc(taxable_value,gst_rate,gst_type)
+        total_value=round(gross_value - discount + freight + other_exp - tds, 2)
+        remarks=st.text_input("Remarks")
+        st.info(f"Gross: {money(gross_value)} | Net Payable: {money(total_value)}")
+        if st.form_submit_button("Save Expense GST", use_container_width=True):
+            insert_row("expenses", {"expense_date":expense_date,"vendor_name":vendor_name,"expense_head":expense_head,"invoice_no":invoice_no,"gstin":gstin,"taxable_value":taxable_value,"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":cgst,"sgst":sgst,"igst":igst,"total_value":total_value,"payment_mode":payment_mode,"remarks":remarks,"created_by":current_user()})
+            st.success("Saved"); st.rerun()
     show_table_with_edit_delete("expenses", load_table("expenses",500), "Expense Register")
 
 def service_voucher():
@@ -562,6 +674,7 @@ def fixed_assets(): simple_module_form("fixed_assets", "Fixed Assets", [("asset_
 
 def accounting_entries():
     show_header("Accounting Entries - Multiple Dr / Cr", "section-acc")
+    quick_ledger_creator(default_group="Indirect Expenses", key_prefix="accounting_new_ledger")
     ledgers=get_ledger_names()
     with st.form("acc_form"):
         c1,c2,c3=st.columns(3)
@@ -620,15 +733,100 @@ def import_center():
 
 def reports():
     show_header("Registers / Reports", "section-rep")
-    opts=["employees","ledgers","stock_ledgers","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks"]
-    if is_super_admin(): opts=["clients","users"]+opts
-    report = st.selectbox("Select Register", opts)
-    rows = st.number_input("Rows to load", 100, 50000, 1000, 100)
-    df=load_table(report, int(rows)); search=st.text_input("Search Report"); filtered=filter_dataframe(df, search)
-    st.dataframe(filtered, use_container_width=True)
-    c1,c2=st.columns(2)
-    with c1: st.download_button("Download Excel", to_excel_bytes(filtered), f"{report}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-    with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{report}.csv", "text/csv", use_container_width=True)
+
+    tab1, tab2, tab3 = st.tabs(["General Registers", "Ledger Reports", "Stock Item Reports"])
+
+    with tab1:
+        opts=["employees","ledgers","stock_ledgers","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks"]
+        if is_super_admin(): opts=["clients","users"]+opts
+        report = st.selectbox("Select Register", opts, key="general_register_select")
+        rows = st.number_input("Rows to load", 100, 50000, 1000, 100, key="general_rows")
+        df=load_table(report, int(rows))
+        search=st.text_input("Search Report", key="general_search")
+        filtered=filter_dataframe(df, search)
+        st.dataframe(filtered, use_container_width=True)
+        c1,c2=st.columns(2)
+        with c1: st.download_button("Download Excel", to_excel_bytes(filtered), f"{report}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="general_xlsx")
+        with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{report}.csv", "text/csv", use_container_width=True, key="general_csv")
+
+    with tab2:
+        st.subheader("Ledger Group Wise Download")
+        ledger_df = load_table("ledgers", 50000)
+        if ledger_df.empty:
+            st.info("No ledger found.")
+        else:
+            if "email" not in ledger_df.columns:
+                ledger_df["email"] = ""
+            preferred = ["All", "Sundry Debtors", "Sundry Creditors", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses"]
+            actual = ledger_df["ledger_group"].dropna().astype(str).unique().tolist() if "ledger_group" in ledger_df.columns else []
+            group_list = []
+            for g in preferred + sorted(actual):
+                if g not in group_list:
+                    group_list.append(g)
+            selected_group = st.selectbox("First Select Ledger Group", group_list, key="ledger_group_report")
+            if selected_group == "All":
+                show_df = ledger_df.copy()
+            else:
+                show_df = ledger_df[ledger_df["ledger_group"].astype(str) == selected_group].copy()
+
+            ledger_names = ["All"] + sorted(show_df["ledger_name"].dropna().astype(str).unique().tolist()) if not show_df.empty else ["All"]
+            selected_ledger = st.selectbox("Then Select Ledger Name", ledger_names, key="ledger_name_report")
+            if selected_ledger != "All":
+                show_df = show_df[show_df["ledger_name"].astype(str) == selected_ledger]
+
+            cols = [c for c in ["ledger_group","ledger_name","address","contact_no","email","tan_no","gst_no","pan_no","opening_balance","balance_type","status"] if c in show_df.columns]
+            show_df = show_df[cols] if cols else show_df
+
+            st.info(f"Records Found: {len(show_df)}")
+            st.dataframe(show_df, use_container_width=True)
+
+            if selected_group in ["Sundry Debtors", "Sundry Creditors"]:
+                email_df = show_df[[c for c in ["ledger_name","contact_no","email"] if c in show_df.columns]].copy()
+                email_df = email_df[email_df.get("email", "").astype(str).str.strip() != ""] if "email" in email_df.columns else email_df
+                st.subheader(f"Email List - {selected_group}")
+                st.dataframe(email_df, use_container_width=True)
+                emails = ";".join(email_df["email"].dropna().astype(str).tolist()) if "email" in email_df.columns else ""
+                if emails:
+                    st.markdown(f"[Open Email Draft](mailto:{emails})")
+
+            safe_group = selected_group.replace(" ", "_").replace("/", "_")
+            safe_ledger = selected_ledger.replace(" ", "_").replace("/", "_")
+            c1,c2=st.columns(2)
+            with c1: st.download_button("Download Ledger Excel", to_excel_bytes(show_df), f"ledger_{safe_group}_{safe_ledger}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="ledger_xlsx")
+            with c2: st.download_button("Download Ledger CSV", show_df.to_csv(index=False).encode("utf-8"), f"ledger_{safe_group}_{safe_ledger}.csv", "text/csv", use_container_width=True, key="ledger_csv")
+
+    with tab3:
+        st.subheader("Stock Group Wise Download")
+        stock_df = load_table("stock_ledgers", 50000)
+        if stock_df.empty:
+            st.info("No stock item found.")
+        else:
+            preferred_stock = ["All", "Raw Material", "Finished Goods", "Work in Progress", "Packing Material", "Consumables", "Stores & Spares", "Trading Goods"]
+            actual_stock = stock_df["stock_group"].dropna().astype(str).unique().tolist() if "stock_group" in stock_df.columns else []
+            stock_group_list=[]
+            for g in preferred_stock + sorted(actual_stock):
+                if g not in stock_group_list:
+                    stock_group_list.append(g)
+            selected_stock_group = st.selectbox("First Select Stock Group", stock_group_list, key="stock_group_report")
+            if selected_stock_group == "All":
+                show_stock_df = stock_df.copy()
+            else:
+                show_stock_df = stock_df[stock_df["stock_group"].astype(str) == selected_stock_group].copy()
+
+            item_names = ["All"] + sorted(show_stock_df["item_name"].dropna().astype(str).unique().tolist()) if not show_stock_df.empty else ["All"]
+            selected_item = st.selectbox("Then Select Stock Item", item_names, key="stock_item_report")
+            if selected_item != "All":
+                show_stock_df = show_stock_df[show_stock_df["item_name"].astype(str) == selected_item]
+
+            cols = [c for c in ["stock_group","item_name","item_code","unit","hsn_code","gst_rate","opening_qty","opening_rate","opening_value","status"] if c in show_stock_df.columns]
+            show_stock_df = show_stock_df[cols] if cols else show_stock_df
+            st.info(f"Records Found: {len(show_stock_df)}")
+            st.dataframe(show_stock_df, use_container_width=True)
+            safe_group = selected_stock_group.replace(" ", "_").replace("/", "_")
+            safe_item = selected_item.replace(" ", "_").replace("/", "_")
+            c1,c2=st.columns(2)
+            with c1: st.download_button("Download Stock Excel", to_excel_bytes(show_stock_df), f"stock_{safe_group}_{safe_item}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="stock_xlsx")
+            with c2: st.download_button("Download Stock CSV", show_stock_df.to_csv(index=False).encode("utf-8"), f"stock_{safe_group}_{safe_item}.csv", "text/csv", use_container_width=True, key="stock_csv")
 
 def placeholder_denied(): st.warning("This module is not enabled for this client.")
 
