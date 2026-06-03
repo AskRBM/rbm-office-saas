@@ -110,8 +110,19 @@ for _k in REVERSIBLE_TABLE_KEYS:
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:1rem;padding-bottom:1.5rem;}
-.rbm-header {background:linear-gradient(135deg,#082f49,#075985,#0284c7);padding:18px 24px;border-radius:18px;margin-bottom:20px;box-shadow:0 10px 24px rgba(2,132,199,.22);display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+[data-testid="stHeader"] {height:0rem !important; visibility:hidden !important;}
+[data-testid="stAppViewContainer"] {padding-top:0rem !important;}
+[data-testid="stDecoration"] {display:none !important;}
+.block-container {
+    padding-top:0.15rem !important;
+    padding-bottom:1rem !important;
+    padding-left:0.75rem !important;
+    padding-right:0.75rem !important;
+    max-width:100% !important;
+}
+[data-testid="stSidebar"] {padding-top:0rem !important;}
+[data-testid="stSidebarContent"] {padding-top:0.25rem !important;}
+.rbm-header {background:linear-gradient(135deg,#082f49,#075985,#0284c7);padding:18px 24px;border-radius:18px;margin-top:0rem!important;margin-bottom:12px!important;box-shadow:0 10px 24px rgba(2,132,199,.22);display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .rbm-title {color:white;font-size:34px;font-weight:900;margin:0;line-height:1;}
 .rbm-divider {color:#bae6fd;font-size:30px;font-weight:300;}
 .rbm-subtitle {color:white;font-size:15px;font-weight:600;}
