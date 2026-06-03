@@ -649,7 +649,7 @@ def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
 def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info=None):
     """Professional invoice preview with item-wise CGST/SGST/IGST and voucher-level adjustments."""
     summary = summary or {}
-    party_info = party_info or get_ledger_details(party)
+    party_info = party_info or globals().get("get_ledger_details", lambda x: {})(party)
 
     def safe_text(value):
         value = "" if value is None else str(value)
@@ -898,7 +898,7 @@ def get_saved_invoice_preview_html(key, title, party_col):
         "gross_total": gross_value,
     }
 
-    html = invoice_html(title, selected_invoice_no, party, rows, net_value, summary, get_ledger_details(party))
+    html = invoice_html(title, selected_invoice_no, party, rows, net_value, summary, globals().get("get_ledger_details", lambda x: {})(party))
     return html, f"saved_{title.replace(' ', '_')}_{selected_invoice_no}.html"
 
 # ---------- LOGIN / SIDEBAR ----------
@@ -1463,7 +1463,7 @@ def voucher_invoice(key, title, party_col, party_list, cls):
             rows if 'rows' in locals() else [],
             grand if 'grand' in locals() else 0,
             invoice_summary if 'invoice_summary' in locals() else {},
-            get_ledger_details(current_party)
+            globals().get("get_ledger_details", lambda x: {})(current_party)
         )
         show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
 
