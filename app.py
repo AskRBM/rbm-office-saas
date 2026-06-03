@@ -33,11 +33,15 @@ TABLES = {
     "document_series": "document_series",
     "gst_settings": "gst_settings",
     "calculation_books": "calculation_books",
+    "quotation_requirements": "quotation_requirements",
+    "quotation_business_users": "quotation_business_users",
+    "quotation_access": "quotation_access",
+    "quotations": "quotations",
     "audit_logs": "audit_logs",
 }
 
 DISPLAY_COLUMNS = {
-    "clients": ["id","client_code","client_name","allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","status","created_at"],
+    "clients": ["id","client_code","client_name","allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation","status","created_at"],
     "users": ["id","client_code","username","password","role","full_name","status"],
     "employees": ["id","client_code","employee_id","employee_name","mobile","email","department","designation","branch_division","status"],
     "attendance": ["id","client_code","attendance_date","financial_year","employee_name","attendance_type","office_location","status","in_time","out_time","working_hours","in_latitude","in_longitude","out_latitude","out_longitude","remarks","created_by"],
@@ -68,6 +72,10 @@ DISPLAY_COLUMNS = {
     "document_series": ["id","client_code","module_name","prefix","next_no","suffix","status","created_by"],
     "gst_settings": ["id","client_code","gst_no","legal_name","state","registration_type","default_tax_type","status","created_by"],
     "calculation_books": ["id","client_code","book_name","sheet_name","grid_json","remarks","created_by","created_at"],
+    "quotation_requirements": ["id","client_code","requirement_no","requirement_date","requirement_title","requirement_details","item_name","qty","unit","expected_date","status","remarks","created_by","created_at"],
+    "quotation_business_users": ["id","client_code","business_name","contact_person","mobile","email","username","password","status","created_by","created_at"],
+    "quotation_access": ["id","client_code","requirement_id","requirement_no","business_username","business_name","status","created_by","created_at"],
+    "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","remarks","created_by","created_at"],
     "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
 }
 
@@ -228,7 +236,7 @@ def write_audit_log(module_name, action_type, record_id="", details=""):
     try:
         if "audit_logs" not in TABLES:
             return
-        supabase.table(TABLES["audit_logs"]).insert({
+        supabase.table(TABLES["audit_logs","quotation_requirements","quotation_business_users","quotation_access","quotations"]).insert({
             "client_code": get_client_code(),
             "action_date": india_now().date().isoformat(),
             "module_name": str(module_name),
@@ -635,7 +643,7 @@ def init_users():
 
 def load_client_permissions(client_code):
     data = safe_df(supabase.table("clients").select("*").eq("client_code", client_code).limit(1).execute().data)
-    permissions = ["allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import"]
+    permissions = ["allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation"]
     for p in permissions: st.session_state[p] = True
     name = client_code
     if not data.empty:
@@ -1452,6 +1460,243 @@ def calculation_book():
     st.divider()
     show_table_with_edit_delete("calculation_books", load_table("calculation_books", 100), "Saved Calculation Books")
 
+
+def _quote_role():
+    return st.session_state.get("role") in ["Quotation User", "Vendor", "Supplier", "Business User"]
+
+
+def _quotation_file_download(row):
+    try:
+        data = str(row.get("quotation_file_data", "") or "")
+        name = str(row.get("quotation_file_name", "quotation_file")) or "quotation_file"
+        if data.strip():
+            st.download_button(
+                "Download Uploaded Quotation",
+                data=base64.b64decode(data),
+                file_name=name,
+                mime="application/octet-stream",
+                use_container_width=True,
+                key=f"download_quote_file_{row.get('id','')}"
+            )
+    except Exception:
+        st.warning("File preview/download not available for this quotation.")
+
+
+def quotation_module():
+    show_header("Quotation Portal", "section-acc")
+
+    role = st.session_state.get("role", "")
+    username = current_user()
+
+    if role in ["Admin", "Super Admin"]:
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "Our Requirements",
+            "Business Users",
+            "Requirement Access",
+            "Received Quotations",
+        ])
+
+        with tab1:
+            st.subheader("Create Requirement / RFQ")
+            with st.form("quotation_requirement_form", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                requirement_no = c1.text_input("Requirement No", value=f"REQ-{india_now().strftime('%Y%m%d%H%M')}")
+                requirement_date = c2.date_input("Requirement Date", value=india_now().date(), format="DD-MM-YYYY")
+                expected_date = c3.date_input("Expected Quote Date", value=india_now().date(), format="DD-MM-YYYY")
+                requirement_title = st.text_input("Requirement Title")
+                item_name = c1.text_input("Item / Service Name")
+                qty = c2.number_input("Qty", min_value=0.0, value=1.0, step=1.0)
+                unit = c3.text_input("Unit", value="Nos")
+                requirement_details = st.text_area("Requirement Details / Technical Specification")
+                status = c1.selectbox("Status", ["Open", "Closed", "Cancelled"])
+                remarks = st.text_input("Remarks")
+                if st.form_submit_button("Save Requirement", use_container_width=True):
+                    if not requirement_no.strip() or not requirement_title.strip():
+                        st.error("Requirement No and Title are required.")
+                    else:
+                        insert_row("quotation_requirements", {
+                            "requirement_no": requirement_no.strip(),
+                            "requirement_date": str(requirement_date),
+                            "requirement_title": requirement_title.strip(),
+                            "requirement_details": requirement_details,
+                            "item_name": item_name,
+                            "qty": qty,
+                            "unit": unit,
+                            "expected_date": str(expected_date),
+                            "status": status,
+                            "remarks": remarks,
+                            "created_by": username,
+                        })
+                        st.success("Requirement saved.")
+                        st.rerun()
+            show_table_with_edit_delete("quotation_requirements", load_table("quotation_requirements", 1000), "Requirement List")
+
+        with tab2:
+            st.subheader("Create Business Login for Quotation Portal")
+            with st.form("quotation_business_user_form", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                business_name = c1.text_input("Business Name")
+                contact_person = c2.text_input("Contact Person")
+                mobile = c1.text_input("Mobile")
+                email = c2.text_input("Email")
+                business_username = c1.text_input("Username")
+                business_password = c2.text_input("Password", type="password")
+                status = c1.selectbox("Status", ["Active", "Inactive"])
+                if st.form_submit_button("Create Business User", use_container_width=True):
+                    if not business_name.strip() or not business_username.strip() or not business_password.strip():
+                        st.error("Business name, username and password are required.")
+                    else:
+                        insert_row("quotation_business_users", {
+                            "business_name": business_name.strip(),
+                            "contact_person": contact_person,
+                            "mobile": mobile,
+                            "email": email,
+                            "username": business_username.strip(),
+                            "password": business_password,
+                            "status": status,
+                            "created_by": username,
+                        })
+                        # Also create normal app login with restricted quotation role.
+                        insert_row("users", {
+                            "client_code": get_client_code(),
+                            "username": business_username.strip(),
+                            "password": business_password,
+                            "role": "Quotation User",
+                            "full_name": business_name.strip(),
+                            "status": status,
+                        })
+                        st.success("Business quotation login created.")
+                        st.rerun()
+            show_table_with_edit_delete("quotation_business_users", load_table("quotation_business_users", 1000), "Business User List")
+
+        with tab3:
+            st.subheader("Assign Which Requirement a Business Can See")
+            req_df = load_table("quotation_requirements", 5000)
+            bus_df = load_table("quotation_business_users", 5000)
+            if req_df.empty or bus_df.empty:
+                st.info("Create at least one requirement and one business user first.")
+            else:
+                req_df = req_df[req_df["status"].astype(str).isin(["Open", "Active", ""])] if "status" in req_df.columns else req_df
+                req_options = {
+                    f"{r.get('requirement_no','')} | {r.get('requirement_title','')}": int(r.get("id"))
+                    for _, r in req_df.iterrows()
+                }
+                bus_options = {
+                    f"{r.get('business_name','')} | {r.get('username','')}": str(r.get("username"))
+                    for _, r in bus_df.iterrows()
+                }
+                with st.form("quotation_access_form", clear_on_submit=True):
+                    selected_req = st.selectbox("Requirement", list(req_options.keys()))
+                    selected_businesses = st.multiselect("Business Users allowed to see this requirement", list(bus_options.keys()))
+                    if st.form_submit_button("Save Access", use_container_width=True):
+                        req_id = req_options[selected_req]
+                        req_row = req_df[req_df["id"] == req_id].iloc[0]
+                        for b in selected_businesses:
+                            bun = bus_options[b]
+                            b_row = bus_df[bus_df["username"].astype(str) == bun].iloc[0]
+                            insert_row("quotation_access", {
+                                "requirement_id": req_id,
+                                "requirement_no": str(req_row.get("requirement_no", "")),
+                                "business_username": bun,
+                                "business_name": str(b_row.get("business_name", "")),
+                                "status": "Active",
+                                "created_by": username,
+                            })
+                        st.success("Access saved.")
+                        st.rerun()
+            show_table_with_edit_delete("quotation_access", load_table("quotation_access", 1000), "Requirement Access List")
+
+        with tab4:
+            st.subheader("All Quotations Received")
+            qdf = load_table("quotations", 5000)
+            st.dataframe(qdf, use_container_width=True)
+            if not qdf.empty:
+                selected = st.selectbox("Select quotation ID to download file", qdf["id"].tolist(), key="quote_admin_download_id")
+                raw = safe_df(supabase.table("quotations").select("*").eq("id", int(selected)).limit(1).execute().data)
+                if not raw.empty:
+                    _quotation_file_download(raw.iloc[0])
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button("Download Quotation Register Excel", to_excel_bytes(qdf), "quotation_register.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="quote_reg_xlsx")
+            with c2:
+                st.download_button("Download Quotation Register CSV", qdf.to_csv(index=False).encode("utf-8"), "quotation_register.csv", "text/csv", use_container_width=True, key="quote_reg_csv")
+
+    elif _quote_role():
+        st.info("You can see only requirements assigned to your business username and only your own quotations.")
+        access_df = load_table("quotation_access", 5000)
+        access_df = access_df[access_df["business_username"].astype(str) == username] if not access_df.empty and "business_username" in access_df.columns else pd.DataFrame()
+        allowed_ids = access_df["requirement_id"].dropna().astype(int).tolist() if not access_df.empty and "requirement_id" in access_df.columns else []
+
+        tab1, tab2 = st.tabs(["Assigned Requirements", "My Submitted Quotations"])
+        with tab1:
+            req_df = load_table("quotation_requirements", 5000)
+            if allowed_ids and not req_df.empty:
+                req_df = req_df[req_df["id"].astype(int).isin(allowed_ids)]
+            else:
+                req_df = pd.DataFrame()
+            st.dataframe(req_df, use_container_width=True)
+            if req_df.empty:
+                st.info("No requirement assigned to you.")
+            else:
+                with st.form("submit_quote_form", clear_on_submit=True):
+                    req_labels = {
+                        f"{r.get('requirement_no','')} | {r.get('requirement_title','')}": int(r.get("id"))
+                        for _, r in req_df.iterrows()
+                    }
+                    selected_req = st.selectbox("Select Requirement", list(req_labels.keys()))
+                    req_id = req_labels[selected_req]
+                    req_row = req_df[req_df["id"] == req_id].iloc[0]
+                    c1, c2, c3 = st.columns(3)
+                    quotation_no = c1.text_input("Quotation No")
+                    quotation_date = c2.date_input("Quotation Date", value=india_now().date(), format="DD-MM-YYYY")
+                    valid_till = c3.date_input("Valid Till", value=india_now().date(), format="DD-MM-YYYY")
+                    amount = c1.number_input("Amount", min_value=0.0, value=0.0, step=100.0)
+                    gst_amount = c2.number_input("GST Amount", min_value=0.0, value=0.0, step=100.0)
+                    total_amount = c3.number_input("Total Amount", min_value=0.0, value=float(amount + gst_amount), step=100.0)
+                    quotation_file = st.file_uploader("Upload Quotation PDF / Image / Excel", type=["pdf", "png", "jpg", "jpeg", "xlsx", "xls", "csv"])
+                    remarks = st.text_area("Quotation Remarks")
+                    if st.form_submit_button("Submit Quotation", use_container_width=True):
+                        if not quotation_no.strip():
+                            st.error("Quotation No is required.")
+                        else:
+                            fname, fdata = "", ""
+                            if quotation_file is not None:
+                                if quotation_file.size > 10 * 1024 * 1024:
+                                    st.error("Quotation file should be max 10 MB.")
+                                    return
+                                fname = quotation_file.name
+                                fdata = base64.b64encode(quotation_file.read()).decode("utf-8")
+                            insert_row("quotations", {
+                                "requirement_id": req_id,
+                                "requirement_no": str(req_row.get("requirement_no", "")),
+                                "business_username": username,
+                                "business_name": st.session_state.get("full_name", username),
+                                "quotation_no": quotation_no.strip(),
+                                "quotation_date": str(quotation_date),
+                                "amount": amount,
+                                "gst_amount": gst_amount,
+                                "total_amount": total_amount,
+                                "valid_till": str(valid_till),
+                                "quotation_file_name": fname,
+                                "quotation_file_data": fdata,
+                                "quotation_status": "Submitted",
+                                "remarks": remarks,
+                                "created_by": username,
+                            })
+                            st.success("Quotation submitted.")
+                            st.rerun()
+        with tab2:
+            qdf = load_table("quotations", 5000)
+            qdf = qdf[qdf["business_username"].astype(str) == username] if not qdf.empty and "business_username" in qdf.columns else pd.DataFrame()
+            st.dataframe(qdf, use_container_width=True)
+            if not qdf.empty:
+                selected = st.selectbox("Select quotation ID to download file", qdf["id"].tolist(), key="quote_user_download_id")
+                raw = safe_df(supabase.table("quotations").select("*").eq("id", int(selected)).limit(1).execute().data)
+                if not raw.empty:
+                    _quotation_file_download(raw.iloc[0])
+    else:
+        st.warning("You do not have access to Quotation Portal.")
+
 def reports():
     show_header("Registers / Reports", "section-rep")
 
@@ -1463,7 +1708,7 @@ def reports():
     ])
 
     with tab1:
-        opts=["employees","ledgers","stock_ledgers","company_profiles","financial_years","cost_centers","document_series","gst_settings","calculation_books","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks","audit_logs"]
+        opts=["employees","ledgers","stock_ledgers","company_profiles","financial_years","cost_centers","document_series","gst_settings","calculation_books","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","attendance","attendance_visits","inout","visitors","tasks","audit_logs","quotation_requirements","quotation_business_users","quotation_access","quotations"]
         if is_super_admin(): opts=["clients","users"]+opts
         report = st.selectbox("Select Register", opts, key="general_register_select")
         rows = st.number_input("Rows to load", 100, 50000, 1000, 100, key="general_rows")
@@ -1624,6 +1869,9 @@ def get_menu_modules(group):
             modules.append("Fixed Assets")
         if st.session_state.get("allow_accounting", True):
             modules.append("Accounting Entries")
+    elif group == "Quotation":
+        if st.session_state.get("allow_quotation", True) or _quote_role():
+            modules = ["Quotation"]
     elif group == "Reports":
         modules = ["Registers / Reports"]
         if st.session_state.get("allow_excel_upload", True) or st.session_state.get("allow_google_sheet_import", True):
@@ -1634,9 +1882,11 @@ def get_menu_modules(group):
     return modules or ["No module available"]
 
 def build_group_list():
+    if _quote_role():
+        return ["Quotation"]
     if is_super_admin():
-        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Reports", "Tools"]
-    return ["Dashboard", "Master", "HR", "Inventory", "Accounts", "Reports", "Tools"]
+        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Tools"]
+    return ["Dashboard", "Master", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Tools"]
 
 
 def render_custom_menu():
