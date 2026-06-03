@@ -526,6 +526,31 @@ def get_ledger_names(group_name=None, include_all=False):
     if include_all: names = ["All"] + names
     return names if names else ["No Ledger Found"]
 
+def get_ledger_details(ledger_name):
+    """Fetch ledger address/contact/GST/PAN/email details for invoice print preview."""
+    try:
+        if not ledger_name or str(ledger_name).strip() in ["", "No Ledger Found"]:
+            return {}
+        query = supabase.table("ledgers").select("*").eq("ledger_name", str(ledger_name).strip())
+        if not is_super_admin():
+            query = query.eq("client_code", get_client_code())
+        df = safe_df(query.limit(1).execute().data)
+        if df.empty:
+            return {}
+        row = df.iloc[0].to_dict()
+        return {
+            "ledger_name": row.get("ledger_name", ledger_name),
+            "address": row.get("address", ""),
+            "contact_no": row.get("contact_no", ""),
+            "mobile": row.get("contact_no", ""),
+            "email": row.get("email", ""),
+            "gst_no": row.get("gst_no", ""),
+            "pan_no": row.get("pan_no", ""),
+            "tan_no": row.get("tan_no", ""),
+        }
+    except Exception:
+        return {}
+
 def get_stock_items(group_name=None):
     query = supabase.table("stock_ledgers").select("item_name,stock_group,status")
     if not is_super_admin(): query = query.eq("client_code", get_client_code())
@@ -621,9 +646,31 @@ def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
         cgst = taxable * gst_rate / 200; sgst = cgst; igst = 0
     return round(cgst,2), round(sgst,2), round(igst,2), round(taxable+cgst+sgst+igst,2)
 
-def invoice_html(title, invoice_no, party, rows, total, summary=None):
+def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info=None):
     """Professional invoice preview with item-wise CGST/SGST/IGST and voucher-level adjustments."""
     summary = summary or {}
+    party_info = party_info or get_ledger_details(party)
+
+    def safe_text(value):
+        value = "" if value is None else str(value)
+        return value if value.lower() not in ["none", "nan"] else ""
+
+    def info_line(label, value):
+        value = safe_text(value)
+        return f"<div><b>{label}:</b> {value}</div>" if value.strip() else ""
+
+    party_details_html = f"""
+        <div class='party-box'>
+            <div class='box-title'>Billed To / Party Details</div>
+            <div><b>Name:</b> {safe_text(party)}</div>
+            {info_line('Address', party_info.get('address'))}
+            {info_line('Contact / Mobile', party_info.get('contact_no') or party_info.get('mobile'))}
+            {info_line('Email', party_info.get('email'))}
+            {info_line('GSTIN', party_info.get('gst_no'))}
+            {info_line('PAN', party_info.get('pan_no'))}
+            {info_line('TAN', party_info.get('tan_no'))}
+        </div>
+    """
 
     def nz(value):
         try:
@@ -671,18 +718,20 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None):
         <meta charset='utf-8'>
         <title>{title}</title>
         <style>
-            body {{ font-family: Arial, sans-serif; padding: 25px; color: #111827; }}
+            body {{ font-family: Arial, sans-serif; padding: 14px; color: #111827; }}
             .top {{ display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #0f3b66; padding-bottom:12px; margin-bottom:18px; }}
             .brand {{ font-size:30px; font-weight:800; color:#0f3b66; }}
             .title {{ background:linear-gradient(90deg,#0f3b66,#2563eb); color:white; padding:10px 14px; border-radius:10px; font-size:22px; font-weight:800; margin:16px 0; }}
-            .info {{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px; font-size:14px; }}
+            .info { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; font-size:13px; }
+            .invoice-meta, .party-box { border:1px solid #cbd5e1; border-radius:10px; padding:10px; background:#f8fafc; }
+            .box-title { font-weight:800; color:#0f3b66; margin-bottom:6px; font-size:14px; }
             table {{ border-collapse:collapse; width:100%; margin-top:10px; }}
             th {{ background:#0f3b66; color:white; padding:8px; border:1px solid #0f3b66; font-size:12px; }}
             td {{ padding:7px; border:1px solid #d1d5db; font-size:12px; }}
-            .summary {{ margin-top:16px; width:48%; margin-left:auto; }}
+            .summary {{ margin-top:12px; width:100%; margin-left:0; }}
             .summary td {{ font-size:13px; }}
             .grand td {{ background:#e0f2fe; font-size:15px; }}
-            .footer {{ margin-top:35px; display:flex; justify-content:space-between; }}
+            .footer {{ margin-top:20px; display:flex; justify-content:space-between; }}
             .sign {{ border-top:1px solid #111827; padding-top:8px; min-width:180px; text-align:center; }}
             .no-print {{ margin-bottom:15px; }}
             .print-btn {{ background:#0f3b66; color:white; border:none; padding:10px 18px; border-radius:8px; font-weight:bold; cursor:pointer; }}
@@ -697,8 +746,13 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None):
         </div>
         <div class='title'>{title}</div>
         <div class='info'>
-            <div><b>Invoice/Voucher No:</b> {invoice_no}</div>
-            <div><b>Party:</b> {party}</div>
+            <div class='invoice-meta'>
+                <div class='box-title'>Invoice Details</div>
+                <div><b>Invoice/Voucher No:</b> {invoice_no}</div>
+                <div><b>Date:</b> {india_now().strftime('%d-%m-%Y')}</div>
+                <div><b>Generated By:</b> RBM ERP SaaS</div>
+            </div>
+            {party_details_html}
         </div>
         <table>
             <tr><th>Item/Service</th><th>HSN/SAC</th><th>Qty</th><th>Rate</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th></tr>
@@ -730,7 +784,7 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None):
 def show_invoice_preview_and_download(html, file_name, button_label='Print / Download Invoice'):
     st.markdown('### Invoice Print Preview')
     with st.expander('👁️ Show / Hide Print Preview', expanded=True):
-        components.html(html, height=650, scrolling=True)
+        components.html(html, height=520, scrolling=True)
     c1, c2 = st.columns(2)
     with c1:
         st.download_button(
@@ -742,6 +796,110 @@ def show_invoice_preview_and_download(html, file_name, button_label='Print / Dow
         )
     with c2:
         st.info('Preview ke andar 🖨 Print Invoice button par click karke print/PDF save kar sakte ho.')
+
+
+
+def get_saved_invoice_preview_html(key, title, party_col):
+    """Return HTML for selected saved Sales/Purchase invoice. Does not render separately."""
+    df = load_table(key, 5000)
+
+    if df.empty:
+        st.info("No saved invoice found for preview.")
+        return None, None
+
+    if "invoice_no" not in df.columns:
+        st.info("Invoice number column not found in saved data.")
+        return None, None
+
+    preview_df = df.copy()
+    preview_df["invoice_no"] = preview_df["invoice_no"].astype(str)
+    preview_df = preview_df[preview_df["invoice_no"].str.strip() != ""]
+
+    if preview_df.empty:
+        st.info("No saved invoice number found for preview.")
+        return None, None
+
+    if "invoice_date" in preview_df.columns:
+        preview_df["invoice_label"] = preview_df["invoice_no"].astype(str) + " | " + preview_df["invoice_date"].astype(str)
+    else:
+        preview_df["invoice_label"] = preview_df["invoice_no"].astype(str)
+
+    if party_col in preview_df.columns:
+        preview_df["invoice_label"] = preview_df["invoice_label"] + " | " + preview_df[party_col].astype(str)
+
+    labels = preview_df["invoice_label"].drop_duplicates().tolist()
+    selected_label = st.selectbox("Select Saved Invoice No. / Party to Preview", labels, key=f"saved_preview_{key}")
+    selected_invoice_no = str(selected_label).split(" | ")[0]
+
+    inv_df = preview_df[preview_df["invoice_no"].astype(str) == selected_invoice_no].copy()
+    if inv_df.empty:
+        st.warning("Selected invoice data not found.")
+        return None, None
+
+    first = inv_df.iloc[0]
+    party = str(first.get(party_col, ""))
+
+    rows = []
+    for _, r in inv_df.iterrows():
+        rows.append({
+            "item": r.get("item_name", ""),
+            "hsn": r.get("hsn_sac", ""),
+            "qty": r.get("qty", 0),
+            "rate": r.get("rate", 0),
+            "taxable": r.get("taxable_value", 0),
+            "cgst": r.get("cgst", 0),
+            "sgst": r.get("sgst", 0),
+            "igst": r.get("igst", 0),
+            "total": r.get("total_value", 0),
+        })
+
+    def first_num(col):
+        try:
+            return float(first.get(col, 0) or 0)
+        except Exception:
+            return 0.0
+
+    discount = first_num("discount")
+    freight = first_num("freight")
+    other_exp = first_num("other_exp")
+    tds = first_num("tds")
+    taxable_after_discount = sum(float(x.get("taxable", 0) or 0) for x in rows)
+    basic_taxable_total = taxable_after_discount + discount
+
+    row_cgst = sum(float(x.get("cgst", 0) or 0) for x in rows)
+    row_sgst = sum(float(x.get("sgst", 0) or 0) for x in rows)
+    row_igst = sum(float(x.get("igst", 0) or 0) for x in rows)
+
+    # Old saved rows may not have separate freight/other GST fields, so we show freight/other as taxable charges and keep GST totals from saved values.
+    cgst_total = first_num("cgst_total") or row_cgst
+    sgst_total = first_num("sgst_total") or row_sgst
+    igst_total = first_num("igst_total") or row_igst
+    total_gst = cgst_total + sgst_total + igst_total
+
+    net_value = first_num("net_value")
+    if net_value == 0:
+        net_value = sum(float(x.get("total", 0) or 0) for x in rows) + freight + other_exp - tds
+
+    gross_value = first_num("gross_value")
+    if gross_value == 0:
+        gross_value = net_value + tds
+
+    summary = {
+        "basic_taxable_total": basic_taxable_total,
+        "discount": discount,
+        "taxable_total": taxable_after_discount,
+        "freight": freight,
+        "other_exp": other_exp,
+        "tds": tds,
+        "cgst_total": cgst_total,
+        "sgst_total": sgst_total,
+        "igst_total": igst_total,
+        "total_gst": total_gst,
+        "gross_total": gross_value,
+    }
+
+    html = invoice_html(title, selected_invoice_no, party, rows, net_value, summary, get_ledger_details(party))
+    return html, f"saved_{title.replace(' ', '_')}_{selected_invoice_no}.html"
 
 # ---------- LOGIN / SIDEBAR ----------
 def rbm_header():
@@ -1282,15 +1440,33 @@ def voucher_invoice(key, title, party_col, party_list, cls):
                 st.success("Voucher saved with automatic calculation.")
                 st.rerun()
 
-    html = invoice_html(
-        title,
-        inv_no if 'inv_no' in locals() else '',
-        party if 'party' in locals() else '',
-        rows if 'rows' in locals() else [],
-        grand if 'grand' in locals() else 0,
-        invoice_summary if 'invoice_summary' in locals() else {}
+    st.divider()
+    st.markdown("### Invoice Preview")
+    st.caption("Select Current Invoice Preview to see the data currently filled above, or Saved Invoice Preview to print/download an already saved invoice.")
+    preview_mode = st.radio(
+        "Preview Source",
+        ["Current Invoice Preview", "Saved Invoice Preview"],
+        horizontal=True,
+        key=f"{key}_single_preview_mode"
     )
-    show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
+
+    if preview_mode == "Saved Invoice Preview":
+        html, file_name = get_saved_invoice_preview_html(key, title, party_col)
+        if html:
+            show_invoice_preview_and_download(html, file_name)
+    else:
+        current_party = party if 'party' in locals() else ''
+        html = invoice_html(
+            title,
+            inv_no if 'inv_no' in locals() else '',
+            current_party,
+            rows if 'rows' in locals() else [],
+            grand if 'grand' in locals() else 0,
+            invoice_summary if 'invoice_summary' in locals() else {},
+            get_ledger_details(current_party)
+        )
+        show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
+
     st.caption("Edit option: Use the Edit / Delete section below the register to modify saved Sales/Purchase entries.")
     show_table_with_edit_delete(key, load_table(key, 500), f"{title} Register")
 
