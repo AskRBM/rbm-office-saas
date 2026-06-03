@@ -743,6 +743,95 @@ def show_invoice_preview_and_download(html, file_name, button_label='Print / Dow
     with c2:
         st.info('Preview ke andar 🖨 Print Invoice button par click karke print/PDF save kar sakte ho.')
 
+
+
+def show_saved_invoice_preview(key, title, party_col):
+    """Show print preview for any saved Sales/Purchase voucher from register data."""
+    st.markdown("### Saved Invoice Preview")
+    df = load_table(key, 5000)
+
+    if df.empty:
+        st.info("No saved invoice found for preview.")
+        return
+
+    if "invoice_no" not in df.columns:
+        st.info("Invoice number column not found in saved data.")
+        return
+
+    preview_df = df.copy()
+    preview_df["invoice_no"] = preview_df["invoice_no"].astype(str)
+    preview_df = preview_df[preview_df["invoice_no"].str.strip() != ""]
+
+    if preview_df.empty:
+        st.info("No saved invoice number found for preview.")
+        return
+
+    if "invoice_date" in preview_df.columns:
+        preview_df["invoice_label"] = preview_df["invoice_no"].astype(str) + " | " + preview_df["invoice_date"].astype(str)
+    else:
+        preview_df["invoice_label"] = preview_df["invoice_no"].astype(str)
+
+    if party_col in preview_df.columns:
+        preview_df["invoice_label"] = preview_df["invoice_label"] + " | " + preview_df[party_col].astype(str)
+
+    labels = preview_df["invoice_label"].drop_duplicates().tolist()
+    selected_label = st.selectbox("Select Saved Invoice for Preview", labels, key=f"saved_preview_{key}")
+    selected_invoice_no = str(selected_label).split(" | ")[0]
+
+    inv_df = preview_df[preview_df["invoice_no"].astype(str) == selected_invoice_no].copy()
+    if inv_df.empty:
+        st.warning("Selected invoice data not found.")
+        return
+
+    first = inv_df.iloc[0]
+    party = str(first.get(party_col, ""))
+
+    rows = []
+    for _, r in inv_df.iterrows():
+        rows.append({
+            "item": r.get("item_name", ""),
+            "hsn": r.get("hsn_sac", ""),
+            "qty": r.get("qty", 0),
+            "rate": r.get("rate", 0),
+            "taxable": r.get("taxable_value", 0),
+            "cgst": r.get("cgst", 0),
+            "sgst": r.get("sgst", 0),
+            "igst": r.get("igst", 0),
+            "total": r.get("total_value", 0),
+        })
+
+    def first_num(col):
+        try:
+            return float(first.get(col, 0) or 0)
+        except Exception:
+            return 0.0
+
+    basic_taxable_total = sum(float(x.get("taxable", 0) or 0) for x in rows) + first_num("discount")
+    cgst_total = sum(float(x.get("cgst", 0) or 0) for x in rows)
+    sgst_total = sum(float(x.get("sgst", 0) or 0) for x in rows)
+    igst_total = sum(float(x.get("igst", 0) or 0) for x in rows)
+    total_gst = cgst_total + sgst_total + igst_total
+    net_value = first_num("net_value")
+    if net_value == 0:
+        net_value = sum(float(x.get("total", 0) or 0) for x in rows) + first_num("freight") + first_num("other_exp") - first_num("tds")
+
+    summary = {
+        "basic_taxable_total": basic_taxable_total,
+        "discount": first_num("discount"),
+        "taxable_total": sum(float(x.get("taxable", 0) or 0) for x in rows),
+        "freight": first_num("freight"),
+        "other_exp": first_num("other_exp"),
+        "tds": first_num("tds"),
+        "cgst_total": cgst_total,
+        "sgst_total": sgst_total,
+        "igst_total": igst_total,
+        "total_gst": total_gst,
+        "gross_total": first_num("gross_value") if first_num("gross_value") else net_value + first_num("tds"),
+    }
+
+    html = invoice_html(title, selected_invoice_no, party, rows, net_value, summary)
+    show_invoice_preview_and_download(html, f"saved_{title.replace(' ', '_')}_{selected_invoice_no}.html")
+
 # ---------- LOGIN / SIDEBAR ----------
 def rbm_header():
     name = st.session_state.get("client_name", get_client_code())
@@ -1291,6 +1380,8 @@ def voucher_invoice(key, title, party_col, party_list, cls):
         invoice_summary if 'invoice_summary' in locals() else {}
     )
     show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
+    st.divider()
+    show_saved_invoice_preview(key, title, party_col)
     st.caption("Edit option: Use the Edit / Delete section below the register to modify saved Sales/Purchase entries.")
     show_table_with_edit_delete(key, load_table(key, 500), f"{title} Register")
 
