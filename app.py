@@ -40,6 +40,8 @@ TABLES = {
     "quotations": "quotations",
     "audit_logs": "audit_logs",
     "role_permissions": "role_permissions",
+    "login_history": "login_history",
+    "month_locks": "month_locks",
 }
 
 DISPLAY_COLUMNS = {
@@ -68,7 +70,7 @@ DISPLAY_COLUMNS = {
     "accounting_entries": ["id","client_code","entry_date","voucher_type","voucher_no","debit_account","credit_account","amount","cgst","sgst","igst","total_amount","narration","created_by"],
     "accounting_entry_lines": ["id","client_code","entry_id","dr_cr","ledger_name","amount","remarks"],
     "import_logs": ["id","client_code","import_type","module_name","total_rows","success_rows","failed_rows","remarks","created_by"],
-    "company_profiles": ["id","client_code","company_name","legal_name","gst_no","pan_no","tan_no","address","state","email","mobile","financial_year_start","books_start_date","status","created_by"],
+    "company_profiles": ["id","client_code","company_name","legal_name","gst_no","pan_no","tan_no","address","state","email","mobile","logo_file_name","logo_data","financial_year_start","books_start_date","status","created_by"],
     "financial_years": ["id","client_code","fy_name","start_date","end_date","status","lock_status","created_by"],
     "cost_centers": ["id","client_code","cost_center_name","department","location","status","created_by"],
     "document_series": ["id","client_code","module_name","prefix","next_no","suffix","status","created_by"],
@@ -80,6 +82,8 @@ DISPLAY_COLUMNS = {
     "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","remarks","created_by","created_at"],
     "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
     "role_permissions": ["id","client_code","role_name","module_name","can_view","can_add","can_edit","can_delete","can_reverse","can_approve","can_print","can_export","created_by","created_at"],
+    "login_history": ["id","client_code","username","login_status","login_time","remarks"],
+    "month_locks": ["id","client_code","financial_year","month_name","month_no","lock_status","locked_by","lock_date","remarks"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -707,6 +711,67 @@ def safe_get_ledger_details(ledger_name):
             "tan_no": "",
         }
 
+
+def get_company_profile_row():
+    try:
+        query = supabase.table("company_profiles").select("*").eq("client_code", get_client_code()).limit(1)
+        df = safe_df(query.execute().data)
+        return df.iloc[0].to_dict() if not df.empty else {}
+    except Exception:
+        return {}
+
+def company_logo_html():
+    row = get_company_profile_row()
+    logo_data = str(row.get("logo_data", "") or "")
+    if logo_data.strip():
+        return f"<div style='display:flex;align-items:center;gap:12px;'><img src='data:image/png;base64,{logo_data}' style='max-height:58px;max-width:120px;object-fit:contain;'><div><div class='brand'>RBM AI</div><div>Robotic Business Management</div></div></div>"
+    company_name = row.get("company_name") or "RBM AI"
+    return f"<div><div class='brand'>{company_name}</div><div>Robotic Business Management</div></div>"
+
+def log_login_event(username, success, remarks=""):
+    try:
+        supabase.table("login_history").insert({
+            "client_code": get_client_code() if "client_code" in st.session_state else "",
+            "username": str(username),
+            "login_status": "Success" if success else "Failed",
+            "login_time": india_now().isoformat(),
+            "remarks": remarks,
+        }).execute()
+    except Exception:
+        pass
+
+def generate_document_number(module_name):
+    """Return next document number from Document Series and increment it. Safe fallback if series is not set."""
+    module_name = str(module_name)
+    try:
+        query = supabase.table("document_series").select("*").eq("client_code", get_client_code()).eq("module_name", module_name).limit(1)
+        df = safe_df(query.execute().data)
+        if not df.empty:
+            r = df.iloc[0]
+            next_no = int(float(r.get("next_no", 1) or 1))
+            prefix = str(r.get("prefix", "") or "")
+            suffix = str(r.get("suffix", "") or "")
+            doc_no = f"{prefix}{next_no:04d}{suffix}"
+            supabase.table("document_series").update({"next_no": next_no + 1}).eq("id", int(r.get("id"))).execute()
+            return doc_no
+    except Exception:
+        pass
+    return f"{module_name[:3].upper()}-{india_now().strftime('%Y%m%d%H%M%S')}"
+
+def is_period_locked(entry_date):
+    """Check FY/month lock. Locked month blocks posting/editing in transaction modules."""
+    try:
+        d = pd.to_datetime(entry_date)
+        fy = financial_year(d)
+        month_no = int(d.month)
+        data = supabase.table("month_locks").select("*").eq("client_code", get_client_code()).eq("financial_year", fy).eq("month_no", month_no).limit(1).execute().data
+        df = safe_df(data)
+        if df.empty:
+            return False
+        return str(df.iloc[0].get("lock_status", "Unlocked")) == "Locked"
+    except Exception:
+        return False
+
 def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
     try: taxable = float(taxable); gst_rate = float(gst_rate)
     except Exception: taxable = 0; gst_rate = 0
@@ -782,6 +847,7 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info
     total_gst = summary.get('total_gst', cgst_total + sgst_total + igst_total)
     gross_total = summary.get('gross_total', total + float(summary.get('tds',0) or 0))
 
+    logo_html = company_logo_html()
     return f"""
     <html>
     <head>
@@ -811,7 +877,7 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info
     <body>
         <div class='no-print'><button class='print-btn' onclick='window.print()'>🖨 Print Invoice</button></div>
         <div class='top'>
-            <div><div class='brand'>RBM AI</div><div>Robotic Business Management</div></div>
+            {logo_html}
             <div style='text-align:right'><b>Date:</b> {india_now().strftime('%d-%m-%Y')}<br><b>Generated By:</b> RBM ERP SaaS</div>
         </div>
         <div class='title'>{title}</div>
@@ -1002,10 +1068,14 @@ def login_page():
         password = st.text_input("Password", type="password")
         if st.button("Login", use_container_width=True):
             match = users[(users["username"].astype(str) == username) & (users["password"].astype(str) == password)]
-            if match.empty: st.error("Wrong username or password")
+            if match.empty:
+                log_login_event(username, False, "Wrong username or password")
+                st.error("Wrong username or password")
             else:
                 row = match.iloc[0]
-                if str(row.get("status", "Active")) == "Inactive": st.error("This user is inactive."); return
+                if str(row.get("status", "Active")) == "Inactive":
+                    log_login_event(username, False, "Inactive user")
+                    st.error("This user is inactive."); return
                 client_code = str(row.get("client_code", "RBM"))
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
@@ -1013,6 +1083,7 @@ def login_page():
                 st.session_state["full_name"] = str(row.get("full_name", username))
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
+                log_login_event(username, True, "Login successful")
                 st.rerun()
         st.info("Default Super Admin: admin / rbm123")
 
@@ -1474,9 +1545,14 @@ def voucher_invoice(key, title, party_col, party_list, cls):
         )
 
         if st.form_submit_button(f"Save {title}", use_container_width=True):
-            if not rows:
+            if is_period_locked(inv_date):
+                st.error("This month / financial year is locked. Entry cannot be saved.")
+            elif not rows:
                 st.error("At least one item is required.")
             else:
+                if str(inv_no).strip() == "":
+                    module_name_for_series = "Sales" if key == "sales" else "Purchase" if key == "purchase" else "Voucher"
+                    inv_no = generate_document_number(module_name_for_series)
                 for r in rows:
                     row = {
                         "invoice_no": inv_no,
@@ -1972,6 +2048,142 @@ def gst_settings_master():
         ("status","Status",["Active","Inactive"])
     ], "section-master")
 
+
+def change_password():
+    show_header("Change Password", "section-master")
+    st.info("Use this screen to change your own password.")
+    with st.form("change_password_form"):
+        old_password = st.text_input("Current Password", type="password")
+        new_password = st.text_input("New Password", type="password")
+        confirm_password = st.text_input("Confirm New Password", type="password")
+        if st.form_submit_button("Update Password", use_container_width=True):
+            if not old_password or not new_password:
+                st.error("Current and new password are required.")
+            elif new_password != confirm_password:
+                st.error("New password and confirm password do not match.")
+            else:
+                df = safe_df(
+                    supabase.table("users")
+                    .select("*")
+                    .eq("client_code", get_client_code())
+                    .eq("username", current_user())
+                    .eq("password", old_password)
+                    .limit(1)
+                    .execute().data
+                )
+                if df.empty:
+                    st.error("Current password is wrong.")
+                else:
+                    supabase.table("users").update({"password": new_password}).eq("id", int(df.iloc[0]["id"])).execute()
+                    write_audit_log("Change Password", "UPDATE", int(df.iloc[0]["id"]), "User changed own password")
+                    st.success("Password changed successfully. Please logout and login again.")
+
+
+def company_logo_settings():
+    show_header("Company Logo / Invoice Settings", "section-master")
+    st.info("Upload company logo. It will appear in invoice print preview.")
+    current = get_company_profile_row()
+    if current.get("logo_data"):
+        st.image(base64.b64decode(current.get("logo_data")), caption="Current Logo", width=180)
+    uploaded = st.file_uploader("Upload Logo PNG/JPG - recommended small size", type=["png", "jpg", "jpeg"])
+    if uploaded is not None:
+        if uploaded.size > 1 * 1024 * 1024:
+            st.error("Logo should be less than 1 MB.")
+        else:
+            logo_b64 = base64.b64encode(uploaded.read()).decode("utf-8")
+            if current.get("id"):
+                supabase.table("company_profiles").update({"logo_file_name": uploaded.name, "logo_data": logo_b64}).eq("id", int(current["id"])).execute()
+            else:
+                supabase.table("company_profiles").insert({"client_code": get_client_code(), "company_name": st.session_state.get("client_name", "RBM AI"), "logo_file_name": uploaded.name, "logo_data": logo_b64, "status": "Active", "created_by": current_user()}).execute()
+            write_audit_log("Company Logo", "UPDATE", "", "Company logo updated")
+            st.success("Logo saved successfully.")
+            st.rerun()
+
+
+def backup_center():
+    show_header("Backup Center", "section-rep")
+    st.info("Download all important client data as one Excel workbook backup.")
+    keys = ["clients","users","employees","ledgers","stock_ledgers","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","tasks","quotation_requirements","quotations","audit_logs"]
+    selected_keys = st.multiselect("Select tables for backup", keys, default=[k for k in keys if k not in ["clients"] or is_super_admin()])
+    if st.button("Prepare Backup Excel", use_container_width=True):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for k in selected_keys:
+                try:
+                    df = load_table(k, 10000)
+                    df.to_excel(writer, index=False, sheet_name=k[:31])
+                except Exception:
+                    pd.DataFrame({"error":[f"Could not load {k}"]}).to_excel(writer, index=False, sheet_name=k[:31])
+        st.download_button("Download Full Backup Excel", output.getvalue(), f"RBM_Backup_{get_client_code()}_{india_now().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+
+def excel_template_center():
+    show_header("Excel Template Download", "section-rep")
+    templates = {
+        "Ledger Master": ["ledger_name","ledger_group","address","contact_no","email","tan_no","gst_no","pan_no","opening_balance","balance_type","status"],
+        "Stock Item Master": ["item_name","item_code","stock_group","unit","hsn_code","opening_qty","opening_rate","opening_value","gst_rate","status"],
+        "Sales GST Invoice": ["invoice_no","invoice_date","customer_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","remarks"],
+        "Purchase GST Invoice": ["invoice_no","invoice_date","supplier_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","remarks"],
+        "Expense GST": ["expense_date","vendor_name","expense_head","invoice_no","gstin","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","payment_mode","remarks"],
+        "Employee Master": ["employee_id","employee_name","mobile","email","department","designation","branch_division","status"],
+    }
+    selected = st.selectbox("Select Template", list(templates.keys()))
+    df = pd.DataFrame(columns=templates[selected])
+    st.dataframe(df, use_container_width=True)
+    st.download_button("Download Excel Template", to_excel_bytes(df), f"{selected.replace(' ','_')}_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+
+def period_lock_center():
+    show_header("Month / Financial Year Lock", "section-master")
+    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
+        st.warning("Only Admin can lock/unlock periods.")
+        return
+    with st.form("month_lock_form"):
+        fy = st.text_input("Financial Year", value=financial_year(india_now().date()))
+        month_name = st.selectbox("Month", ["April","May","June","July","August","September","October","November","December","January","February","March"])
+        month_map = {"January":1,"February":2,"March":3,"April":4,"May":5,"June":6,"July":7,"August":8,"September":9,"October":10,"November":11,"December":12}
+        lock_status = st.selectbox("Lock Status", ["Unlocked", "Locked"])
+        remarks = st.text_input("Remarks")
+        if st.form_submit_button("Save Lock Setting", use_container_width=True):
+            # upsert by client + FY + month
+            existing = safe_df(supabase.table("month_locks").select("*").eq("client_code", get_client_code()).eq("financial_year", fy).eq("month_no", month_map[month_name]).limit(1).execute().data)
+            row = {"client_code": get_client_code(), "financial_year": fy, "month_name": month_name, "month_no": month_map[month_name], "lock_status": lock_status, "locked_by": current_user(), "lock_date": india_now().isoformat(), "remarks": remarks}
+            if existing.empty:
+                supabase.table("month_locks").insert(row).execute()
+            else:
+                supabase.table("month_locks").update(row).eq("id", int(existing.iloc[0]["id"])).execute()
+            write_audit_log("Period Lock", "UPDATE", "", f"{fy} {month_name} set to {lock_status}")
+            st.success("Period lock setting saved.")
+            st.rerun()
+    show_table_with_edit_delete("month_locks", load_table("month_locks", 1000), "Month Lock List")
+
+
+def login_history_report():
+    show_header("Login History", "section-rep")
+    df = load_table("login_history", 5000)
+    show_table_with_edit_delete("login_history", df, "Login History")
+
+
+def pending_approval_dashboard():
+    show_header("Pending Approval Dashboard", "section-rep")
+    keys = ["sales", "purchase", "expenses", "service_vouchers", "stock_vouchers", "fixed_assets", "accounting_entries", "appointments", "tasks"]
+    all_rows = []
+    for k in keys:
+        try:
+            df = load_table(k, 5000)
+            if not df.empty and "approval_status" in df.columns:
+                pending = df[df["approval_status"].astype(str).str.lower().isin(["pending", "submitted"])]
+                for _, r in pending.iterrows():
+                    all_rows.append({"module": k, "id": r.get("id"), "date": r.get("invoice_date", r.get("entry_date", r.get("task_date", ""))), "party/details": r.get("customer_name", r.get("supplier_name", r.get("vendor_name", r.get("task", "")))), "amount": r.get("net_value", r.get("total_value", r.get("amount", 0))), "approval_status": r.get("approval_status", "")})
+        except Exception:
+            pass
+    pdf = pd.DataFrame(all_rows)
+    if pdf.empty:
+        st.success("No pending approval found.")
+    else:
+        st.dataframe(pdf, use_container_width=True)
+        st.download_button("Download Pending Approval Excel", to_excel_bytes(pdf), "pending_approval.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
 def audit_log_report():
     show_header("Audit Log / System Control", "section-rep")
     st.info("This register is reserved for tracking important user actions, approvals, edits and deletions.")
@@ -2415,6 +2627,7 @@ ERP_MODULES = [
     "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher",
     "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries",
     "Quotation", "Registers / Reports", "Import Center", "Audit Log", "Calculation Book", "ERP Control Center",
+    "Change Password", "Company Logo / Invoice Settings", "Backup Center", "Excel Templates", "Period Lock Center", "Login History", "Pending Approval Dashboard",
 ]
 
 TABLE_KEY_TO_MODULE = {
@@ -2455,6 +2668,8 @@ TABLE_KEY_TO_MODULE = {
     "audit_logs": "Audit Log",
     "import_logs": "Import Center",
     "calculation_books": "Calculation Book",
+    "login_history": "Login History",
+    "month_locks": "Period Lock Center",
 }
 
 PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "print", "export"]
@@ -2679,8 +2894,9 @@ def get_menu_modules(group):
             if st.session_state.get("role") == "Admin":
                 modules.append("Audit Log")
     elif group == "Tools":
+        modules = ["Change Password"]
         if is_super_admin() or st.session_state.get("role") == "Admin":
-            modules = ["Calculation Book", "ERP Control Center"]
+            modules += ["Calculation Book", "ERP Control Center", "Company Logo / Invoice Settings", "Backup Center", "Excel Templates", "Period Lock Center", "Login History", "Pending Approval Dashboard"]
     return filter_modules_by_permission(modules) if modules else ["No module available"]
 
 def build_group_list():
@@ -2764,9 +2980,8 @@ def build_group_list():
     ]):
         groups.append("Reports")
 
-    # Tools are only for client Admin when normal ERP modules are enabled.
-    if st.session_state.get("role") == "Admin" and has_any_normal_module:
-        groups.append("Tools")
+    # Tools contains Change Password for every user and admin utilities for Admin/Super Admin.
+    groups.append("Tools")
 
     return groups or ["Quotation"]
 
@@ -2862,6 +3077,13 @@ def get_module_mapping():
         "ERP Control Center": erp_control_center,
         "Audit Log": audit_log_report,
         "Quotation": quotation_module,
+        "Change Password": change_password,
+        "Company Logo / Invoice Settings": company_logo_settings,
+        "Backup Center": backup_center,
+        "Excel Templates": excel_template_center,
+        "Period Lock Center": period_lock_center,
+        "Login History": login_history_report,
+        "Pending Approval Dashboard": pending_approval_dashboard,
     }
 
 
