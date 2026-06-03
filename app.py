@@ -1870,7 +1870,7 @@ def get_menu_modules(group):
         if st.session_state.get("allow_accounting", True):
             modules.append("Accounting Entries")
     elif group == "Quotation":
-        if st.session_state.get("allow_quotation", True) or _quote_role():
+        if is_super_admin() or st.session_state.get("allow_quotation", True) or _quote_role():
             modules = ["Quotation"]
     elif group == "Reports":
         modules = ["Registers / Reports"]
@@ -1972,6 +1972,7 @@ def main_app():
                 "Calculation Book": calculation_book,
                 "ERP Control Center": erp_control_center,
                 "Audit Log": audit_log_report,
+                "Quotation": quotation_module,
             }
             mapping.get(choice, placeholder_denied)()
     else:
@@ -2016,6 +2017,7 @@ def main_app():
             "Calculation Book": calculation_book,
             "ERP Control Center": erp_control_center,
             "Audit Log": audit_log_report,
+            "Quotation": quotation_module,
         }
         mapping.get(choice, placeholder_denied)()
 
