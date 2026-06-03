@@ -1049,7 +1049,6 @@ def voucher_invoice(key, title, party_col, party_list, cls):
     quick_ledger_creator(default_group=default_group, key_prefix=f"{key}_party_ledger")
     quick_stock_item_creator(default_group="Finished Goods" if key == "sales" else "Raw Material", key_prefix=f"{key}_stock_item")
 
-    # Reload lists after possible direct creation on next rerun/reopen
     party_list = get_ledger_names(default_group)
     stock_items = get_stock_items()
 
@@ -1075,60 +1074,142 @@ def voucher_invoice(key, title, party_col, party_list, cls):
     no_items = int(st.session_state[item_count_key])
 
     with st.form(f"{key}_form"):
-        c1,c2,c3=st.columns(3)
-        inv_no=c1.text_input("Invoice / Voucher No")
-        inv_date=str(c2.date_input("Date", value=india_now().date(), format="DD-MM-YYYY"))
-        party=c3.selectbox("Customer Ledger" if key == "sales" else "Vendor Ledger", party_list)
-        gstin=c1.text_input("GSTIN")
-        gst_type=c2.selectbox("GST Type", ["CGST+SGST","IGST"])
+        c1, c2, c3 = st.columns(3)
+        inv_no = c1.text_input("Invoice / Voucher No")
+        inv_date = str(c2.date_input("Date", value=india_now().date(), format="DD-MM-YYYY"))
+        party = c3.selectbox("Customer Ledger" if key == "sales" else "Vendor Ledger", party_list)
+        gstin = c1.text_input("GSTIN")
+        gst_type = c2.selectbox("GST Type", ["CGST+SGST", "IGST"])
         c3.info(f"Items: {no_items}")
 
-        rows=[]; gross_total=0; taxable_total=0; gst_total=0
+        raw_rows = []
+        basic_taxable_total = 0.0
         for i in range(no_items):
-            st.markdown(f"### Item {i+1}")
-            a,b,c,d,e=st.columns(5)
-            item=a.selectbox("Item", stock_items, key=f"{key}_item_{i}")
-            hsn=b.text_input("HSN/SAC", key=f"{key}_hsn_{i}")
-            qty=c.number_input("Qty", value=1.0, key=f"{key}_qty_{i}")
-            rate=d.number_input("Rate", value=0.0, key=f"{key}_rate_{i}")
-            gst_rate=e.number_input("GST %", value=18.0, key=f"{key}_gst_{i}")
-            taxable=round(qty*rate,2)
-            cgst,sgst,igst,total=gst_calc(taxable,gst_rate,gst_type)
-            taxable_total += taxable; gst_total += (cgst+sgst+igst); gross_total += total
-            rows.append({"item":item,"hsn":hsn,"qty":qty,"rate":rate,"taxable":taxable,"cgst":cgst,"sgst":sgst,"igst":igst,"gst":cgst+sgst+igst,"total":total})
+            st.markdown(f"### Item {i + 1}")
+            a, b, c, d, e = st.columns(5)
+            item = a.selectbox("Item", stock_items, key=f"{key}_item_{i}")
+            hsn = b.text_input("HSN/SAC", key=f"{key}_hsn_{i}")
+            qty = c.number_input("Qty", min_value=0.0, value=1.0, step=1.0, key=f"{key}_qty_{i}")
+            rate = d.number_input("Rate", min_value=0.0, value=0.0, step=1.0, key=f"{key}_rate_{i}")
+            gst_rate = e.number_input("GST %", min_value=0.0, value=18.0, step=1.0, key=f"{key}_gst_{i}")
+            taxable = round(qty * rate, 2)
+            basic_taxable_total += taxable
+            raw_rows.append({"item": item, "hsn": hsn, "qty": qty, "rate": rate, "gst_rate": gst_rate, "taxable_before_discount": taxable})
+            st.caption(f"Item Taxable: {money(taxable)}")
 
-        st.markdown("### Adjustments")
-        a1,a2,a3,a4=st.columns(4)
-        discount=a1.number_input("Discount (-)", value=0.0)
-        freight=a2.number_input("Freight (+)", value=0.0)
-        other_exp=a3.number_input("Other Exp (+)", value=0.0)
-        tds=a4.number_input("TDS (-)", value=0.0)
-        grand=round(gross_total - discount + freight + other_exp - tds, 2)
-        remarks=st.text_input("Remarks")
+        st.markdown("### Auto Calculation / Adjustments")
+        d1, d2, f1, f2 = st.columns(4)
+        discount_type = d1.selectbox("Discount Type", ["Amount", "%"], key=f"{key}_discount_type")
+        discount_input = d2.number_input("Discount (-)", min_value=0.0, value=0.0, step=1.0, key=f"{key}_discount_input")
+        freight = f1.number_input("Freight (+)", min_value=0.0, value=0.0, step=1.0, key=f"{key}_freight")
+        freight_gst_rate = f2.number_input("Freight GST %", min_value=0.0, value=18.0, step=1.0, key=f"{key}_freight_gst")
+
+        o1, o2, t1, t2 = st.columns(4)
+        other_exp = o1.number_input("Other Charges (+)", min_value=0.0, value=0.0, step=1.0, key=f"{key}_other_exp")
+        other_gst_rate = o2.number_input("Other Charges GST %", min_value=0.0, value=18.0, step=1.0, key=f"{key}_other_gst")
+        tds_type = t1.selectbox("TDS Type", ["Amount", "%"], key=f"{key}_tds_type")
+        tds_input = t2.number_input("TDS (-)", min_value=0.0, value=0.0, step=1.0, key=f"{key}_tds_input")
+
+        discount = round((basic_taxable_total * discount_input / 100), 2) if discount_type == "%" else round(discount_input, 2)
+        if discount > basic_taxable_total:
+            discount = basic_taxable_total
+
+        rows = []
+        taxable_total = 0.0
+        gst_total = 0.0
+        gross_total = 0.0
+        for r in raw_rows:
+            share = (r["taxable_before_discount"] / basic_taxable_total) if basic_taxable_total else 0
+            line_discount = round(discount * share, 2)
+            taxable_after_discount = round(max(r["taxable_before_discount"] - line_discount, 0), 2)
+            cgst, sgst, igst, line_total = gst_calc(taxable_after_discount, r["gst_rate"], gst_type)
+            line_gst = round(cgst + sgst + igst, 2)
+            taxable_total += taxable_after_discount
+            gst_total += line_gst
+            gross_total += line_total
+            rows.append({
+                "item": r["item"], "hsn": r["hsn"], "qty": r["qty"], "rate": r["rate"],
+                "gst_rate": r["gst_rate"], "taxable": taxable_after_discount,
+                "line_discount": line_discount, "cgst": cgst, "sgst": sgst, "igst": igst,
+                "gst": line_gst, "total": line_total
+            })
+
+        freight_cgst, freight_sgst, freight_igst, freight_total = gst_calc(freight, freight_gst_rate, gst_type)
+        other_cgst, other_sgst, other_igst, other_total = gst_calc(other_exp, other_gst_rate, gst_type)
+        charges_taxable = round(freight + other_exp, 2)
+        charges_gst = round(freight_cgst + freight_sgst + freight_igst + other_cgst + other_sgst + other_igst, 2)
+        gross_before_tds = round(gross_total + freight_total + other_total, 2)
+        tds_base = round(taxable_total + charges_taxable, 2)
+        tds = round((tds_base * tds_input / 100), 2) if tds_type == "%" else round(tds_input, 2)
+        grand = round(gross_before_tds - tds, 2)
+        total_gst_with_charges = round(gst_total + charges_gst, 2)
+        remarks = st.text_input("Remarks")
         controls = entry_controls(f"{key}_voucher_ctrl")
-        st.info(f"Taxable: {money(taxable_total)} | GST: {money(gst_total)} | Gross: {money(gross_total)} | Net Payable/Receivable: {money(grand)}")
+
+        st.markdown("### Calculation Summary")
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Basic Taxable", money(basic_taxable_total))
+        s2.metric("Discount", money(discount))
+        s3.metric("Taxable After Discount", money(taxable_total))
+        s4.metric("Item GST", money(gst_total))
+        s5, s6, s7, s8 = st.columns(4)
+        s5.metric("Freight + Other", money(charges_taxable))
+        s6.metric("GST on Charges", money(charges_gst))
+        s7.metric("TDS", money(tds))
+        s8.metric("Net Payable/Receivable", money(grand))
+        st.info(
+            f"Basic: {money(basic_taxable_total)} | Discount: {money(discount)} | "
+            f"Taxable: {money(taxable_total + charges_taxable)} | GST: {money(total_gst_with_charges)} | "
+            f"Gross: {money(gross_before_tds)} | Less TDS: {money(tds)} | Net: {money(grand)}"
+        )
+
         if st.form_submit_button(f"Save {title}", use_container_width=True):
             if not rows:
                 st.error("At least one item is required.")
             else:
                 for r in rows:
-                    row={"invoice_no":inv_no,"invoice_date":inv_date,party_col:party,"gstin":gstin,"item_name":r['item'],"hsn_sac":r['hsn'],"qty":r['qty'],"rate":r['rate'],"taxable_value":r['taxable'],"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":r['cgst'],"sgst":r['sgst'],"igst":r['igst'],"total_value":r['total'],"remarks":remarks,"created_by":current_user()}
+                    row = {
+                        "invoice_no": inv_no,
+                        "invoice_date": inv_date,
+                        party_col: party,
+                        "gstin": gstin,
+                        "item_name": r["item"],
+                        "hsn_sac": r["hsn"],
+                        "qty": r["qty"],
+                        "rate": r["rate"],
+                        "taxable_value": r["taxable"],
+                        "discount": discount,
+                        "freight": freight,
+                        "other_exp": other_exp,
+                        "tds": tds,
+                        "cgst": r["cgst"],
+                        "sgst": r["sgst"],
+                        "igst": r["igst"],
+                        "total_value": r["total"],
+                        "gross_value": gross_before_tds,
+                        "net_value": grand,
+                        "remarks": remarks,
+                        "created_by": current_user()
+                    }
                     row.update(controls)
-                    insert_row(key,row)
-                st.session_state[item_count_key] = 1
-                st.success("Voucher saved. You can edit/delete any saved row in the register below.")
-                st.rerun()
-    html=invoice_html(title, inv_no if 'inv_no' in locals() else '', party if 'party' in locals() else '', rows if 'rows' in locals() else [], grand if 'grand' in locals() else 0)
-    show_invoice_preview_and_download(html, f"{title.replace(' ','_')}.html")
-    st.caption("Edit option: Use the Edit / Delete section below the register to modify saved Sales/Purchase entries.")
-    show_table_with_edit_delete(key, load_table(key,500), f"{title} Register")
+                    insert_row(key, row)
 
+                if freight > 0 or other_exp > 0 or tds > 0:
+                    st.info("Note: Freight, other charges and TDS are saved in the voucher rows. Net invoice value is saved in net_value.")
+                st.session_state[item_count_key] = 1
+                st.success("Voucher saved with automatic calculation.")
+                st.rerun()
+
+    html = invoice_html(title, inv_no if 'inv_no' in locals() else '', party if 'party' in locals() else '', rows if 'rows' in locals() else [], grand if 'grand' in locals() else 0)
+    show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
+    st.caption("Edit option: Use the Edit / Delete section below the register to modify saved Sales/Purchase entries.")
+    show_table_with_edit_delete(key, load_table(key, 500), f"{title} Register")
 
 def expense_gst():
     show_header("Expense GST Voucher", "section-acc")
     quick_ledger_creator(default_group="Sundry Creditors", key_prefix="expense_vendor_ledger")
     quick_ledger_creator(default_group="Indirect Expenses", key_prefix="expense_head_ledger")
-    ledgers=get_ledger_names()
+    ledgers = get_ledger_names()
 
     exp_count_key = "expense_line_count"
     if exp_count_key not in st.session_state:
@@ -1150,51 +1231,127 @@ def expense_gst():
             st.rerun()
 
     with st.form("expense_form"):
-        c1,c2,c3=st.columns(3)
-        expense_date=str(c1.date_input("Expense Date", value=india_now().date(), format="DD-MM-YYYY"))
-        vendor_name=c2.selectbox("Vendor Ledger", ledgers)
-        invoice_no=c3.text_input("Invoice No")
-        gstin=c1.text_input("GSTIN")
-        gst_type=c2.selectbox("GST Type", ["CGST+SGST","IGST"])
-        payment_mode=c3.selectbox("Payment Mode", ["Cash","Bank","UPI","Credit"])
+        c1, c2, c3 = st.columns(3)
+        expense_date = str(c1.date_input("Expense Date", value=india_now().date(), format="DD-MM-YYYY"))
+        vendor_name = c2.selectbox("Vendor Ledger", ledgers)
+        invoice_no = c3.text_input("Invoice No")
+        gstin = c1.text_input("GSTIN")
+        gst_type = c2.selectbox("GST Type", ["CGST+SGST", "IGST"])
+        payment_mode = c3.selectbox("Payment Mode", ["Cash", "Bank", "UPI", "Credit"])
 
-        line_rows=[]; taxable_total=0; gst_total=0; gross_total=0
+        raw_lines = []
+        basic_taxable_total = 0.0
         for i in range(int(st.session_state[exp_count_key])):
-            st.markdown(f"### Expense Line {i+1}")
-            a,b,c=st.columns([2,1,1])
-            expense_head=a.selectbox("Expense Ledger", ledgers, key=f"expense_head_{i}")
-            taxable_value=b.number_input("Taxable Value", value=0.0, key=f"expense_taxable_{i}")
-            gst_rate=c.number_input("GST %", value=18.0, key=f"expense_gst_{i}")
-            cgst,sgst,igst,gross_value=gst_calc(taxable_value,gst_rate,gst_type)
-            taxable_total += taxable_value
-            gst_total += cgst+sgst+igst
-            gross_total += gross_value
-            line_rows.append({"expense_head":expense_head,"taxable_value":taxable_value,"gst_rate":gst_rate,"cgst":cgst,"sgst":sgst,"igst":igst,"gross_value":gross_value})
+            st.markdown(f"### Expense Line {i + 1}")
+            a, b, c = st.columns([2, 1, 1])
+            expense_head = a.selectbox("Expense Ledger", ledgers, key=f"expense_head_{i}")
+            taxable_value = b.number_input("Taxable Value", min_value=0.0, value=0.0, step=1.0, key=f"expense_taxable_{i}")
+            gst_rate = c.number_input("GST %", min_value=0.0, value=18.0, step=1.0, key=f"expense_gst_{i}")
+            basic_taxable_total += taxable_value
+            raw_lines.append({"expense_head": expense_head, "taxable_before_discount": taxable_value, "gst_rate": gst_rate})
 
-        st.markdown("### Adjustments")
-        a1,a2,a3,a4=st.columns(4)
-        discount=a1.number_input("Discount (-)", value=0.0)
-        freight=a2.number_input("Freight (+)", value=0.0)
-        other_exp=a3.number_input("Other Exp (+)", value=0.0)
-        tds=a4.number_input("TDS (-)", value=0.0)
-        total_value=round(gross_total - discount + freight + other_exp - tds, 2)
-        remarks=st.text_input("Remarks")
+        st.markdown("### Auto Calculation / Adjustments")
+        d1, d2, f1, f2 = st.columns(4)
+        discount_type = d1.selectbox("Discount Type", ["Amount", "%"], key="expense_discount_type")
+        discount_input = d2.number_input("Discount (-)", min_value=0.0, value=0.0, step=1.0, key="expense_discount_input")
+        freight = f1.number_input("Freight (+)", min_value=0.0, value=0.0, step=1.0, key="expense_freight")
+        freight_gst_rate = f2.number_input("Freight GST %", min_value=0.0, value=18.0, step=1.0, key="expense_freight_gst")
+
+        o1, o2, t1, t2 = st.columns(4)
+        other_exp = o1.number_input("Other Charges (+)", min_value=0.0, value=0.0, step=1.0, key="expense_other_exp")
+        other_gst_rate = o2.number_input("Other Charges GST %", min_value=0.0, value=18.0, step=1.0, key="expense_other_gst")
+        tds_type = t1.selectbox("TDS Type", ["Amount", "%"], key="expense_tds_type")
+        tds_input = t2.number_input("TDS (-)", min_value=0.0, value=0.0, step=1.0, key="expense_tds_input")
+
+        discount = round((basic_taxable_total * discount_input / 100), 2) if discount_type == "%" else round(discount_input, 2)
+        if discount > basic_taxable_total:
+            discount = basic_taxable_total
+
+        line_rows = []
+        taxable_total = 0.0
+        gst_total = 0.0
+        gross_total = 0.0
+        for r in raw_lines:
+            share = (r["taxable_before_discount"] / basic_taxable_total) if basic_taxable_total else 0
+            line_discount = round(discount * share, 2)
+            taxable_after_discount = round(max(r["taxable_before_discount"] - line_discount, 0), 2)
+            cgst, sgst, igst, gross_value = gst_calc(taxable_after_discount, r["gst_rate"], gst_type)
+            taxable_total += taxable_after_discount
+            gst_total += (cgst + sgst + igst)
+            gross_total += gross_value
+            line_rows.append({
+                "expense_head": r["expense_head"],
+                "taxable_value": taxable_after_discount,
+                "line_discount": line_discount,
+                "gst_rate": r["gst_rate"],
+                "cgst": cgst,
+                "sgst": sgst,
+                "igst": igst,
+                "gross_value": gross_value
+            })
+
+        freight_cgst, freight_sgst, freight_igst, freight_total = gst_calc(freight, freight_gst_rate, gst_type)
+        other_cgst, other_sgst, other_igst, other_total = gst_calc(other_exp, other_gst_rate, gst_type)
+        charges_taxable = round(freight + other_exp, 2)
+        charges_gst = round(freight_cgst + freight_sgst + freight_igst + other_cgst + other_sgst + other_igst, 2)
+        gross_before_tds = round(gross_total + freight_total + other_total, 2)
+        tds_base = round(taxable_total + charges_taxable, 2)
+        tds = round((tds_base * tds_input / 100), 2) if tds_type == "%" else round(tds_input, 2)
+        total_value = round(gross_before_tds - tds, 2)
+        total_gst_with_charges = round(gst_total + charges_gst, 2)
+        remarks = st.text_input("Remarks")
         controls = entry_controls("expense_ctrl")
-        st.info(f"Taxable: {money(taxable_total)} | GST: {money(gst_total)} | Gross: {money(gross_total)} | Net Payable: {money(total_value)}")
+
+        st.markdown("### Calculation Summary")
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Basic Taxable", money(basic_taxable_total))
+        s2.metric("Discount", money(discount))
+        s3.metric("Taxable After Discount", money(taxable_total))
+        s4.metric("Expense GST", money(gst_total))
+        s5, s6, s7, s8 = st.columns(4)
+        s5.metric("Freight + Other", money(charges_taxable))
+        s6.metric("GST on Charges", money(charges_gst))
+        s7.metric("TDS", money(tds))
+        s8.metric("Net Payable", money(total_value))
+        st.info(
+            f"Basic: {money(basic_taxable_total)} | Discount: {money(discount)} | "
+            f"Taxable: {money(taxable_total + charges_taxable)} | GST: {money(total_gst_with_charges)} | "
+            f"Gross: {money(gross_before_tds)} | Less TDS: {money(tds)} | Net Payable: {money(total_value)}"
+        )
+
         if st.form_submit_button("Save Expense GST", use_container_width=True):
             if not line_rows:
                 st.error("At least one expense line is required.")
             else:
                 for r in line_rows:
-                    row = {"expense_date":expense_date,"vendor_name":vendor_name,"expense_head":r['expense_head'],"invoice_no":invoice_no,"gstin":gstin,"taxable_value":r['taxable_value'],"discount":discount,"freight":freight,"other_exp":other_exp,"tds":tds,"cgst":r['cgst'],"sgst":r['sgst'],"igst":r['igst'],"total_value":r['gross_value'],"payment_mode":payment_mode,"remarks":remarks,"created_by":current_user()}
+                    row = {
+                        "expense_date": expense_date,
+                        "vendor_name": vendor_name,
+                        "expense_head": r["expense_head"],
+                        "invoice_no": invoice_no,
+                        "gstin": gstin,
+                        "taxable_value": r["taxable_value"],
+                        "discount": discount,
+                        "freight": freight,
+                        "other_exp": other_exp,
+                        "tds": tds,
+                        "cgst": r["cgst"],
+                        "sgst": r["sgst"],
+                        "igst": r["igst"],
+                        "gross_value": gross_before_tds,
+                        "net_value": total_value,
+                        "total_value": r["gross_value"],
+                        "payment_mode": payment_mode,
+                        "remarks": remarks,
+                        "created_by": current_user()
+                    }
                     row.update(controls)
                     insert_row("expenses", row)
                 st.session_state[exp_count_key] = 1
-                st.success("Expense voucher saved. You can edit/delete any saved row in the register below.")
+                st.success("Expense voucher saved with automatic calculation.")
                 st.rerun()
     st.caption("Edit option: Use the Edit / Delete section below the register to modify saved Expense entries.")
-    show_table_with_edit_delete("expenses", load_table("expenses",500), "Expense Register")
-
+    show_table_with_edit_delete("expenses", load_table("expenses", 500), "Expense Register")
 
 def service_voucher():
     show_header("Service Voucher", "section-acc")
