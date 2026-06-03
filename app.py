@@ -739,9 +739,9 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info
             .top {{ display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #0f3b66; padding-bottom:12px; margin-bottom:18px; }}
             .brand {{ font-size:30px; font-weight:800; color:#0f3b66; }}
             .title {{ background:linear-gradient(90deg,#0f3b66,#2563eb); color:white; padding:10px 14px; border-radius:10px; font-size:22px; font-weight:800; margin:16px 0; }}
-            .info { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; font-size:13px; }
-            .invoice-meta, .party-box { border:1px solid #cbd5e1; border-radius:10px; padding:10px; background:#f8fafc; }
-            .box-title { font-weight:800; color:#0f3b66; margin-bottom:6px; font-size:14px; }
+            .info {{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px; font-size:13px; }}
+            .invoice-meta, .party-box {{ border:1px solid #cbd5e1; border-radius:10px; padding:10px; background:#f8fafc; }}
+            .box-title {{ font-weight:800; color:#0f3b66; margin-bottom:6px; font-size:14px; }}
             table {{ border-collapse:collapse; width:100%; margin-top:10px; }}
             th {{ background:#0f3b66; color:white; padding:8px; border:1px solid #0f3b66; font-size:12px; }}
             td {{ padding:7px; border:1px solid #d1d5db; font-size:12px; }}
