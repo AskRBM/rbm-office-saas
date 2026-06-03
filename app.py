@@ -2047,31 +2047,100 @@ def render_custom_menu():
     </div>
     """, unsafe_allow_html=True)
 
+    groups = build_group_list()
+
+    # Keep previously selected group if it is still allowed for this client.
+    if st.session_state.get("active_group") in groups:
+        default_group_index = groups.index(st.session_state.get("active_group"))
+    else:
+        default_group_index = 0
+
+    group = st.selectbox("Group", groups, index=default_group_index, key="menu_group")
+    modules = get_menu_modules(group)
+
+    # Keep previously selected module if it belongs to the selected group.
+    previous_choice = st.session_state.get("active_choice", st.session_state.get("menu_module"))
+    if previous_choice in modules:
+        default_module_index = modules.index(previous_choice)
+    else:
+        default_module_index = 0
+
+    choice = st.radio("Module", modules, index=default_module_index, key="menu_module")
+
+    # Save active page before hiding, so the same page stays open after hide.
+    st.session_state["active_group"] = group
+    st.session_state["active_choice"] = choice
+
     c1, c2 = st.columns(2)
     if c1.button("◀ Hide", use_container_width=True, key="custom_hide_menu"):
+        st.session_state["active_group"] = group
+        st.session_state["active_choice"] = choice
         st.session_state["sidebar_open"] = False
         st.rerun()
     if c2.button("Logout", use_container_width=True, key="custom_logout"):
         st.session_state.clear()
         st.rerun()
 
-    groups = build_group_list()
-    group = st.selectbox("Group", groups, key="menu_group")
-    modules = get_menu_modules(group)
-    choice = st.radio("Module", modules, key="menu_module")
     return group, choice
+
+
+def get_module_mapping():
+    return {
+        "Dashboard": dashboard,
+        "Client Master": client_master,
+        "User Management": user_management,
+        "Employee Master": employee_master,
+        "Company Profile": company_profile,
+        "Financial Year Master": financial_year_master,
+        "Cost Center Master": cost_center_master,
+        "Document Series": document_series_master,
+        "GST Settings": gst_settings_master,
+        "Ledger Group Master": ledger_group_master,
+        "Ledger Master": ledger_master,
+        "Stock Group Master": stock_group_master,
+        "Stock Ledger Master": stock_ledger_master,
+        "Attendance Management": attendance,
+        "IN / OUT Register": inout_register,
+        "Visitor Register": visitor_register,
+        "Task Delegation": task_delegation,
+        "Appointments": appointment_module,
+        "Raw Material Stock": stock_raw,
+        "Finished Goods Stock": stock_fg,
+        "WIP Stock": stock_wip,
+        "Stock Voucher": stock_voucher,
+        "Sales GST Invoice": sales_invoice,
+        "Purchase GST Invoice": purchase_invoice,
+        "Expense GST": expense_gst,
+        "Service Voucher": service_voucher,
+        "Fixed Assets": fixed_assets,
+        "Accounting Entries": accounting_entries,
+        "Registers / Reports": reports,
+        "Import Center": import_center,
+        "Calculation Book": calculation_book,
+        "ERP Control Center": erp_control_center,
+        "Audit Log": audit_log_report,
+        "Quotation": quotation_module,
+    }
 
 
 def main_app():
     if "sidebar_open" not in st.session_state:
         st.session_state["sidebar_open"] = True
 
-    # Top reliable button: works even when Streamlit's native sidebar is collapsed.
+    if "active_group" not in st.session_state:
+        st.session_state["active_group"] = "Dashboard"
+    if "active_choice" not in st.session_state:
+        st.session_state["active_choice"] = "Dashboard"
+
+    # Always visible reliable toggle button.
     top_col1, top_col2 = st.columns([1, 8])
     with top_col1:
-        if st.button("☰ Menu", use_container_width=True, key="always_menu_toggle"):
+        button_text = "☰ Show Menu" if not st.session_state["sidebar_open"] else "☰ Menu"
+        if st.button(button_text, use_container_width=True, key="always_menu_toggle"):
             st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
             st.rerun()
+
+    mapping = get_module_mapping()
 
     if st.session_state["sidebar_open"]:
         menu_col, content_col = st.columns([1.15, 4.85], gap="large")
@@ -2079,88 +2148,14 @@ def main_app():
             group, choice = render_custom_menu()
         with content_col:
             rbm_header()
-            mapping = {
-                "Dashboard": dashboard,
-                "Client Master": client_master,
-                "User Management": user_management,
-                "Employee Master": employee_master,
-                "Company Profile": company_profile,
-                "Financial Year Master": financial_year_master,
-                "Cost Center Master": cost_center_master,
-                "Document Series": document_series_master,
-                "GST Settings": gst_settings_master,
-                "Ledger Group Master": ledger_group_master,
-                "Ledger Master": ledger_master,
-                "Stock Group Master": stock_group_master,
-                "Stock Ledger Master": stock_ledger_master,
-                "Attendance Management": attendance,
-                "IN / OUT Register": inout_register,
-                "Visitor Register": visitor_register,
-                "Task Delegation": task_delegation,
-                "Appointments": appointment_module,
-                "Raw Material Stock": stock_raw,
-                "Finished Goods Stock": stock_fg,
-                "WIP Stock": stock_wip,
-                "Stock Voucher": stock_voucher,
-                "Sales GST Invoice": sales_invoice,
-                "Purchase GST Invoice": purchase_invoice,
-                "Expense GST": expense_gst,
-                "Service Voucher": service_voucher,
-                "Fixed Assets": fixed_assets,
-                "Accounting Entries": accounting_entries,
-                "Registers / Reports": reports,
-                "Import Center": import_center,
-                "Calculation Book": calculation_book,
-                "ERP Control Center": erp_control_center,
-                "Audit Log": audit_log_report,
-                "Quotation": quotation_module,
-            }
             mapping.get(choice, placeholder_denied)()
     else:
+        # Menu hidden: keep the SAME current module open. Do not jump to Dashboard.
         rbm_header()
-        st.info("Menu is hidden. Click ☰ Menu at the top-left to show it again.")
-        group = st.session_state.get("menu_group", "Dashboard")
-        modules = get_menu_modules(group)
-        choice = st.session_state.get("menu_module", modules[0])
-        if choice not in modules:
-            choice = modules[0]
-        mapping = {
-            "Dashboard": dashboard,
-            "Client Master": client_master,
-            "User Management": user_management,
-            "Employee Master": employee_master,
-            "Company Profile": company_profile,
-            "Financial Year Master": financial_year_master,
-            "Cost Center Master": cost_center_master,
-            "Document Series": document_series_master,
-            "GST Settings": gst_settings_master,
-            "Ledger Group Master": ledger_group_master,
-            "Ledger Master": ledger_master,
-            "Stock Group Master": stock_group_master,
-            "Stock Ledger Master": stock_ledger_master,
-            "Attendance Management": attendance,
-            "IN / OUT Register": inout_register,
-            "Visitor Register": visitor_register,
-            "Task Delegation": task_delegation,
-            "Appointments": appointment_module,
-            "Raw Material Stock": stock_raw,
-            "Finished Goods Stock": stock_fg,
-            "WIP Stock": stock_wip,
-            "Stock Voucher": stock_voucher,
-            "Sales GST Invoice": sales_invoice,
-            "Purchase GST Invoice": purchase_invoice,
-            "Expense GST": expense_gst,
-            "Service Voucher": service_voucher,
-            "Fixed Assets": fixed_assets,
-            "Accounting Entries": accounting_entries,
-            "Registers / Reports": reports,
-            "Import Center": import_center,
-            "Calculation Book": calculation_book,
-            "ERP Control Center": erp_control_center,
-            "Audit Log": audit_log_report,
-            "Quotation": quotation_module,
-        }
+        st.info("Menu is hidden. Click ☰ Show Menu at the top-left to show it again.")
+        choice = st.session_state.get("active_choice", "Dashboard")
         mapping.get(choice, placeholder_denied)()
+
 
 if "logged_in" not in st.session_state:
     login_page()
