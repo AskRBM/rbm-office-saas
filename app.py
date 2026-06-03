@@ -753,21 +753,75 @@ def client_master():
 
 def user_management():
     show_header("User Management", "section-admin")
-    if st.session_state["role"] not in ["Admin","Super Admin"]: st.warning("Only Admin can access."); return
-    clients_df = load_table("clients", 1000)
+
+    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
+        st.warning("Only Admin can access User Management.")
+        return
+
+    # Super Admin can create users for any client.
+    # Client Admin can create users only for his own client_code/business.
+    if is_super_admin():
+        clients_df = load_table("clients", 1000)
+        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
+        if "RBM" not in client_codes:
+            client_codes = ["RBM"] + client_codes
+        selected_client_code = st.selectbox("Client Code", client_codes, key="um_client_code")
+        users_df = load_table("users", 1000)
+    else:
+        selected_client_code = get_client_code()
+        st.info(f"You are creating users only for your business: {selected_client_code}")
+        users_df = load_table("users", 1000)
+
     with st.form("user_form"):
-        c1,c2 = st.columns(2)
-        client_code = c1.selectbox("Client Code", clients_df["client_code"].dropna().astype(str).tolist() if is_super_admin() and not clients_df.empty else [get_client_code()]) if is_super_admin() else get_client_code()
-        if not is_super_admin(): c1.text_input("Client Code", value=client_code, disabled=True)
+        c1, c2 = st.columns(2)
+
+        c1.text_input("Client Code", value=selected_client_code, disabled=True)
         username = c1.text_input("Username")
         password = c2.text_input("Password", type="password")
-        role = c1.selectbox("Role", ["Admin","User"])
+
+        if is_super_admin():
+            role = c1.selectbox("Role", ["Admin", "User", "Quotation User", "Super Admin"])
+        else:
+            role = c1.selectbox("Role", ["Admin", "User", "Quotation User"])
+
         full_name = c2.text_input("Full Name")
-        status = c2.selectbox("Status", ["Active","Inactive"])
+        status = c2.selectbox("Status", ["Active", "Inactive"])
+
         if st.form_submit_button("Create User", use_container_width=True):
-            if not username or not password: st.error("Username and password required")
-            else: insert_row("users", {"client_code":client_code,"username":username,"password":password,"role":role,"full_name":full_name,"status":status}); st.success("User created"); st.rerun()
-    show_table_with_edit_delete("users", load_table("users", 500), "User List")
+            username_clean = username.strip()
+            password_clean = password.strip()
+
+            if username_clean == "" or password_clean == "":
+                st.error("Username and password are required.")
+            else:
+                all_users = safe_df(supabase.table("users").select("*").execute().data)
+                if not all_users.empty:
+                    duplicate = all_users[
+                        (all_users["username"].astype(str) == username_clean) &
+                        (all_users["client_code"].astype(str) == selected_client_code)
+                    ]
+                else:
+                    duplicate = pd.DataFrame()
+
+                if not duplicate.empty:
+                    st.error("This username already exists for this client.")
+                else:
+                    insert_row("users", {
+                        "client_code": selected_client_code,
+                        "username": username_clean,
+                        "password": password_clean,
+                        "role": role,
+                        "full_name": full_name.strip(),
+                        "status": status
+                    })
+                    st.success("User created successfully.")
+                    st.rerun()
+
+    st.subheader("User List")
+    if not is_super_admin() and "client_code" in users_df.columns:
+        users_df = users_df[users_df["client_code"].astype(str) == selected_client_code]
+
+    show_table_with_edit_delete("users", users_df, "User List")
 
 def employee_master():
     show_header("Employee Master", "section-admin")
@@ -1831,62 +1885,149 @@ def get_menu_modules(group):
     if group == "Dashboard":
         modules = ["Dashboard"]
     elif group == "Master":
-        modules = ["Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings", "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master"] if st.session_state.get("allow_master_group", True) else []
+        modules = ["Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings", "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master"] if st.session_state.get("allow_master_group", False) else []
     elif group == "Admin":
         if is_super_admin():
             modules += ["Client Master"]
         if st.session_state.get("role") in ["Admin", "Super Admin"]:
             modules += ["User Management", "Employee Master"]
-        if st.session_state.get("allow_appointment", True):
+        if st.session_state.get("allow_appointment", False):
             modules += ["Appointments"]
     elif group == "HR":
-        if st.session_state.get("allow_attendance", True):
+        if st.session_state.get("allow_attendance", False):
             modules.append("Attendance Management")
-        if st.session_state.get("allow_inout", True):
+        if st.session_state.get("allow_inout", False):
             modules.append("IN / OUT Register")
-        if st.session_state.get("allow_visitor", True):
+        if st.session_state.get("allow_visitor", False):
             modules.append("Visitor Register")
-        if st.session_state.get("allow_task", True):
+        if st.session_state.get("allow_task", False):
             modules.append("Task Delegation")
     elif group == "Inventory":
-        if st.session_state.get("allow_stock_raw", True):
+        if st.session_state.get("allow_stock_raw", False):
             modules.append("Raw Material Stock")
-        if st.session_state.get("allow_stock_fg", True):
+        if st.session_state.get("allow_stock_fg", False):
             modules.append("Finished Goods Stock")
-        if st.session_state.get("allow_stock_wip", True):
+        if st.session_state.get("allow_stock_wip", False):
             modules.append("WIP Stock")
-        modules.append("Stock Voucher")
+        if modules:
+            modules.append("Stock Voucher")
     elif group == "Accounts":
-        if st.session_state.get("allow_sales", True):
+        if st.session_state.get("allow_sales", False):
             modules.append("Sales GST Invoice")
-        if st.session_state.get("allow_purchase", True):
+        if st.session_state.get("allow_purchase", False):
             modules.append("Purchase GST Invoice")
-        if st.session_state.get("allow_expense", True):
+        if st.session_state.get("allow_expense", False):
             modules.append("Expense GST")
-        if st.session_state.get("allow_service_voucher", True):
+        if st.session_state.get("allow_service_voucher", False):
             modules.append("Service Voucher")
-        if st.session_state.get("allow_fixed_assets", True):
+        if st.session_state.get("allow_fixed_assets", False):
             modules.append("Fixed Assets")
-        if st.session_state.get("allow_accounting", True):
+        if st.session_state.get("allow_accounting", False):
             modules.append("Accounting Entries")
     elif group == "Quotation":
-        if is_super_admin() or st.session_state.get("allow_quotation", True) or _quote_role():
+        if is_super_admin() or st.session_state.get("allow_quotation", False) or _quote_role():
             modules = ["Quotation"]
     elif group == "Reports":
-        modules = ["Registers / Reports"]
-        if st.session_state.get("allow_excel_upload", True) or st.session_state.get("allow_google_sheet_import", True):
-            modules.append("Import Center")
-        modules.append("Audit Log")
+        if is_super_admin():
+            modules = ["Registers / Reports", "Import Center", "Audit Log"]
+        else:
+            # Reports group appears only when enabled groups exist.
+            modules = ["Registers / Reports"]
+            if st.session_state.get("allow_excel_upload", False) or st.session_state.get("allow_google_sheet_import", False):
+                modules.append("Import Center")
+            if st.session_state.get("role") == "Admin":
+                modules.append("Audit Log")
     elif group == "Tools":
-        modules = ["Calculation Book", "ERP Control Center"]
+        if is_super_admin() or st.session_state.get("role") == "Admin":
+            modules = ["Calculation Book", "ERP Control Center"]
     return modules or ["No module available"]
 
 def build_group_list():
+    # Super Admin can see every group always.
     if _quote_role():
         return ["Quotation"]
+
     if is_super_admin():
         return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Tools"]
-    return ["Dashboard", "Master", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Tools"]
+
+    # Client users/admins should see ONLY groups enabled for that client.
+    groups = []
+
+    # Dashboard only when user has at least one normal ERP module, otherwise quotation-only users see only Quotation.
+    has_any_normal_module = any([
+        st.session_state.get("allow_master_group", False),
+        st.session_state.get("allow_attendance", False),
+        st.session_state.get("allow_inout", False),
+        st.session_state.get("allow_visitor", False),
+        st.session_state.get("allow_task", False),
+        st.session_state.get("allow_appointment", False),
+        st.session_state.get("allow_stock_raw", False),
+        st.session_state.get("allow_stock_fg", False),
+        st.session_state.get("allow_stock_wip", False),
+        st.session_state.get("allow_sales", False),
+        st.session_state.get("allow_purchase", False),
+        st.session_state.get("allow_expense", False),
+        st.session_state.get("allow_service_voucher", False),
+        st.session_state.get("allow_fixed_assets", False),
+        st.session_state.get("allow_accounting", False),
+        st.session_state.get("allow_excel_upload", False),
+        st.session_state.get("allow_google_sheet_import", False),
+    ])
+
+    if has_any_normal_module:
+        groups.append("Dashboard")
+
+    if st.session_state.get("allow_master_group", False):
+        groups.append("Master")
+
+    admin_modules = []
+    if st.session_state.get("role") == "Admin":
+        admin_modules.append("User Management")
+    if st.session_state.get("allow_appointment", False):
+        admin_modules.append("Appointments")
+    if admin_modules:
+        groups.append("Admin")
+
+    if any([
+        st.session_state.get("allow_attendance", False),
+        st.session_state.get("allow_inout", False),
+        st.session_state.get("allow_visitor", False),
+        st.session_state.get("allow_task", False),
+    ]):
+        groups.append("HR")
+
+    if any([
+        st.session_state.get("allow_stock_raw", False),
+        st.session_state.get("allow_stock_fg", False),
+        st.session_state.get("allow_stock_wip", False),
+    ]):
+        groups.append("Inventory")
+
+    if any([
+        st.session_state.get("allow_sales", False),
+        st.session_state.get("allow_purchase", False),
+        st.session_state.get("allow_expense", False),
+        st.session_state.get("allow_service_voucher", False),
+        st.session_state.get("allow_fixed_assets", False),
+        st.session_state.get("allow_accounting", False),
+    ]):
+        groups.append("Accounts")
+
+    if st.session_state.get("allow_quotation", False):
+        groups.append("Quotation")
+
+    if any([
+        st.session_state.get("allow_excel_upload", False),
+        st.session_state.get("allow_google_sheet_import", False),
+        has_any_normal_module,
+    ]):
+        groups.append("Reports")
+
+    # Tools are only for client Admin when normal ERP modules are enabled.
+    if st.session_state.get("role") == "Admin" and has_any_normal_module:
+        groups.append("Tools")
+
+    return groups or ["Quotation"]
 
 
 def render_custom_menu():
