@@ -112,7 +112,9 @@ for _k in REVERSIBLE_TABLE_KEYS:
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:1rem;padding-bottom:1.5rem;}
+.block-container {padding-top:0.15rem!important;padding-bottom:1rem!important;padding-left:0.75rem!important;padding-right:0.75rem!important;max-width:100%!important;}
+[data-testid="stAppViewContainer"] {padding-top:0!important;}
+[data-testid="stHeader"] {height:0!important;}
 .rbm-header {background:linear-gradient(135deg,#082f49,#075985,#0284c7);padding:18px 24px;border-radius:18px;margin-bottom:20px;box-shadow:0 10px 24px rgba(2,132,199,.22);display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .rbm-title {color:white;font-size:34px;font-weight:900;margin:0;line-height:1;}
 .rbm-divider {color:#bae6fd;font-size:30px;font-weight:300;}
@@ -2872,25 +2874,29 @@ def main_app():
     if "active_choice" not in st.session_state:
         st.session_state["active_choice"] = "Dashboard"
 
-    # Always visible reliable toggle button.
-    top_col1, top_col2 = st.columns([1, 8])
-    with top_col1:
-        button_text = "☰ Show Menu" if not st.session_state["sidebar_open"] else "☰ Menu"
-        if st.button(button_text, use_container_width=True, key="always_menu_toggle"):
-            st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
-            st.rerun()
-
     mapping = get_module_mapping()
 
     if st.session_state["sidebar_open"]:
+        # IMPORTANT: no separate top row here. Menu and content start on the same line,
+        # so there is no blank white space above the ERP header after login.
         menu_col, content_col = st.columns([1.15, 4.85], gap="large")
+
         with menu_col:
+            st.button("☰ Menu", use_container_width=True, key="menu_caption_button", disabled=True)
             group, choice = render_custom_menu()
+
         with content_col:
             rbm_header()
             mapping.get(choice, placeholder_denied)()
+
     else:
         # Menu hidden: keep the SAME current module open. Do not jump to Dashboard.
+        c_show, c_blank = st.columns([1.05, 8.95])
+        with c_show:
+            if st.button("☰ Show Menu", use_container_width=True, key="show_menu_when_hidden"):
+                st.session_state["sidebar_open"] = True
+                st.rerun()
+
         rbm_header()
         st.info("Menu is hidden. Click ☰ Show Menu at the top-left to show it again.")
         choice = st.session_state.get("active_choice", "Dashboard")
