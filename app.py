@@ -621,8 +621,50 @@ def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
         cgst = taxable * gst_rate / 200; sgst = cgst; igst = 0
     return round(cgst,2), round(sgst,2), round(igst,2), round(taxable+cgst+sgst+igst,2)
 
-def invoice_html(title, invoice_no, party, rows, total):
-    body = "".join([f"<tr><td>{r.get('item','')}</td><td>{r.get('hsn','')}</td><td>{r.get('qty',0)}</td><td>{r.get('rate',0)}</td><td>{money(r.get('taxable',0))}</td><td>{money(r.get('gst',0))}</td><td>{money(r.get('total',0))}</td></tr>" for r in rows])
+def invoice_html(title, invoice_no, party, rows, total, summary=None):
+    """Professional invoice preview with item-wise CGST/SGST/IGST and voucher-level adjustments."""
+    summary = summary or {}
+
+    def nz(value):
+        try:
+            return abs(float(value or 0)) > 0.000001
+        except Exception:
+            return False
+
+    item_body = "".join([
+        f"""
+        <tr>
+            <td>{r.get('item','')}</td>
+            <td>{r.get('hsn','')}</td>
+            <td align='right'>{r.get('qty',0)}</td>
+            <td align='right'>{money(r.get('rate',0))}</td>
+            <td align='right'>{money(r.get('taxable',0))}</td>
+            <td align='right'>{money(r.get('cgst',0))}</td>
+            <td align='right'>{money(r.get('sgst',0))}</td>
+            <td align='right'>{money(r.get('igst',0))}</td>
+            <td align='right'>{money(r.get('total',0))}</td>
+        </tr>
+        """ for r in rows
+    ])
+
+    charges_rows = ""
+    if nz(summary.get('discount')):
+        charges_rows += f"<tr><td colspan='8' align='right'><b>Less: Discount</b></td><td align='right'>-{money(summary.get('discount',0))}</td></tr>"
+    if nz(summary.get('freight')):
+        charges_rows += f"<tr><td colspan='4'><b>Freight</b></td><td align='right'>{money(summary.get('freight',0))}</td><td align='right'>{money(summary.get('freight_cgst',0))}</td><td align='right'>{money(summary.get('freight_sgst',0))}</td><td align='right'>{money(summary.get('freight_igst',0))}</td><td align='right'>{money(summary.get('freight_total',0))}</td></tr>"
+    if nz(summary.get('other_exp')):
+        charges_rows += f"<tr><td colspan='4'><b>Other Charges</b></td><td align='right'>{money(summary.get('other_exp',0))}</td><td align='right'>{money(summary.get('other_cgst',0))}</td><td align='right'>{money(summary.get('other_sgst',0))}</td><td align='right'>{money(summary.get('other_igst',0))}</td><td align='right'>{money(summary.get('other_total',0))}</td></tr>"
+    if nz(summary.get('tds')):
+        charges_rows += f"<tr><td colspan='8' align='right'><b>Less: TDS</b></td><td align='right'>-{money(summary.get('tds',0))}</td></tr>"
+
+    basic_taxable = summary.get('basic_taxable_total', sum(float(r.get('taxable',0) or 0) for r in rows))
+    taxable_total = summary.get('taxable_total', sum(float(r.get('taxable',0) or 0) for r in rows))
+    cgst_total = summary.get('cgst_total', sum(float(r.get('cgst',0) or 0) for r in rows) + float(summary.get('freight_cgst',0) or 0) + float(summary.get('other_cgst',0) or 0))
+    sgst_total = summary.get('sgst_total', sum(float(r.get('sgst',0) or 0) for r in rows) + float(summary.get('freight_sgst',0) or 0) + float(summary.get('other_sgst',0) or 0))
+    igst_total = summary.get('igst_total', sum(float(r.get('igst',0) or 0) for r in rows) + float(summary.get('freight_igst',0) or 0) + float(summary.get('other_igst',0) or 0))
+    total_gst = summary.get('total_gst', cgst_total + sgst_total + igst_total)
+    gross_total = summary.get('gross_total', total + float(summary.get('tds',0) or 0))
+
     return f"""
     <html>
     <head>
@@ -635,8 +677,10 @@ def invoice_html(title, invoice_no, party, rows, total):
             .title {{ background:linear-gradient(90deg,#0f3b66,#2563eb); color:white; padding:10px 14px; border-radius:10px; font-size:22px; font-weight:800; margin:16px 0; }}
             .info {{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:16px; font-size:14px; }}
             table {{ border-collapse:collapse; width:100%; margin-top:10px; }}
-            th {{ background:#0f3b66; color:white; padding:9px; border:1px solid #0f3b66; font-size:13px; }}
-            td {{ padding:8px; border:1px solid #d1d5db; font-size:13px; }}
+            th {{ background:#0f3b66; color:white; padding:8px; border:1px solid #0f3b66; font-size:12px; }}
+            td {{ padding:7px; border:1px solid #d1d5db; font-size:12px; }}
+            .summary {{ margin-top:16px; width:48%; margin-left:auto; }}
+            .summary td {{ font-size:13px; }}
             .grand td {{ background:#e0f2fe; font-size:15px; }}
             .footer {{ margin-top:35px; display:flex; justify-content:space-between; }}
             .sign {{ border-top:1px solid #111827; padding-top:8px; min-width:180px; text-align:center; }}
@@ -657,9 +701,24 @@ def invoice_html(title, invoice_no, party, rows, total):
             <div><b>Party:</b> {party}</div>
         </div>
         <table>
-            <tr><th>Item/Service</th><th>HSN/SAC</th><th>Qty</th><th>Rate</th><th>Taxable</th><th>GST</th><th>Total</th></tr>
-            {body}
-            <tr class='grand'><td colspan='6' align='right'><b>Grand Total</b></td><td><b>{money(total)}</b></td></tr>
+            <tr><th>Item/Service</th><th>HSN/SAC</th><th>Qty</th><th>Rate</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>IGST</th><th>Total</th></tr>
+            {item_body}
+            {charges_rows}
+            <tr class='grand'><td colspan='8' align='right'><b>Net Payable / Receivable</b></td><td align='right'><b>{money(total)}</b></td></tr>
+        </table>
+        <table class='summary'>
+            <tr><td><b>Basic Taxable</b></td><td align='right'>{money(basic_taxable)}</td></tr>
+            <tr><td><b>Discount</b></td><td align='right'>{money(summary.get('discount',0))}</td></tr>
+            <tr><td><b>Taxable After Discount</b></td><td align='right'>{money(taxable_total)}</td></tr>
+            <tr><td><b>Freight</b></td><td align='right'>{money(summary.get('freight',0))}</td></tr>
+            <tr><td><b>Other Charges</b></td><td align='right'>{money(summary.get('other_exp',0))}</td></tr>
+            <tr><td><b>CGST</b></td><td align='right'>{money(cgst_total)}</td></tr>
+            <tr><td><b>SGST</b></td><td align='right'>{money(sgst_total)}</td></tr>
+            <tr><td><b>IGST</b></td><td align='right'>{money(igst_total)}</td></tr>
+            <tr><td><b>Total GST</b></td><td align='right'>{money(total_gst)}</td></tr>
+            <tr><td><b>Gross Total</b></td><td align='right'>{money(gross_total)}</td></tr>
+            {f"<tr><td><b>Less TDS</b></td><td align='right'>{money(summary.get('tds',0))}</td></tr>" if nz(summary.get('tds')) else ""}
+            <tr class='grand'><td><b>Final Net Amount</b></td><td align='right'><b>{money(total)}</b></td></tr>
         </table>
         <div class='footer'>
             <div><b>Note:</b> This is a computer-generated invoice/voucher.</div>
@@ -1143,6 +1202,29 @@ def voucher_invoice(key, title, party_col, party_list, cls):
         tds = round((tds_base * tds_input / 100), 2) if tds_type == "%" else round(tds_input, 2)
         grand = round(gross_before_tds - tds, 2)
         total_gst_with_charges = round(gst_total + charges_gst, 2)
+        invoice_summary = {
+            "basic_taxable_total": basic_taxable_total,
+            "discount": discount,
+            "taxable_total": taxable_total,
+            "freight": freight,
+            "freight_cgst": freight_cgst,
+            "freight_sgst": freight_sgst,
+            "freight_igst": freight_igst,
+            "freight_total": freight_total,
+            "other_exp": other_exp,
+            "other_cgst": other_cgst,
+            "other_sgst": other_sgst,
+            "other_igst": other_igst,
+            "other_total": other_total,
+            "charges_taxable": charges_taxable,
+            "charges_gst": charges_gst,
+            "cgst_total": round(sum(float(x.get("cgst", 0) or 0) for x in rows) + freight_cgst + other_cgst, 2),
+            "sgst_total": round(sum(float(x.get("sgst", 0) or 0) for x in rows) + freight_sgst + other_sgst, 2),
+            "igst_total": round(sum(float(x.get("igst", 0) or 0) for x in rows) + freight_igst + other_igst, 2),
+            "total_gst": total_gst_with_charges,
+            "gross_total": gross_before_tds,
+            "tds": tds,
+        }
         remarks = st.text_input("Remarks")
         controls = entry_controls(f"{key}_voucher_ctrl")
 
@@ -1200,7 +1282,14 @@ def voucher_invoice(key, title, party_col, party_list, cls):
                 st.success("Voucher saved with automatic calculation.")
                 st.rerun()
 
-    html = invoice_html(title, inv_no if 'inv_no' in locals() else '', party if 'party' in locals() else '', rows if 'rows' in locals() else [], grand if 'grand' in locals() else 0)
+    html = invoice_html(
+        title,
+        inv_no if 'inv_no' in locals() else '',
+        party if 'party' in locals() else '',
+        rows if 'rows' in locals() else [],
+        grand if 'grand' in locals() else 0,
+        invoice_summary if 'invoice_summary' in locals() else {}
+    )
     show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
     st.caption("Edit option: Use the Edit / Delete section below the register to modify saved Sales/Purchase entries.")
     show_table_with_edit_delete(key, load_table(key, 500), f"{title} Register")
