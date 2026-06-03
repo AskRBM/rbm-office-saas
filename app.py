@@ -2637,17 +2637,10 @@ def main_app():
     if "active_choice" not in st.session_state:
         st.session_state["active_choice"] = "Dashboard"
 
-    # Always visible reliable toggle button.
-    top_col1, top_col2 = st.columns([1, 8])
-    with top_col1:
-        button_text = "☰ Show Menu" if not st.session_state["sidebar_open"] else "☰ Menu"
-        if st.button(button_text, use_container_width=True, key="always_menu_toggle"):
-            st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
-            st.rerun()
-
     mapping = get_module_mapping()
 
     if st.session_state["sidebar_open"]:
+        # No separate top button row here, so no blank space after login.
         menu_col, content_col = st.columns([1.15, 4.85], gap="large")
         with menu_col:
             group, choice = render_custom_menu()
@@ -2655,7 +2648,13 @@ def main_app():
             rbm_header()
             mapping.get(choice, placeholder_denied)()
     else:
-        # Menu hidden: keep the SAME current module open. Do not jump to Dashboard.
+        # Menu hidden: keep the same current module open and show a compact unhide button.
+        show_col, blank_col = st.columns([1, 8], gap="small")
+        with show_col:
+            if st.button("☰ Show Menu", use_container_width=True, key="show_menu_when_hidden"):
+                st.session_state["sidebar_open"] = True
+                st.rerun()
+
         rbm_header()
         st.info("Menu is hidden. Click ☰ Show Menu at the top-left to show it again.")
         choice = st.session_state.get("active_choice", "Dashboard")
