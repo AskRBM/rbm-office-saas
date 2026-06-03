@@ -40,8 +40,6 @@ TABLES = {
     "quotations": "quotations",
     "audit_logs": "audit_logs",
     "role_permissions": "role_permissions",
-    "login_history": "login_history",
-    "month_locks": "month_locks",
 }
 
 DISPLAY_COLUMNS = {
@@ -70,7 +68,7 @@ DISPLAY_COLUMNS = {
     "accounting_entries": ["id","client_code","entry_date","voucher_type","voucher_no","debit_account","credit_account","amount","cgst","sgst","igst","total_amount","narration","created_by"],
     "accounting_entry_lines": ["id","client_code","entry_id","dr_cr","ledger_name","amount","remarks"],
     "import_logs": ["id","client_code","import_type","module_name","total_rows","success_rows","failed_rows","remarks","created_by"],
-    "company_profiles": ["id","client_code","company_name","legal_name","gst_no","pan_no","tan_no","address","state","email","mobile","logo_file_name","logo_data","financial_year_start","books_start_date","status","created_by"],
+    "company_profiles": ["id","client_code","company_name","legal_name","gst_no","pan_no","tan_no","address","state","email","mobile","financial_year_start","books_start_date","status","created_by"],
     "financial_years": ["id","client_code","fy_name","start_date","end_date","status","lock_status","created_by"],
     "cost_centers": ["id","client_code","cost_center_name","department","location","status","created_by"],
     "document_series": ["id","client_code","module_name","prefix","next_no","suffix","status","created_by"],
@@ -82,8 +80,6 @@ DISPLAY_COLUMNS = {
     "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","remarks","created_by","created_at"],
     "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
     "role_permissions": ["id","client_code","role_name","module_name","can_view","can_add","can_edit","can_delete","can_reverse","can_approve","can_print","can_export","created_by","created_at"],
-    "login_history": ["id","client_code","username","login_status","login_time","remarks"],
-    "month_locks": ["id","client_code","financial_year","month_name","month_no","lock_status","locked_by","lock_date","remarks"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -711,67 +707,6 @@ def safe_get_ledger_details(ledger_name):
             "tan_no": "",
         }
 
-
-def get_company_profile_row():
-    try:
-        query = supabase.table("company_profiles").select("*").eq("client_code", get_client_code()).limit(1)
-        df = safe_df(query.execute().data)
-        return df.iloc[0].to_dict() if not df.empty else {}
-    except Exception:
-        return {}
-
-def company_logo_html():
-    row = get_company_profile_row()
-    logo_data = str(row.get("logo_data", "") or "")
-    if logo_data.strip():
-        return f"<div style='display:flex;align-items:center;gap:12px;'><img src='data:image/png;base64,{logo_data}' style='max-height:58px;max-width:120px;object-fit:contain;'><div><div class='brand'>RBM AI</div><div>Robotic Business Management</div></div></div>"
-    company_name = row.get("company_name") or "RBM AI"
-    return f"<div><div class='brand'>{company_name}</div><div>Robotic Business Management</div></div>"
-
-def log_login_event(username, success, remarks=""):
-    try:
-        supabase.table("login_history").insert({
-            "client_code": get_client_code() if "client_code" in st.session_state else "",
-            "username": str(username),
-            "login_status": "Success" if success else "Failed",
-            "login_time": india_now().isoformat(),
-            "remarks": remarks,
-        }).execute()
-    except Exception:
-        pass
-
-def generate_document_number(module_name):
-    """Return next document number from Document Series and increment it. Safe fallback if series is not set."""
-    module_name = str(module_name)
-    try:
-        query = supabase.table("document_series").select("*").eq("client_code", get_client_code()).eq("module_name", module_name).limit(1)
-        df = safe_df(query.execute().data)
-        if not df.empty:
-            r = df.iloc[0]
-            next_no = int(float(r.get("next_no", 1) or 1))
-            prefix = str(r.get("prefix", "") or "")
-            suffix = str(r.get("suffix", "") or "")
-            doc_no = f"{prefix}{next_no:04d}{suffix}"
-            supabase.table("document_series").update({"next_no": next_no + 1}).eq("id", int(r.get("id"))).execute()
-            return doc_no
-    except Exception:
-        pass
-    return f"{module_name[:3].upper()}-{india_now().strftime('%Y%m%d%H%M%S')}"
-
-def is_period_locked(entry_date):
-    """Check FY/month lock. Locked month blocks posting/editing in transaction modules."""
-    try:
-        d = pd.to_datetime(entry_date)
-        fy = financial_year(d)
-        month_no = int(d.month)
-        data = supabase.table("month_locks").select("*").eq("client_code", get_client_code()).eq("financial_year", fy).eq("month_no", month_no).limit(1).execute().data
-        df = safe_df(data)
-        if df.empty:
-            return False
-        return str(df.iloc[0].get("lock_status", "Unlocked")) == "Locked"
-    except Exception:
-        return False
-
 def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
     try: taxable = float(taxable); gst_rate = float(gst_rate)
     except Exception: taxable = 0; gst_rate = 0
@@ -847,7 +782,6 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info
     total_gst = summary.get('total_gst', cgst_total + sgst_total + igst_total)
     gross_total = summary.get('gross_total', total + float(summary.get('tds',0) or 0))
 
-    logo_html = company_logo_html()
     return f"""
     <html>
     <head>
@@ -877,7 +811,7 @@ def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info
     <body>
         <div class='no-print'><button class='print-btn' onclick='window.print()'>🖨 Print Invoice</button></div>
         <div class='top'>
-            {logo_html}
+            <div><div class='brand'>RBM AI</div><div>Robotic Business Management</div></div>
             <div style='text-align:right'><b>Date:</b> {india_now().strftime('%d-%m-%Y')}<br><b>Generated By:</b> RBM ERP SaaS</div>
         </div>
         <div class='title'>{title}</div>
@@ -1068,14 +1002,10 @@ def login_page():
         password = st.text_input("Password", type="password")
         if st.button("Login", use_container_width=True):
             match = users[(users["username"].astype(str) == username) & (users["password"].astype(str) == password)]
-            if match.empty:
-                log_login_event(username, False, "Wrong username or password")
-                st.error("Wrong username or password")
+            if match.empty: st.error("Wrong username or password")
             else:
                 row = match.iloc[0]
-                if str(row.get("status", "Active")) == "Inactive":
-                    log_login_event(username, False, "Inactive user")
-                    st.error("This user is inactive."); return
+                if str(row.get("status", "Active")) == "Inactive": st.error("This user is inactive."); return
                 client_code = str(row.get("client_code", "RBM"))
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
@@ -1083,7 +1013,6 @@ def login_page():
                 st.session_state["full_name"] = str(row.get("full_name", username))
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
-                log_login_event(username, True, "Login successful")
                 st.rerun()
         st.info("Default Super Admin: admin / rbm123")
 
@@ -1545,14 +1474,9 @@ def voucher_invoice(key, title, party_col, party_list, cls):
         )
 
         if st.form_submit_button(f"Save {title}", use_container_width=True):
-            if is_period_locked(inv_date):
-                st.error("This month / financial year is locked. Entry cannot be saved.")
-            elif not rows:
+            if not rows:
                 st.error("At least one item is required.")
             else:
-                if str(inv_no).strip() == "":
-                    module_name_for_series = "Sales" if key == "sales" else "Purchase" if key == "purchase" else "Voucher"
-                    inv_no = generate_document_number(module_name_for_series)
                 for r in rows:
                     row = {
                         "invoice_no": inv_no,
@@ -2048,142 +1972,6 @@ def gst_settings_master():
         ("status","Status",["Active","Inactive"])
     ], "section-master")
 
-
-def change_password():
-    show_header("Change Password", "section-master")
-    st.info("Use this screen to change your own password.")
-    with st.form("change_password_form"):
-        old_password = st.text_input("Current Password", type="password")
-        new_password = st.text_input("New Password", type="password")
-        confirm_password = st.text_input("Confirm New Password", type="password")
-        if st.form_submit_button("Update Password", use_container_width=True):
-            if not old_password or not new_password:
-                st.error("Current and new password are required.")
-            elif new_password != confirm_password:
-                st.error("New password and confirm password do not match.")
-            else:
-                df = safe_df(
-                    supabase.table("users")
-                    .select("*")
-                    .eq("client_code", get_client_code())
-                    .eq("username", current_user())
-                    .eq("password", old_password)
-                    .limit(1)
-                    .execute().data
-                )
-                if df.empty:
-                    st.error("Current password is wrong.")
-                else:
-                    supabase.table("users").update({"password": new_password}).eq("id", int(df.iloc[0]["id"])).execute()
-                    write_audit_log("Change Password", "UPDATE", int(df.iloc[0]["id"]), "User changed own password")
-                    st.success("Password changed successfully. Please logout and login again.")
-
-
-def company_logo_settings():
-    show_header("Company Logo / Invoice Settings", "section-master")
-    st.info("Upload company logo. It will appear in invoice print preview.")
-    current = get_company_profile_row()
-    if current.get("logo_data"):
-        st.image(base64.b64decode(current.get("logo_data")), caption="Current Logo", width=180)
-    uploaded = st.file_uploader("Upload Logo PNG/JPG - recommended small size", type=["png", "jpg", "jpeg"])
-    if uploaded is not None:
-        if uploaded.size > 1 * 1024 * 1024:
-            st.error("Logo should be less than 1 MB.")
-        else:
-            logo_b64 = base64.b64encode(uploaded.read()).decode("utf-8")
-            if current.get("id"):
-                supabase.table("company_profiles").update({"logo_file_name": uploaded.name, "logo_data": logo_b64}).eq("id", int(current["id"])).execute()
-            else:
-                supabase.table("company_profiles").insert({"client_code": get_client_code(), "company_name": st.session_state.get("client_name", "RBM AI"), "logo_file_name": uploaded.name, "logo_data": logo_b64, "status": "Active", "created_by": current_user()}).execute()
-            write_audit_log("Company Logo", "UPDATE", "", "Company logo updated")
-            st.success("Logo saved successfully.")
-            st.rerun()
-
-
-def backup_center():
-    show_header("Backup Center", "section-rep")
-    st.info("Download all important client data as one Excel workbook backup.")
-    keys = ["clients","users","employees","ledgers","stock_ledgers","sales","purchase","expenses","service_vouchers","stock_vouchers","fixed_assets","accounting_entries","accounting_entry_lines","appointments","tasks","quotation_requirements","quotations","audit_logs"]
-    selected_keys = st.multiselect("Select tables for backup", keys, default=[k for k in keys if k not in ["clients"] or is_super_admin()])
-    if st.button("Prepare Backup Excel", use_container_width=True):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for k in selected_keys:
-                try:
-                    df = load_table(k, 10000)
-                    df.to_excel(writer, index=False, sheet_name=k[:31])
-                except Exception:
-                    pd.DataFrame({"error":[f"Could not load {k}"]}).to_excel(writer, index=False, sheet_name=k[:31])
-        st.download_button("Download Full Backup Excel", output.getvalue(), f"RBM_Backup_{get_client_code()}_{india_now().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-
-def excel_template_center():
-    show_header("Excel Template Download", "section-rep")
-    templates = {
-        "Ledger Master": ["ledger_name","ledger_group","address","contact_no","email","tan_no","gst_no","pan_no","opening_balance","balance_type","status"],
-        "Stock Item Master": ["item_name","item_code","stock_group","unit","hsn_code","opening_qty","opening_rate","opening_value","gst_rate","status"],
-        "Sales GST Invoice": ["invoice_no","invoice_date","customer_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","remarks"],
-        "Purchase GST Invoice": ["invoice_no","invoice_date","supplier_name","gstin","item_name","hsn_sac","qty","rate","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","remarks"],
-        "Expense GST": ["expense_date","vendor_name","expense_head","invoice_no","gstin","taxable_value","discount","freight","other_exp","tds","cgst","sgst","igst","total_value","payment_mode","remarks"],
-        "Employee Master": ["employee_id","employee_name","mobile","email","department","designation","branch_division","status"],
-    }
-    selected = st.selectbox("Select Template", list(templates.keys()))
-    df = pd.DataFrame(columns=templates[selected])
-    st.dataframe(df, use_container_width=True)
-    st.download_button("Download Excel Template", to_excel_bytes(df), f"{selected.replace(' ','_')}_template.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
-
-def period_lock_center():
-    show_header("Month / Financial Year Lock", "section-master")
-    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
-        st.warning("Only Admin can lock/unlock periods.")
-        return
-    with st.form("month_lock_form"):
-        fy = st.text_input("Financial Year", value=financial_year(india_now().date()))
-        month_name = st.selectbox("Month", ["April","May","June","July","August","September","October","November","December","January","February","March"])
-        month_map = {"January":1,"February":2,"March":3,"April":4,"May":5,"June":6,"July":7,"August":8,"September":9,"October":10,"November":11,"December":12}
-        lock_status = st.selectbox("Lock Status", ["Unlocked", "Locked"])
-        remarks = st.text_input("Remarks")
-        if st.form_submit_button("Save Lock Setting", use_container_width=True):
-            # upsert by client + FY + month
-            existing = safe_df(supabase.table("month_locks").select("*").eq("client_code", get_client_code()).eq("financial_year", fy).eq("month_no", month_map[month_name]).limit(1).execute().data)
-            row = {"client_code": get_client_code(), "financial_year": fy, "month_name": month_name, "month_no": month_map[month_name], "lock_status": lock_status, "locked_by": current_user(), "lock_date": india_now().isoformat(), "remarks": remarks}
-            if existing.empty:
-                supabase.table("month_locks").insert(row).execute()
-            else:
-                supabase.table("month_locks").update(row).eq("id", int(existing.iloc[0]["id"])).execute()
-            write_audit_log("Period Lock", "UPDATE", "", f"{fy} {month_name} set to {lock_status}")
-            st.success("Period lock setting saved.")
-            st.rerun()
-    show_table_with_edit_delete("month_locks", load_table("month_locks", 1000), "Month Lock List")
-
-
-def login_history_report():
-    show_header("Login History", "section-rep")
-    df = load_table("login_history", 5000)
-    show_table_with_edit_delete("login_history", df, "Login History")
-
-
-def pending_approval_dashboard():
-    show_header("Pending Approval Dashboard", "section-rep")
-    keys = ["sales", "purchase", "expenses", "service_vouchers", "stock_vouchers", "fixed_assets", "accounting_entries", "appointments", "tasks"]
-    all_rows = []
-    for k in keys:
-        try:
-            df = load_table(k, 5000)
-            if not df.empty and "approval_status" in df.columns:
-                pending = df[df["approval_status"].astype(str).str.lower().isin(["pending", "submitted"])]
-                for _, r in pending.iterrows():
-                    all_rows.append({"module": k, "id": r.get("id"), "date": r.get("invoice_date", r.get("entry_date", r.get("task_date", ""))), "party/details": r.get("customer_name", r.get("supplier_name", r.get("vendor_name", r.get("task", "")))), "amount": r.get("net_value", r.get("total_value", r.get("amount", 0))), "approval_status": r.get("approval_status", "")})
-        except Exception:
-            pass
-    pdf = pd.DataFrame(all_rows)
-    if pdf.empty:
-        st.success("No pending approval found.")
-    else:
-        st.dataframe(pdf, use_container_width=True)
-        st.download_button("Download Pending Approval Excel", to_excel_bytes(pdf), "pending_approval.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
 def audit_log_report():
     show_header("Audit Log / System Control", "section-rep")
     st.info("This register is reserved for tracking important user actions, approvals, edits and deletions.")
@@ -2627,7 +2415,6 @@ ERP_MODULES = [
     "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher",
     "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries",
     "Quotation", "Registers / Reports", "Import Center", "Audit Log", "Calculation Book", "ERP Control Center",
-    "Change Password", "Company Logo / Invoice Settings", "Backup Center", "Excel Templates", "Period Lock Center", "Login History", "Pending Approval Dashboard",
 ]
 
 TABLE_KEY_TO_MODULE = {
@@ -2668,8 +2455,6 @@ TABLE_KEY_TO_MODULE = {
     "audit_logs": "Audit Log",
     "import_logs": "Import Center",
     "calculation_books": "Calculation Book",
-    "login_history": "Login History",
-    "month_locks": "Period Lock Center",
 }
 
 PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "print", "export"]
@@ -2835,6 +2620,358 @@ def erp_control_center():
     st.dataframe(df, use_container_width=True)
     st.download_button("Download Control Report Excel", to_excel_bytes(df), f"erp_control_{selected}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
+
+# ---------- CLIENT-FACING FINAL TOOLS: EMAIL / WHATSAPP / ACTIVITY / BACKUP / GST / OFFLINE ----------
+
+def _url_quote_text(value):
+    try:
+        from urllib.parse import quote
+        return quote(str(value or ""))
+    except Exception:
+        return str(value or "").replace(" ", "%20")
+
+
+def _safe_number(v):
+    try:
+        if v in [None, "", "None"]:
+            return 0.0
+        return float(v)
+    except Exception:
+        return 0.0
+
+
+def _find_col(df, candidates):
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def _record_label(row, fields):
+    parts = []
+    for f in fields:
+        if f in row and str(row.get(f, "")).strip() not in ["", "None", "nan"]:
+            parts.append(str(row.get(f)))
+    return " | ".join(parts) if parts else "Record"
+
+
+def _client_filtered_direct(table_name, limit_rows=1000):
+    q = supabase.table(table_name).select("*")
+    if not is_super_admin():
+        q = q.eq("client_code", get_client_code())
+    try:
+        return safe_df(q.order("id", desc=True).limit(limit_rows).execute().data)
+    except Exception:
+        try:
+            return safe_df(q.limit(limit_rows).execute().data)
+        except Exception:
+            return pd.DataFrame()
+
+
+def email_whatsapp_share_center():
+    show_header("Email / WhatsApp Share Center", "section-tools")
+    st.info("Use this screen to share invoice, quotation or reminder details through Email or WhatsApp. It opens your Email/WhatsApp app with prepared text.")
+
+    doc_type = st.selectbox("Document Type", ["Sales Invoice", "Purchase Invoice", "Service Voucher", "Quotation", "Outstanding Reminder"])
+    records = pd.DataFrame()
+    label_fields = []
+
+    if doc_type == "Sales Invoice":
+        records = load_table("sales", 1000)
+        label_fields = ["invoice_no", "invoice_date", "customer_name", "total_value"]
+    elif doc_type == "Purchase Invoice":
+        records = load_table("purchase", 1000)
+        label_fields = ["invoice_no", "invoice_date", "supplier_name", "total_value"]
+    elif doc_type == "Service Voucher":
+        records = load_table("service_vouchers", 1000)
+        label_fields = ["voucher_no", "voucher_date", "customer_name", "total_value"]
+    elif doc_type == "Quotation":
+        records = load_table("quotations", 1000) if "quotations" in TABLES else _client_filtered_direct("quotations", 1000)
+        label_fields = ["quotation_no", "requirement_no", "business_name", "total_amount"]
+    else:
+        records = outstanding_dataframe()
+        label_fields = ["party_name", "ledger_group", "outstanding_amount"]
+
+    if records.empty:
+        st.warning("No record found for selected document type.")
+        return
+
+    records = records.copy().reset_index(drop=True)
+    records["__label"] = records.apply(lambda r: _record_label(r, label_fields), axis=1)
+    selected_label = st.selectbox("Select Record", records["__label"].tolist())
+    row = records[records["__label"] == selected_label].iloc[0].to_dict()
+
+    # Party details from ledger master when possible
+    party = row.get("customer_name") or row.get("supplier_name") or row.get("vendor_name") or row.get("business_name") or row.get("party_name") or ""
+    ledger_df = load_table("ledgers", 5000) if "ledgers" in TABLES else pd.DataFrame()
+    party_email = ""
+    party_mobile = ""
+    if not ledger_df.empty and party:
+        m = ledger_df[ledger_df.get("ledger_name", pd.Series(dtype=str)).astype(str) == str(party)]
+        if not m.empty:
+            party_email = str(m.iloc[0].get("email", "") or "")
+            party_mobile = str(m.iloc[0].get("contact_no", "") or "")
+
+    c1, c2 = st.columns(2)
+    to_email = c1.text_input("Email To", value=party_email, placeholder="customer@example.com")
+    whatsapp_no = c2.text_input("WhatsApp Mobile No", value=party_mobile, placeholder="919876543210")
+
+    subject = f"{doc_type} - RBM ERP"
+    amount = row.get("net_value", row.get("total_value", row.get("total_amount", row.get("outstanding_amount", 0))))
+    body = f"Dear Sir/Madam,\n\nPlease find the {doc_type} details below:\n\nRecord: {selected_label}\nAmount: {amount}\n\nRegards,\n{st.session_state.get('full_name','RBM ERP')}\nRBM ERP SaaS"
+
+    subject = st.text_input("Email Subject", value=subject)
+    body = st.text_area("Message", value=body, height=180)
+
+    mailto_link = f"mailto:{to_email}?subject={_url_quote_text(subject)}&body={_url_quote_text(body)}"
+    wa_text = _url_quote_text(body)
+    clean_no = ''.join(ch for ch in str(whatsapp_no) if ch.isdigit())
+    whatsapp_link = f"https://wa.me/{clean_no}?text={wa_text}" if clean_no else f"https://wa.me/?text={wa_text}"
+
+    b1, b2 = st.columns(2)
+    b1.markdown(f"<a href='{mailto_link}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#0f766e;color:white;border:0;font-weight:700;'>📧 Open Email</button></a>", unsafe_allow_html=True)
+    b2.markdown(f"<a href='{whatsapp_link}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#16a34a;color:white;border:0;font-weight:700;'>🟢 Open WhatsApp</button></a>", unsafe_allow_html=True)
+
+    st.divider()
+    st.subheader("Selected Record")
+    st.dataframe(pd.DataFrame([row]), use_container_width=True)
+
+
+def user_activity_dashboard():
+    show_header("User Activity Dashboard", "section-tools")
+    st.info("This dashboard combines login history and audit log activity.")
+
+    login_df = load_table("login_history", 5000) if "login_history" in TABLES else _client_filtered_direct("login_history", 5000)
+    audit_df = load_table("audit_logs", 5000) if "audit_logs" in TABLES else _client_filtered_direct("audit_logs", 5000)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Login Records", len(login_df))
+    c2.metric("Audit Actions", len(audit_df))
+    if not login_df.empty and "login_status" in login_df.columns:
+        c3.metric("Successful Logins", len(login_df[login_df["login_status"].astype(str).str.lower().str.contains("success")]))
+        c4.metric("Failed Logins", len(login_df[login_df["login_status"].astype(str).str.lower().str.contains("fail|wrong|invalid", regex=True)]))
+    else:
+        c3.metric("Successful Logins", 0)
+        c4.metric("Failed Logins", 0)
+
+    tab1, tab2, tab3 = st.tabs(["Login History", "Audit Log", "User-wise Summary"])
+    with tab1:
+        st.dataframe(login_df, use_container_width=True)
+        if not login_df.empty:
+            st.download_button("Download Login History", to_excel_bytes(login_df), "login_history.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    with tab2:
+        st.dataframe(audit_df, use_container_width=True)
+        if not audit_df.empty:
+            st.download_button("Download Audit Log", to_excel_bytes(audit_df), "audit_log.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    with tab3:
+        summaries = []
+        if not login_df.empty and "username" in login_df.columns:
+            summaries.append(login_df.groupby("username").size().reset_index(name="login_count"))
+        if not audit_df.empty and "created_by" in audit_df.columns:
+            summaries.append(audit_df.groupby("created_by").size().reset_index(name="action_count").rename(columns={"created_by":"username"}))
+        if summaries:
+            summary = summaries[0]
+            for s in summaries[1:]:
+                summary = summary.merge(s, on="username", how="outer")
+            summary = summary.fillna(0)
+            st.dataframe(summary, use_container_width=True)
+        else:
+            st.info("No activity summary available yet.")
+
+
+def auto_daily_backup_center():
+    show_header("Auto Daily Backup / Manual Backup", "section-tools")
+    st.warning("Streamlit Cloud cannot run true background jobs continuously. This screen creates an on-demand full backup. For automatic daily backup, schedule this app/API externally or deploy with a cron job.")
+    all_keys = [k for k in TABLES.keys() if k not in ["settings"]]
+    default_keys = [k for k in all_keys if is_super_admin() or k != "clients"]
+    selected = st.multiselect("Select tables for backup", all_keys, default=default_keys[:25])
+    if st.button("Create Backup Excel", use_container_width=True):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for key in selected:
+                try:
+                    df = load_table(key, 10000)
+                    sheet = key[:31]
+                    df.to_excel(writer, index=False, sheet_name=sheet)
+                except Exception as e:
+                    pd.DataFrame([{"error": str(e)}]).to_excel(writer, index=False, sheet_name=key[:31])
+        st.success("Backup created. Download below.")
+        st.download_button("Download Full ERP Backup", output.getvalue(), f"RBM_ERP_Backup_{india_now().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+
+def restore_from_backup_center():
+    show_header("Data Restore From Backup", "section-tools")
+    st.warning("Use carefully. Restore inserts uploaded rows into selected table. Recommended: test on demo client first.")
+    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
+        st.error("Only Admin / Super Admin can restore data.")
+        return
+    key = st.selectbox("Restore Into Table", [k for k in TABLES.keys() if k not in ["clients"] or is_super_admin()])
+    uploaded = st.file_uploader("Upload Excel/CSV Backup Sheet", type=["xlsx", "csv"])
+    if uploaded is not None:
+        try:
+            if uploaded.name.lower().endswith(".csv"):
+                df = pd.read_csv(uploaded)
+            else:
+                df = pd.read_excel(uploaded)
+            st.dataframe(df.head(100), use_container_width=True)
+            confirm = st.checkbox("I confirm to restore/insert these rows")
+            if confirm and st.button("Restore Data", use_container_width=True):
+                rows = df.fillna("").to_dict("records")
+                cleaned = []
+                for r in rows:
+                    r = {k2: (None if str(v) in ["nan", "NaT"] else v) for k2, v in r.items() if k2 != "id"}
+                    if not is_super_admin() and "client_code" in DISPLAY_COLUMNS.get(key, []):
+                        r["client_code"] = get_client_code()
+                    cleaned.append(r)
+                if cleaned:
+                    supabase.table(TABLES[key]).insert(cleaned).execute()
+                st.success(f"Restore completed: {len(cleaned)} rows inserted.")
+        except Exception as e:
+            st.error(f"Restore failed: {e}")
+
+
+def backup_restore_center():
+    tab1, tab2 = st.tabs(["Backup", "Restore"])
+    with tab1:
+        auto_daily_backup_center()
+    with tab2:
+        restore_from_backup_center()
+
+
+def outstanding_dataframe():
+    ledgers = load_table("ledgers", 10000) if "ledgers" in TABLES else pd.DataFrame()
+    sales = load_table("sales", 10000) if "sales" in TABLES else pd.DataFrame()
+    purchase = load_table("purchase", 10000) if "purchase" in TABLES else pd.DataFrame()
+    rows = []
+    if not ledgers.empty:
+        for _, l in ledgers.iterrows():
+            name = str(l.get("ledger_name", ""))
+            group = str(l.get("ledger_group", ""))
+            opening = _safe_number(l.get("opening_balance", 0))
+            amount = opening
+            if not sales.empty and group == "Sundry Debtors" and "customer_name" in sales.columns:
+                amount += sales[sales["customer_name"].astype(str) == name].apply(lambda r: _safe_number(r.get("net_value", r.get("total_value", 0))), axis=1).sum()
+            if not purchase.empty and group == "Sundry Creditors" and "supplier_name" in purchase.columns:
+                amount += purchase[purchase["supplier_name"].astype(str) == name].apply(lambda r: _safe_number(r.get("net_value", r.get("total_value", 0))), axis=1).sum()
+            if group in ["Sundry Debtors", "Sundry Creditors"]:
+                rows.append({
+                    "ledger_group": group,
+                    "party_name": name,
+                    "email": l.get("email", ""),
+                    "mobile": l.get("contact_no", ""),
+                    "opening_balance": opening,
+                    "outstanding_amount": round(amount, 2),
+                })
+    return pd.DataFrame(rows)
+
+
+def outstanding_reminder_center():
+    show_header("Outstanding Reminder Center", "section-reports")
+    df = outstanding_dataframe()
+    if df.empty:
+        st.info("No Sundry Debtors/Creditors found in Ledger Master.")
+        return
+    group = st.selectbox("Select Group", ["All", "Sundry Debtors", "Sundry Creditors"])
+    if group != "All":
+        df = df[df["ledger_group"] == group]
+    st.dataframe(df, use_container_width=True)
+    st.download_button("Download Outstanding Report", to_excel_bytes(df), "outstanding_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    st.divider()
+    st.subheader("Prepare Reminder")
+    if df.empty:
+        return
+    party = st.selectbox("Select Party", df["party_name"].astype(str).tolist())
+    row = df[df["party_name"].astype(str) == str(party)].iloc[0]
+    msg = st.text_area("Reminder Message", value=f"Dear Sir/Madam,\n\nAs per our records, your outstanding amount is {row['outstanding_amount']}. Kindly arrange payment / confirmation.\n\nRegards,\nRBM ERP")
+    mailto = f"mailto:{row.get('email','')}?subject={_url_quote_text('Outstanding Reminder')}&body={_url_quote_text(msg)}"
+    mobile = ''.join(ch for ch in str(row.get('mobile','')) if ch.isdigit())
+    whatsapp = f"https://wa.me/{mobile}?text={_url_quote_text(msg)}" if mobile else f"https://wa.me/?text={_url_quote_text(msg)}"
+    c1, c2 = st.columns(2)
+    c1.markdown(f"<a href='{mailto}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#0f766e;color:white;border:0;font-weight:700;'>📧 Email Reminder</button></a>", unsafe_allow_html=True)
+    c2.markdown(f"<a href='{whatsapp}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#16a34a;color:white;border:0;font-weight:700;'>🟢 WhatsApp Reminder</button></a>", unsafe_allow_html=True)
+
+
+def gst_return_summary():
+    show_header("GST Return Summary", "section-reports")
+    sales = load_table("sales", 10000) if "sales" in TABLES else pd.DataFrame()
+    purchase = load_table("purchase", 10000) if "purchase" in TABLES else pd.DataFrame()
+    tab1, tab2, tab3 = st.tabs(["GSTR-1 Sales Summary", "GSTR-2B Purchase Style", "GST ITC / Output Summary"])
+    with tab1:
+        if sales.empty:
+            st.info("No sales data found.")
+        else:
+            gst_cols = [c for c in ["cgst", "sgst", "igst", "taxable_value", "total_value"] if c in sales.columns]
+            if "customer_name" in sales.columns:
+                summary = sales.groupby("customer_name")[gst_cols].sum(numeric_only=True).reset_index()
+            else:
+                summary = sales[gst_cols].sum(numeric_only=True).to_frame().T
+            st.dataframe(summary, use_container_width=True)
+            st.download_button("Download GSTR-1 Summary", to_excel_bytes(summary), "gstr1_sales_summary.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    with tab2:
+        if purchase.empty:
+            st.info("No purchase data found.")
+        else:
+            gst_cols = [c for c in ["cgst", "sgst", "igst", "taxable_value", "total_value"] if c in purchase.columns]
+            if "supplier_name" in purchase.columns:
+                summary = purchase.groupby("supplier_name")[gst_cols].sum(numeric_only=True).reset_index()
+            else:
+                summary = purchase[gst_cols].sum(numeric_only=True).to_frame().T
+            summary["matching_status"] = "Books - Pending 2B Match"
+            st.dataframe(summary, use_container_width=True)
+            st.download_button("Download GSTR-2B Style Summary", to_excel_bytes(summary), "gstr2b_purchase_style_summary.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    with tab3:
+        output_gst = 0
+        input_gst = 0
+        if not sales.empty:
+            output_gst = sum(sales[c].apply(_safe_number).sum() for c in ["cgst", "sgst", "igst"] if c in sales.columns)
+        if not purchase.empty:
+            input_gst = sum(purchase[c].apply(_safe_number).sum() for c in ["cgst", "sgst", "igst"] if c in purchase.columns)
+        net = output_gst - input_gst
+        gst_df = pd.DataFrame([{"Output GST": output_gst, "Input GST / ITC": input_gst, "Net GST Payable": net}])
+        st.dataframe(gst_df, use_container_width=True)
+
+
+def offline_desktop_sync_planning():
+    show_header("Offline Desktop + Sync Planning", "section-tools")
+    st.info("This is the implementation blueprint for your future offline desktop ERP.")
+    plan = """
+RBM ERP Offline + Online Sync Plan
+
+1. Offline Desktop Version
+- Frontend: Python CustomTkinter or Streamlit local
+- Database: SQLite
+- Packaging: PyInstaller EXE
+- Backup: Excel/SQLite backup to local folder or OneDrive
+
+2. Online SaaS Version
+- Frontend: Streamlit Cloud
+- Database: Supabase PostgreSQL
+
+3. Sync Engine Design
+Every table should include:
+- uuid_id
+- client_code
+- updated_at
+- sync_status: Pending / Synced / Conflict
+- online_id
+- local_id
+
+4. Sync Rules
+- Offline creates/updates data in SQLite with sync_status = Pending
+- Sync button uploads pending records to Supabase
+- Online changes can be downloaded to SQLite
+- Conflict rule: newest updated_at wins, or user chooses manually
+
+5. Recommended Next Development
+- Create SQLite schema from Supabase SQL
+- Build Desktop login
+- Build Sync Upload button
+- Build Sync Download button
+- Add conflict report
+"""
+    st.code(plan)
+    st.download_button("Download Offline Sync Plan", plan.encode("utf-8"), "RBM_ERP_Offline_Sync_Plan.txt", "text/plain", use_container_width=True)
+
 # ---------- MAIN MENU ----------
 def get_menu_modules(group):
     modules = []
@@ -2885,18 +3022,17 @@ def get_menu_modules(group):
             modules = ["Quotation"]
     elif group == "Reports":
         if is_super_admin():
-            modules = ["Registers / Reports", "Import Center", "Audit Log"]
+            modules = ["Registers / Reports", "GST Return Summary", "Outstanding Reminder", "Import Center", "Audit Log"]
         else:
             # Reports group appears only when enabled groups exist.
-            modules = ["Registers / Reports"]
+            modules = ["Registers / Reports", "GST Return Summary", "Outstanding Reminder"]
             if st.session_state.get("allow_excel_upload", False) or st.session_state.get("allow_google_sheet_import", False):
                 modules.append("Import Center")
             if st.session_state.get("role") == "Admin":
                 modules.append("Audit Log")
     elif group == "Tools":
-        modules = ["Change Password"]
         if is_super_admin() or st.session_state.get("role") == "Admin":
-            modules += ["Calculation Book", "ERP Control Center", "Company Logo / Invoice Settings", "Backup Center", "Excel Templates", "Period Lock Center", "Login History", "Pending Approval Dashboard"]
+            modules = ["Calculation Book", "ERP Control Center", "Email / WhatsApp Share", "User Activity Dashboard", "Backup / Restore Center", "Offline Desktop Sync Plan"]
     return filter_modules_by_permission(modules) if modules else ["No module available"]
 
 def build_group_list():
@@ -2980,8 +3116,9 @@ def build_group_list():
     ]):
         groups.append("Reports")
 
-    # Tools contains Change Password for every user and admin utilities for Admin/Super Admin.
-    groups.append("Tools")
+    # Tools are only for client Admin when normal ERP modules are enabled.
+    if st.session_state.get("role") == "Admin" and has_any_normal_module:
+        groups.append("Tools")
 
     return groups or ["Quotation"]
 
@@ -3077,13 +3214,12 @@ def get_module_mapping():
         "ERP Control Center": erp_control_center,
         "Audit Log": audit_log_report,
         "Quotation": quotation_module,
-        "Change Password": change_password,
-        "Company Logo / Invoice Settings": company_logo_settings,
-        "Backup Center": backup_center,
-        "Excel Templates": excel_template_center,
-        "Period Lock Center": period_lock_center,
-        "Login History": login_history_report,
-        "Pending Approval Dashboard": pending_approval_dashboard,
+        "Email / WhatsApp Share": email_whatsapp_share_center,
+        "User Activity Dashboard": user_activity_dashboard,
+        "Backup / Restore Center": backup_restore_center,
+        "Outstanding Reminder": outstanding_reminder_center,
+        "GST Return Summary": gst_return_summary,
+        "Offline Desktop Sync Plan": offline_desktop_sync_planning,
     }
 
 
