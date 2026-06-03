@@ -637,6 +637,23 @@ def quick_stock_item_creator(default_group="Finished Goods", key_prefix="quick_i
                 })
                 st.success("Stock item created. Please refresh/reopen this module to see it in dropdown.")
 
+
+
+def safe_get_ledger_details(ledger_name):
+    """Never crash invoice preview if ledger detail lookup has any issue."""
+    try:
+        return get_ledger_details(ledger_name)
+    except Exception:
+        return {
+            "address": "",
+            "contact_no": "",
+            "mobile": "",
+            "email": "",
+            "gst_no": "",
+            "pan_no": "",
+            "tan_no": "",
+        }
+
 def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
     try: taxable = float(taxable); gst_rate = float(gst_rate)
     except Exception: taxable = 0; gst_rate = 0
@@ -649,7 +666,7 @@ def gst_calc(taxable, gst_rate=18, gst_type="CGST+SGST"):
 def invoice_html(title, invoice_no, party, rows, total, summary=None, party_info=None):
     """Professional invoice preview with item-wise CGST/SGST/IGST and voucher-level adjustments."""
     summary = summary or {}
-    party_info = party_info or globals().get("get_ledger_details", lambda x: {})(party)
+    party_info = party_info or safe_get_ledger_details(party)
 
     def safe_text(value):
         value = "" if value is None else str(value)
@@ -898,7 +915,7 @@ def get_saved_invoice_preview_html(key, title, party_col):
         "gross_total": gross_value,
     }
 
-    html = invoice_html(title, selected_invoice_no, party, rows, net_value, summary, globals().get("get_ledger_details", lambda x: {})(party))
+    html = invoice_html(title, selected_invoice_no, party, rows, net_value, summary, safe_get_ledger_details(party))
     return html, f"saved_{title.replace(' ', '_')}_{selected_invoice_no}.html"
 
 # ---------- LOGIN / SIDEBAR ----------
@@ -1463,7 +1480,7 @@ def voucher_invoice(key, title, party_col, party_list, cls):
             rows if 'rows' in locals() else [],
             grand if 'grand' in locals() else 0,
             invoice_summary if 'invoice_summary' in locals() else {},
-            globals().get("get_ledger_details", lambda x: {})(current_party)
+            safe_get_ledger_details(current_party)
         )
         show_invoice_preview_and_download(html, f"{title.replace(' ', '_')}.html")
 
