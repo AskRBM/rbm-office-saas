@@ -51,6 +51,7 @@ TABLES = {
     "amc_subscriptions": "amc_subscriptions",
     "support_tickets": "support_tickets",
     "license_manager": "license_manager",
+    "role_permissions": "role_permissions",
 }
 
 DISPLAY_COLUMNS = {
@@ -102,6 +103,7 @@ DISPLAY_COLUMNS = {
     "amc_subscriptions": ["id","client_code","plan_name","client_name","start_date","expiry_date","no_of_users","storage_limit_mb","amount","renewal_status","remarks","created_by","created_at"],
     "support_tickets": ["id","client_code","ticket_no","ticket_date","raised_by","subject","priority","status","assigned_to","remarks","created_by","created_at"],
     "license_manager": ["id","client_code","license_key","client_name","machine_id","start_date","expiry_date","status","remarks","created_by","created_at"],
+    "role_permissions": ["id","client_code","role_name","module_name","can_view","can_add","can_edit","can_delete","can_reverse","can_approve","can_print","can_export","created_by","created_at"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -138,8 +140,10 @@ for _k in REVERSIBLE_TABLE_KEYS:
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:1rem;padding-bottom:1.5rem;}
-.rbm-header {background:linear-gradient(135deg,#082f49,#075985,#0284c7);padding:18px 24px;border-radius:18px;margin-bottom:20px;box-shadow:0 10px 24px rgba(2,132,199,.22);display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+[data-testid="stAppViewContainer"] {padding-top:0rem!important;}
+[data-testid="stHeader"] {height:0rem!important;}
+.block-container {padding-top:0.15rem!important;padding-bottom:1rem!important;padding-left:0.75rem!important;padding-right:0.75rem!important;max-width:100%!important;}
+.rbm-header {background:linear-gradient(135deg,#082f49,#075985,#0284c7);padding:18px 24px;border-radius:18px;margin-top:0!important;margin-bottom:14px;box-shadow:0 10px 24px rgba(2,132,199,.22);display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .rbm-title {color:white;font-size:34px;font-weight:900;margin:0;line-height:1;}
 .rbm-divider {color:#bae6fd;font-size:30px;font-weight:300;}
 .rbm-subtitle {color:white;font-size:15px;font-weight:600;}
@@ -512,10 +516,11 @@ def show_table_with_edit_delete(key, df, title):
     search = st.text_input(f"Search {title}", key=f"search_{key}")
     filtered = filter_dataframe(df, search)
     st.dataframe(filtered, use_container_width=True)
-    c1, c2 = st.columns(2)
-    with c1: st.download_button("Download Excel", to_excel_bytes(filtered), f"{key}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"xlsx_{key}")
-    with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{key}.csv", "text/csv", use_container_width=True, key=f"csv_{key}")
-    if st.session_state.get("role") in ["Admin","Super Admin"] and not df.empty:
+    if has_key_permission(key, "export") or is_super_admin():
+        c1, c2 = st.columns(2)
+        with c1: st.download_button("Download Excel", to_excel_bytes(filtered), f"{key}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"xlsx_{key}")
+        with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{key}.csv", "text/csv", use_container_width=True, key=f"csv_{key}")
+    if (is_super_admin() or (st.session_state.get("role") == "Admin" and (has_key_permission(key,"edit") or has_key_permission(key,"delete") or has_key_permission(key,"reverse")))) and not df.empty:
         st.divider(); st.subheader("Edit / Delete")
         selected_id = st.selectbox("Select ID", df["id"].tolist(), key=f"select_id_{key}")
         selected_row = df[df["id"] == selected_id].iloc[0]
@@ -524,24 +529,33 @@ def show_table_with_edit_delete(key, df, title):
             for col in df.columns:
                 if col in ["id","financial_year"]: st.text_input(col, str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
                 else: edited[col] = st.text_input(col, str(selected_row[col]), key=f"edit_{key}_{col}")
-            if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
-                update_row(key, selected_id, edited); st.session_state[f"last_action_msg_{key}"] = "Record updated successfully. Details closed."; st.rerun()
+            if has_key_permission(key, "edit") or is_super_admin():
+                if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
+                    update_row(key, selected_id, edited); st.session_state[f"last_action_msg_{key}"] = "Record updated successfully. Details closed."; st.rerun()
+            else:
+                st.info("You do not have edit permission for this module.")
         if key in REVERSIBLE_TABLE_KEYS:
             with st.expander("Reverse / Cancel Posted Entry"):
                 st.warning("This will create a separate reversal entry and mark the original as Reversed. It will not delete original data.")
                 reversal_reason = st.text_input("Reversal Reason", key=f"reverse_reason_{key}")
-                if st.button("Reverse Selected Entry", use_container_width=True, key=f"reverse_{key}"):
-                    ok, msg = reverse_record(key, selected_id, reversal_reason)
-                    if ok:
-                        st.session_state[f"last_action_msg_{key}"] = msg
-                        st.rerun()
-                    else:
-                        st.error(msg)
+                if has_key_permission(key, "reverse") or is_super_admin():
+                    if st.button("Reverse Selected Entry", use_container_width=True, key=f"reverse_{key}"):
+                        ok, msg = reverse_record(key, selected_id, reversal_reason)
+                        if ok:
+                            st.session_state[f"last_action_msg_{key}"] = msg
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                else:
+                    st.info("You do not have reverse permission for this module.")
 
         with st.expander("Delete Selected Record"):
             st.warning("This will permanently delete selected record. Prefer Reverse for posted/saved business entries.")
-            if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
-                delete_row(key, selected_id); st.session_state[f"last_action_msg_{key}"] = "Record deleted successfully. Details closed."; st.rerun()
+            if has_key_permission(key, "delete") or is_super_admin():
+                if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
+                    delete_row(key, selected_id); st.session_state[f"last_action_msg_{key}"] = "Record deleted successfully. Details closed."; st.rerun()
+            else:
+                st.info("You do not have delete permission for this module.")
 
 # ---------- MASTER DATA HELPERS ----------
 def get_ledger_names(group_name=None, include_all=False):
@@ -1063,7 +1077,7 @@ def client_master():
         client_name = c2.text_input("Name", placeholder="Example: CST")
         status = c1.selectbox("Status", ["Active","Inactive"])
         st.subheader("Module Access")
-        labels = [("allow_master_group","Master"),("allow_attendance","Attendance"),("allow_inout","IN/OUT"),("allow_visitor","Visitor"),("allow_task","Task"),("allow_appointment","Appointment"),("allow_stock_raw","Raw Stock"),("allow_stock_fg","FG Stock"),("allow_stock_wip","WIP Stock"),("allow_sales","Sales"),("allow_purchase","Purchase"),("allow_expense","Expense"),("allow_service_voucher","Service Voucher"),("allow_fixed_assets","Assets"),("allow_accounting","Accounting"),("allow_excel_upload","Excel Upload"),("allow_google_sheet_import","Google Sheet"),("allow_quotation","Quotation")]
+        labels = [("allow_master_group","Master"),("allow_attendance","Attendance"),("allow_inout","IN/OUT"),("allow_visitor","Visitor"),("allow_task","Task"),("allow_appointment","Appointment"),("allow_stock_raw","Raw Stock"),("allow_stock_fg","FG Stock"),("allow_stock_wip","WIP Stock"),("allow_sales","Sales"),("allow_purchase","Purchase"),("allow_expense","Expense"),("allow_service_voucher","Service Voucher"),("allow_fixed_assets","Assets"),("allow_accounting","Accounting"),("allow_excel_upload","Excel Upload"),("allow_google_sheet_import","Google Sheet"),("allow_quotation","Quotation"),("allow_manufacturing","Manufacturing / BOM"),("allow_project_accounting","Project Accounting"),("allow_subscription","AMC / Subscription"),("allow_support","Support Desk"),("allow_license_manager","License Manager")]
         vals = {}
         cols = st.columns(4)
         for i,(k,l) in enumerate(labels): vals[k] = cols[i%4].checkbox(l, value=True)
@@ -2875,6 +2889,147 @@ def support_ticket_module():
 def license_manager_module():
     simple_module_form("license_manager", "License Manager", [("license_key", "License Key", "text"), ("client_name", "Client Name", "text"), ("machine_id", "Machine ID", "text"), ("start_date", "Start Date", "date"), ("expiry_date", "Expiry Date", "date"), ("status", "Status", ["Active", "Expired", "Blocked", "Trial"]), ("remarks", "Remarks", "text")], "section-admin")
 
+
+# ---------- ROLE-WISE PERMISSION CONTROL / CLIENT AUTHORIZATION ----------
+ERP_MODULES = [
+    "Dashboard",
+    "Client Master", "User Management", "Role Permission Control", "Employee Master",
+    "Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings",
+    "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master",
+    "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments",
+    "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher",
+    "Bill of Material", "Production Order", "Production Entry", "Consumption Entry", "Finished Goods Entry", "Production Costing", "Material Requirement Planning",
+    "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries",
+    "Project Accounting", "Quotation", "Support Desk",
+    "Registers / Reports", "Import Center", "Audit Log", "Calculation Book",
+]
+
+SUPER_ADMIN_ONLY_MODULES = {
+    "Client Master", "License Manager", "AMC / Subscription", "Workflow Engine", "Notification Center",
+    "Dashboard Analytics", "Budget vs Actual", "Bank Reconciliation", "Document Management", "Purchase Cycle", "Sales Cycle",
+    "Advanced Asset Management", "Digital Audit", "Ask RBM AI", "Multi Company / Branch", "Offline Sync Engine",
+    "ERP Control Center", "PWA Mobile App"
+}
+
+TABLE_KEY_TO_MODULE = {
+    "clients": "Client Master", "users": "User Management", "role_permissions": "Role Permission Control",
+    "employees": "Employee Master", "company_profiles": "Company Profile", "financial_years": "Financial Year Master",
+    "cost_centers": "Cost Center Master", "document_series": "Document Series", "gst_settings": "GST Settings",
+    "ledger_groups": "Ledger Group Master", "ledgers": "Ledger Master", "stock_groups": "Stock Group Master", "stock_ledgers": "Stock Ledger Master",
+    "attendance": "Attendance Management", "attendance_visits": "Attendance Management", "inout": "IN / OUT Register", "visitors": "Visitor Register",
+    "tasks": "Task Delegation", "appointments": "Appointments", "stock_raw": "Raw Material Stock", "stock_fg": "Finished Goods Stock",
+    "stock_wip": "WIP Stock", "stock_vouchers": "Stock Voucher", "bom_headers": "Bill of Material", "bom_lines": "Bill of Material",
+    "production_orders": "Production Order", "production_entries": "Production Entry", "consumption_entries": "Consumption Entry", "fg_entries": "Finished Goods Entry",
+    "production_costing": "Production Costing", "mrp": "Material Requirement Planning", "sales": "Sales GST Invoice", "purchase": "Purchase GST Invoice",
+    "expenses": "Expense GST", "service_vouchers": "Service Voucher", "fixed_assets": "Fixed Assets", "accounting_entries": "Accounting Entries",
+    "accounting_entry_lines": "Accounting Entries", "project_accounting": "Project Accounting", "quotation_requirements": "Quotation", "quotation_business_users": "Quotation",
+    "quotation_access": "Quotation", "quotations": "Quotation", "support_tickets": "Support Desk", "audit_logs": "Audit Log", "import_logs": "Import Center",
+    "calculation_books": "Calculation Book"
+}
+
+PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "print", "export"]
+
+def default_permission(module_name, action):
+    role = st.session_state.get("role", "")
+    if role == "Super Admin":
+        return True
+    if module_name in SUPER_ADMIN_ONLY_MODULES:
+        return False
+    if role == "Admin":
+        return True
+    if role == "Quotation User":
+        return module_name == "Quotation" and action in ["view", "add", "print", "export"]
+    if role == "User":
+        return action in ["view", "print", "export"]
+    return action == "view"
+
+def has_permission(module_name, action="view"):
+    try:
+        if is_super_admin():
+            return True
+        if module_name in SUPER_ADMIN_ONLY_MODULES:
+            return False
+        action = str(action).lower().strip()
+        if action not in PERMISSION_ACTIONS:
+            return False
+        role_name = str(st.session_state.get("role", "User"))
+        client_code = get_client_code()
+        data = supabase.table("role_permissions").select("*").eq("client_code", client_code).eq("role_name", role_name).eq("module_name", module_name).limit(1).execute().data
+        dfp = safe_df(data)
+        if dfp.empty:
+            return default_permission(module_name, action)
+        col = f"can_{action}"
+        return bool(dfp.iloc[0].get(col, default_permission(module_name, action))) if col in dfp.columns else default_permission(module_name, action)
+    except Exception:
+        return default_permission(module_name, action)
+
+def has_key_permission(key, action="view"):
+    return has_permission(TABLE_KEY_TO_MODULE.get(key, key), action)
+
+def filter_modules_by_permission(modules):
+    if is_super_admin():
+        return modules or ["No module available"]
+    allowed = []
+    for m in modules:
+        if m == "No module available":
+            continue
+        if m in SUPER_ADMIN_ONLY_MODULES:
+            continue
+        if has_permission(m, "view"):
+            allowed.append(m)
+    return allowed or ["No module available"]
+
+def role_permission_control():
+    show_header("Role-wise Permission Control", "section-admin")
+    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
+        st.warning("Only Admin can access Role Permission Control.")
+        return
+    if is_super_admin():
+        clients_df = load_table("clients", 1000)
+        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
+        if "RBM" not in client_codes:
+            client_codes = ["RBM"] + client_codes
+        selected_client = st.selectbox("Select Client", client_codes, key="perm_client")
+    else:
+        selected_client = get_client_code()
+        st.info(f"Permission setting for your own business only: {selected_client}")
+    role_name = st.selectbox("Select Role", ["Admin", "User", "Quotation User", "Manager", "Approver", "Viewer"], key="perm_role")
+    existing = safe_df(supabase.table("role_permissions").select("*").eq("client_code", selected_client).eq("role_name", role_name).execute().data)
+    perm_rows = []
+    with st.form("role_permission_form"):
+        st.markdown("### Module Permissions")
+        header = st.columns([2.5,1,1,1,1,1,1,1,1])
+        header[0].markdown("**Module**")
+        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+            header[i].markdown(f"**{act.title()}**")
+        for module in ERP_MODULES:
+            # Do not let client admins assign RBM internal/super-admin-only modules.
+            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
+                continue
+            current = existing[existing["module_name"].astype(str) == module] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
+            cols = st.columns([2.5,1,1,1,1,1,1,1,1])
+            cols[0].write(module)
+            row = {"module_name": module}
+            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+                colname = f"can_{act}"
+                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if not current.empty and colname in current.columns else default_permission(module, act)
+                row[colname] = cols[i].checkbox("", value=default_val, key=f"perm_{selected_client}_{role_name}_{module}_{act}")
+            perm_rows.append(row)
+        if st.form_submit_button("Save Role Permissions", use_container_width=True):
+            supabase.table("role_permissions").delete().eq("client_code", selected_client).eq("role_name", role_name).execute()
+            rows = []
+            for r in perm_rows:
+                rec = {"client_code": selected_client, "role_name": role_name, "created_by": current_user()}
+                rec.update(r)
+                rows.append(rec)
+            if rows:
+                supabase.table("role_permissions").insert(rows).execute()
+            write_audit_log("Role Permission Control", "UPDATE", "", f"Saved role permissions for {selected_client} / {role_name}")
+            st.success("Role permissions saved successfully.")
+            st.rerun()
+    st.divider()
+    show_table_with_edit_delete("role_permissions", load_table("role_permissions", 2000), "Saved Role Permissions")
+
 # ---------- MAIN MENU ----------
 def get_menu_modules(group):
     modules = []
@@ -2886,7 +3041,7 @@ def get_menu_modules(group):
         if is_super_admin():
             modules += ["Client Master"]
         if st.session_state.get("role") in ["Admin", "Super Admin"]:
-            modules += ["User Management", "Employee Master"]
+            modules += ["User Management", "Role Permission Control", "Employee Master"]
         if st.session_state.get("allow_appointment", False):
             modules += ["Appointments"]
     elif group == "HR":
@@ -2947,12 +3102,14 @@ def get_menu_modules(group):
             if st.session_state.get("role") == "Admin":
                 modules.append("Audit Log")
     elif group == "Tools":
-        if is_super_admin() or st.session_state.get("role") == "Admin":
+        if is_super_admin():
             modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Ask RBM AI", "Offline Sync Engine"]
+        elif st.session_state.get("role") == "Admin":
+            modules = ["Calculation Book"]
     elif group == "Enterprise":
-        if is_super_admin() or st.session_state.get("role") == "Admin":
+        if is_super_admin():
             modules = ["Workflow Engine", "Budget vs Actual", "Bank Reconciliation", "Document Management", "Purchase Cycle", "Sales Cycle", "Advanced Asset Management", "Digital Audit", "Multi Company / Branch"]
-    return modules or ["No module available"]
+    return filter_modules_by_permission(modules)
 
 def build_group_list():
     # Super Admin can see every group always.
@@ -3044,9 +3201,8 @@ def build_group_list():
     if any([st.session_state.get("allow_support", False), st.session_state.get("allow_subscription", False), st.session_state.get("allow_license_manager", False)]):
         groups.append("Support")
 
-    # Enterprise and Tools are only for client Admin when normal ERP modules are enabled.
+    # Enterprise tools are RBM internal / Super Admin only.
     if st.session_state.get("role") == "Admin" and has_any_normal_module:
-        groups.append("Enterprise")
         groups.append("Tools")
 
     return groups or ["Quotation"]
@@ -3111,6 +3267,7 @@ def get_module_mapping():
         "Dashboard": dashboard,
         "Client Master": client_master,
         "User Management": user_management,
+        "Role Permission Control": role_permission_control,
         "Employee Master": employee_master,
         "Company Profile": company_profile,
         "Financial Year Master": financial_year_master,
