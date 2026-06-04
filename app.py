@@ -39,7 +39,6 @@ TABLES = {
     "quotation_access": "quotation_access",
     "quotations": "quotations",
     "audit_logs": "audit_logs",
-    "role_permissions": "role_permissions",
 }
 
 DISPLAY_COLUMNS = {
@@ -79,7 +78,6 @@ DISPLAY_COLUMNS = {
     "quotation_access": ["id","client_code","requirement_id","requirement_no","business_username","business_name","status","created_by","created_at"],
     "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","remarks","created_by","created_at"],
     "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
-    "role_permissions": ["id","client_code","role_name","module_name","can_view","can_add","can_edit","can_delete","can_reverse","can_approve","can_print","can_export","created_by","created_at"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -112,9 +110,7 @@ for _k in REVERSIBLE_TABLE_KEYS:
 st.markdown("""
 <style>
 #MainMenu, footer, header {visibility:hidden;}
-.block-container {padding-top:0.15rem!important;padding-bottom:1rem!important;padding-left:0.75rem!important;padding-right:0.75rem!important;max-width:100%!important;}
-[data-testid="stAppViewContainer"] {padding-top:0!important;}
-[data-testid="stHeader"] {height:0!important;}
+.block-container {padding-top:1rem;padding-bottom:1.5rem;}
 .rbm-header {background:linear-gradient(135deg,#082f49,#075985,#0284c7);padding:18px 24px;border-radius:18px;margin-bottom:20px;box-shadow:0 10px 24px rgba(2,132,199,.22);display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .rbm-title {color:white;font-size:34px;font-weight:900;margin:0;line-height:1;}
 .rbm-divider {color:#bae6fd;font-size:30px;font-weight:300;}
@@ -255,9 +251,6 @@ def write_audit_log(module_name, action_type, record_id="", details=""):
 
 
 def insert_row(key, row):
-    if "logged_in" in st.session_state and key not in ["audit_logs"] and not has_key_permission(key, "add"):
-        st.error("You do not have Add permission for this module.")
-        st.stop()
     if key != "clients" and "client_code" not in row:
         row["client_code"] = get_client_code()
     response = supabase.table(TABLES[key]).insert(row).execute()
@@ -331,9 +324,6 @@ def clean_for_update(col, value):
     return txt
 
 def update_row(key, row_id, row):
-    if "logged_in" in st.session_state and key not in ["audit_logs"] and not has_key_permission(key, "edit"):
-        st.error("You do not have Edit permission for this module.")
-        st.stop()
     clean = {}
 
     for col, val in row.items():
@@ -349,9 +339,6 @@ def update_row(key, row_id, row):
 
 
 def delete_row(key, row_id):
-    if "logged_in" in st.session_state and key not in ["audit_logs"] and not has_key_permission(key, "delete"):
-        st.error("You do not have Delete permission for this module.")
-        st.stop()
     try:
         old_df = safe_df(supabase.table(TABLES[key]).select("*").eq("id", int(row_id)).limit(1).execute().data)
         old_details = ""
@@ -366,9 +353,6 @@ def delete_row(key, row_id):
 
 
 def reverse_record(key, row_id, reversal_reason=""):
-    if "logged_in" in st.session_state and not has_key_permission(key, "reverse"):
-        return False, "You do not have Reverse permission for this module."
-
     """Create a reverse/cancel entry and mark original as Reversed.
     Original entry is kept for audit trail. Reversal row has negative numeric values where applicable.
     """
@@ -497,58 +481,24 @@ def show_table_with_edit_delete(key, df, title):
     msg_key = f"last_action_msg_{key}"
     if msg_key in st.session_state:
         st.success(st.session_state.pop(msg_key))
-
     search = st.text_input(f"Search {title}", key=f"search_{key}")
     filtered = filter_dataframe(df, search)
     st.dataframe(filtered, use_container_width=True)
-
-    if has_key_permission(key, "export"):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.download_button(
-                "Download Excel",
-                to_excel_bytes(filtered),
-                f"{key}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key=f"xlsx_{key}",
-            )
-        with c2:
-            st.download_button(
-                "Download CSV",
-                filtered.to_csv(index=False).encode("utf-8"),
-                f"{key}.csv",
-                "text/csv",
-                use_container_width=True,
-                key=f"csv_{key}",
-            )
-    else:
-        st.caption("Export is not allowed for your role.")
-
-    can_edit_action = has_key_permission(key, "edit")
-    can_delete_action = has_key_permission(key, "delete")
-    can_reverse_action = has_key_permission(key, "reverse")
-
-    if (can_edit_action or can_delete_action or can_reverse_action) and not df.empty:
-        st.divider()
-        st.subheader("Edit / Reverse / Delete")
+    c1, c2 = st.columns(2)
+    with c1: st.download_button("Download Excel", to_excel_bytes(filtered), f"{key}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"xlsx_{key}")
+    with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{key}.csv", "text/csv", use_container_width=True, key=f"csv_{key}")
+    if st.session_state.get("role") in ["Admin","Super Admin"] and not df.empty:
+        st.divider(); st.subheader("Edit / Delete")
         selected_id = st.selectbox("Select ID", df["id"].tolist(), key=f"select_id_{key}")
         selected_row = df[df["id"] == selected_id].iloc[0]
-
-        if can_edit_action:
-            with st.expander("Edit Selected Record"):
-                edited = {}
-                for col in df.columns:
-                    if col in ["id", "financial_year"]:
-                        st.text_input(col, str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
-                    else:
-                        edited[col] = st.text_input(col, str(selected_row[col]), key=f"edit_{key}_{col}")
-                if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
-                    update_row(key, selected_id, edited)
-                    st.session_state[f"last_action_msg_{key}"] = "Record updated successfully. Details closed."
-                    st.rerun()
-
-        if can_reverse_action and key in REVERSIBLE_TABLE_KEYS:
+        with st.expander("Edit Selected Record"):
+            edited = {}
+            for col in df.columns:
+                if col in ["id","financial_year"]: st.text_input(col, str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
+                else: edited[col] = st.text_input(col, str(selected_row[col]), key=f"edit_{key}_{col}")
+            if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
+                update_row(key, selected_id, edited); st.session_state[f"last_action_msg_{key}"] = "Record updated successfully. Details closed."; st.rerun()
+        if key in REVERSIBLE_TABLE_KEYS:
             with st.expander("Reverse / Cancel Posted Entry"):
                 st.warning("This will create a separate reversal entry and mark the original as Reversed. It will not delete original data.")
                 reversal_reason = st.text_input("Reversal Reason", key=f"reverse_reason_{key}")
@@ -560,13 +510,10 @@ def show_table_with_edit_delete(key, df, title):
                     else:
                         st.error(msg)
 
-        if can_delete_action:
-            with st.expander("Delete Selected Record"):
-                st.warning("This will permanently delete selected record. Prefer Reverse for posted/saved business entries.")
-                if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
-                    delete_row(key, selected_id)
-                    st.session_state[f"last_action_msg_{key}"] = "Record deleted successfully. Details closed."
-                    st.rerun()
+        with st.expander("Delete Selected Record"):
+            st.warning("This will permanently delete selected record. Prefer Reverse for posted/saved business entries.")
+            if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
+                delete_row(key, selected_id); st.session_state[f"last_action_msg_{key}"] = "Record deleted successfully. Details closed."; st.rerun()
 
 # ---------- MASTER DATA HELPERS ----------
 def get_ledger_names(group_name=None, include_all=False):
@@ -2405,200 +2352,6 @@ def reports():
 
 def placeholder_denied(): st.warning("This module is not enabled for this client.")
 
-# ---------- ROLE-WISE PERMISSION CONTROL ----------
-ERP_MODULES = [
-    "Dashboard",
-    "Client Master", "User Management", "Role Permission Control", "Employee Master",
-    "Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings",
-    "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master",
-    "Attendance Management", "IN / OUT Register", "Visitor Register", "Task Delegation", "Appointments",
-    "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher",
-    "Sales GST Invoice", "Purchase GST Invoice", "Expense GST", "Service Voucher", "Fixed Assets", "Accounting Entries",
-    "Quotation", "Registers / Reports", "Import Center", "Audit Log", "Calculation Book", "ERP Control Center",
-]
-
-TABLE_KEY_TO_MODULE = {
-    "clients": "Client Master",
-    "users": "User Management",
-    "role_permissions": "Role Permission Control",
-    "employees": "Employee Master",
-    "company_profiles": "Company Profile",
-    "financial_years": "Financial Year Master",
-    "cost_centers": "Cost Center Master",
-    "document_series": "Document Series",
-    "gst_settings": "GST Settings",
-    "ledger_groups": "Ledger Group Master",
-    "ledgers": "Ledger Master",
-    "stock_groups": "Stock Group Master",
-    "stock_ledgers": "Stock Ledger Master",
-    "attendance": "Attendance Management",
-    "attendance_visits": "Attendance Management",
-    "inout": "IN / OUT Register",
-    "visitors": "Visitor Register",
-    "tasks": "Task Delegation",
-    "appointments": "Appointments",
-    "stock_raw": "Raw Material Stock",
-    "stock_fg": "Finished Goods Stock",
-    "stock_wip": "WIP Stock",
-    "stock_vouchers": "Stock Voucher",
-    "sales": "Sales GST Invoice",
-    "purchase": "Purchase GST Invoice",
-    "expenses": "Expense GST",
-    "service_vouchers": "Service Voucher",
-    "fixed_assets": "Fixed Assets",
-    "accounting_entries": "Accounting Entries",
-    "accounting_entry_lines": "Accounting Entries",
-    "quotation_requirements": "Quotation",
-    "quotation_business_users": "Quotation",
-    "quotation_access": "Quotation",
-    "quotations": "Quotation",
-    "audit_logs": "Audit Log",
-    "import_logs": "Import Center",
-    "calculation_books": "Calculation Book",
-}
-
-PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "print", "export"]
-
-
-def default_permission(module_name, action):
-    role = st.session_state.get("role", "")
-    if role == "Super Admin":
-        return True
-    if role == "Admin":
-        return True
-    if role == "Quotation User":
-        if module_name == "Quotation" and action in ["view", "add", "print", "export"]:
-            return True
-        return False
-    if role == "User":
-        return action in ["view", "print", "export"]
-    return action == "view"
-
-
-def has_permission(module_name, action="view"):
-    """Role-wise permission check. If no saved permission exists, safe defaults are used."""
-    try:
-        if is_super_admin():
-            return True
-        action = str(action).lower().strip()
-        if action not in PERMISSION_ACTIONS:
-            return False
-        role_name = str(st.session_state.get("role", "User"))
-        client_code = get_client_code()
-        data = supabase.table("role_permissions")\
-            .select("*")\
-            .eq("client_code", client_code)\
-            .eq("role_name", role_name)\
-            .eq("module_name", module_name)\
-            .limit(1)\
-            .execute().data
-        dfp = safe_df(data)
-        if dfp.empty:
-            return default_permission(module_name, action)
-        col = f"can_{action}"
-        if col not in dfp.columns:
-            return default_permission(module_name, action)
-        return bool(dfp.iloc[0].get(col, default_permission(module_name, action)))
-    except Exception:
-        return default_permission(module_name, action)
-
-
-def has_key_permission(key, action="view"):
-    return has_permission(TABLE_KEY_TO_MODULE.get(key, key), action)
-
-
-def filter_modules_by_permission(modules):
-    if is_super_admin():
-        return modules
-    allowed = []
-    for m in modules:
-        if m == "No module available" or has_permission(m, "view"):
-            allowed.append(m)
-    return allowed or ["No module available"]
-
-
-def role_permission_control():
-    show_header("Role-wise Permission Control", "section-admin")
-
-    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
-        st.warning("Only Admin can access Role Permission Control.")
-        return
-
-    if is_super_admin():
-        clients_df = load_table("clients", 1000)
-        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
-        if "RBM" not in client_codes:
-            client_codes = ["RBM"] + client_codes
-        selected_client = st.selectbox("Select Client", client_codes, key="perm_client")
-    else:
-        selected_client = get_client_code()
-        st.info(f"Permission setting for your business only: {selected_client}")
-
-    role_name = st.selectbox("Select Role", ["Admin", "User", "Quotation User"], key="perm_role")
-    st.caption("Tick permissions module-wise. View controls menu visibility. Add/Edit/Delete/Reverse/Approve/Print/Export control actions.")
-
-    existing = safe_df(
-        supabase.table("role_permissions")
-        .select("*")
-        .eq("client_code", selected_client)
-        .eq("role_name", role_name)
-        .execute().data
-    )
-
-    perm_rows = []
-    with st.form("role_permission_form"):
-        st.markdown("### Module Permissions")
-        header = st.columns([2.5, 1, 1, 1, 1, 1, 1, 1, 1])
-        header[0].markdown("**Module**")
-        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
-            header[i].markdown(f"**{act.title()}**")
-
-        for module in ERP_MODULES:
-            current = existing[existing["module_name"].astype(str) == module] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
-            cols = st.columns([2.5, 1, 1, 1, 1, 1, 1, 1, 1])
-            cols[0].write(module)
-            row = {"module_name": module}
-            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
-                colname = f"can_{act}"
-                if not current.empty and colname in current.columns:
-                    default_val = bool(current.iloc[0].get(colname, default_permission(module, act)))
-                else:
-                    default_val = default_permission(module, act)
-                row[colname] = cols[i].checkbox("", value=default_val, key=f"perm_{selected_client}_{role_name}_{module}_{act}")
-            perm_rows.append(row)
-
-        if st.form_submit_button("Save Role Permissions", use_container_width=True):
-            # remove previous permissions for this client + role, then insert fresh records
-            supabase.table("role_permissions").delete().eq("client_code", selected_client).eq("role_name", role_name).execute()
-            rows_to_insert = []
-            for r in perm_rows:
-                row = {
-                    "client_code": selected_client,
-                    "role_name": role_name,
-                    "module_name": r["module_name"],
-                    "created_by": current_user(),
-                }
-                for act in PERMISSION_ACTIONS:
-                    row[f"can_{act}"] = bool(r[f"can_{act}"])
-                rows_to_insert.append(row)
-            if rows_to_insert:
-                supabase.table("role_permissions").insert(rows_to_insert).execute()
-            write_audit_log("Role Permission Control", "UPDATE", "", f"Saved role permissions for {selected_client} / {role_name}")
-            st.success("Role permissions saved successfully.")
-            st.rerun()
-
-    st.divider()
-    st.subheader("Current Permission Table")
-    df = safe_df(
-        supabase.table("role_permissions")
-        .select("*")
-        .eq("client_code", selected_client)
-        .eq("role_name", role_name)
-        .order("module_name")
-        .execute().data
-    )
-    st.dataframe(df, use_container_width=True)
-
 
 def erp_control_center():
     show_header("ERP Control Center", "section-master")
@@ -2621,356 +2374,351 @@ def erp_control_center():
     st.download_button("Download Control Report Excel", to_excel_bytes(df), f"erp_control_{selected}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 
-# ---------- CLIENT-FACING FINAL TOOLS: EMAIL / WHATSAPP / ACTIVITY / BACKUP / GST / OFFLINE ----------
 
-def _url_quote_text(value):
+# ---------- ENTERPRISE EXTENSION MODULES: WORKFLOW / ANALYTICS / AUDIT / SYNC ----------
+def _table_df(table_name, limit_rows=5000):
     try:
-        from urllib.parse import quote
-        return quote(str(value or ""))
-    except Exception:
-        return str(value or "").replace(" ", "%20")
-
-
-def _safe_number(v):
-    try:
-        if v in [None, "", "None"]:
-            return 0.0
-        return float(v)
-    except Exception:
-        return 0.0
-
-
-def _find_col(df, candidates):
-    for c in candidates:
-        if c in df.columns:
-            return c
-    return None
-
-
-def _record_label(row, fields):
-    parts = []
-    for f in fields:
-        if f in row and str(row.get(f, "")).strip() not in ["", "None", "nan"]:
-            parts.append(str(row.get(f)))
-    return " | ".join(parts) if parts else "Record"
-
-
-def _client_filtered_direct(table_name, limit_rows=1000):
-    q = supabase.table(table_name).select("*")
-    if not is_super_admin():
-        q = q.eq("client_code", get_client_code())
-    try:
+        q = supabase.table(table_name).select("*")
+        if not is_super_admin() and "client_code" not in ["clients"]:
+            q = q.eq("client_code", get_client_code())
         return safe_df(q.order("id", desc=True).limit(limit_rows).execute().data)
-    except Exception:
-        try:
-            return safe_df(q.limit(limit_rows).execute().data)
-        except Exception:
-            return pd.DataFrame()
+    except Exception as e:
+        st.warning(f"Table not ready: {table_name}. Please run SQL. Details: {e}")
+        return pd.DataFrame()
 
 
-def email_whatsapp_share_center():
-    show_header("Email / WhatsApp Share Center", "section-tools")
-    st.info("Use this screen to share invoice, quotation or reminder details through Email or WhatsApp. It opens your Email/WhatsApp app with prepared text.")
+def _insert_table(table_name, row):
+    if "client_code" not in row:
+        row["client_code"] = get_client_code()
+    row.setdefault("created_by", st.session_state.get("username", ""))
+    try:
+        supabase.table(table_name).insert(row).execute()
+        log_audit(table_name, "CREATE", "", "Created from Enterprise module")
+        return True
+    except Exception as e:
+        st.error(f"Save failed in {table_name}: {e}")
+        return False
 
-    doc_type = st.selectbox("Document Type", ["Sales Invoice", "Purchase Invoice", "Service Voucher", "Quotation", "Outstanding Reminder"])
-    records = pd.DataFrame()
-    label_fields = []
 
-    if doc_type == "Sales Invoice":
-        records = load_table("sales", 1000)
-        label_fields = ["invoice_no", "invoice_date", "customer_name", "total_value"]
-    elif doc_type == "Purchase Invoice":
-        records = load_table("purchase", 1000)
-        label_fields = ["invoice_no", "invoice_date", "supplier_name", "total_value"]
-    elif doc_type == "Service Voucher":
-        records = load_table("service_vouchers", 1000)
-        label_fields = ["voucher_no", "voucher_date", "customer_name", "total_value"]
-    elif doc_type == "Quotation":
-        records = load_table("quotations", 1000) if "quotations" in TABLES else _client_filtered_direct("quotations", 1000)
-        label_fields = ["quotation_no", "requirement_no", "business_name", "total_amount"]
+def enterprise_card(title, value, note=""):
+    st.markdown(f"""
+    <div style="background:linear-gradient(135deg,#0f172a,#1d4ed8);color:white;border-radius:14px;padding:14px 16px;margin:6px 0;box-shadow:0 6px 14px rgba(15,23,42,.18);">
+      <div style="font-size:13px;opacity:.85;">{title}</div>
+      <div style="font-size:26px;font-weight:900;line-height:1.1;">{value}</div>
+      <div style="font-size:12px;opacity:.85;">{note}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def workflow_engine():
+    show_header("Workflow Engine - Maker / Checker / Approver", "section-master")
+    st.info("Define approval routing for ERP modules. Draft → Submitted → Checked → Approved → Posted / Rejected / Reversed.")
+    with st.form("workflow_rule_form"):
+        c1,c2,c3 = st.columns(3)
+        module_name = c1.selectbox("Module", ["Sales", "Purchase", "Expense", "Service", "Stock Adjustment", "Payment", "Receipt", "Journal", "Attendance", "Task"])
+        maker_role = c2.text_input("Maker Role", value="User")
+        checker_role = c3.text_input("Checker Role", value="Manager")
+        approver_role = c1.text_input("Approver Role", value="Admin")
+        min_amount = c2.number_input("Minimum Amount", min_value=0.0, value=0.0, step=1000.0)
+        max_amount = c3.number_input("Maximum Amount", min_value=0.0, value=999999999.0, step=1000.0)
+        status = c1.selectbox("Status", ["Active", "Inactive"])
+        if st.form_submit_button("Save Workflow Rule", use_container_width=True):
+            ok = _insert_table("workflow_rules", {"module_name":module_name,"maker_role":maker_role,"checker_role":checker_role,"approver_role":approver_role,"min_amount":min_amount,"max_amount":max_amount,"status":status})
+            if ok: st.success("Workflow rule saved."); st.rerun()
+    df=_table_df("workflow_rules")
+    show_table_with_edit_delete("workflow_rules", df, "Workflow Rules") if not df.empty else st.info("No workflow rules found.")
+
+
+def notification_center():
+    show_header("Notification Center", "section-master")
+    c1,c2,c3,c4 = st.columns(4)
+    pending_approval = _table_df("approval_requests", 5000)
+    quotations = _table_df("quotations", 5000)
+    tasks_df = load_table("tasks", 5000)
+    stock_df = _table_df("stock_ledgers", 5000)
+    with c1: enterprise_card("Pending Approval", len(pending_approval[pending_approval.get("status", pd.Series(dtype=str)).astype(str).eq("Pending")]) if not pending_approval.empty and "status" in pending_approval else 0)
+    with c2: enterprise_card("Quotations", len(quotations))
+    with c3: enterprise_card("Overdue Tasks", len(tasks_df[tasks_df.get("status", pd.Series(dtype=str)).astype(str)!="Completed"]) if not tasks_df.empty and "status" in tasks_df else 0)
+    with c4: enterprise_card("Low Stock Alerts", 0, "Set reorder level in stock master")
+    st.subheader("Notification Inbox")
+    notif = _table_df("notifications")
+    if notif.empty:
+        st.info("No notifications found.")
     else:
-        records = outstanding_dataframe()
-        label_fields = ["party_name", "ledger_group", "outstanding_amount"]
-
-    if records.empty:
-        st.warning("No record found for selected document type.")
-        return
-
-    records = records.copy().reset_index(drop=True)
-    records["__label"] = records.apply(lambda r: _record_label(r, label_fields), axis=1)
-    selected_label = st.selectbox("Select Record", records["__label"].tolist())
-    row = records[records["__label"] == selected_label].iloc[0].to_dict()
-
-    # Party details from ledger master when possible
-    party = row.get("customer_name") or row.get("supplier_name") or row.get("vendor_name") or row.get("business_name") or row.get("party_name") or ""
-    ledger_df = load_table("ledgers", 5000) if "ledgers" in TABLES else pd.DataFrame()
-    party_email = ""
-    party_mobile = ""
-    if not ledger_df.empty and party:
-        m = ledger_df[ledger_df.get("ledger_name", pd.Series(dtype=str)).astype(str) == str(party)]
-        if not m.empty:
-            party_email = str(m.iloc[0].get("email", "") or "")
-            party_mobile = str(m.iloc[0].get("contact_no", "") or "")
-
-    c1, c2 = st.columns(2)
-    to_email = c1.text_input("Email To", value=party_email, placeholder="customer@example.com")
-    whatsapp_no = c2.text_input("WhatsApp Mobile No", value=party_mobile, placeholder="919876543210")
-
-    subject = f"{doc_type} - RBM ERP"
-    amount = row.get("net_value", row.get("total_value", row.get("total_amount", row.get("outstanding_amount", 0))))
-    body = f"Dear Sir/Madam,\n\nPlease find the {doc_type} details below:\n\nRecord: {selected_label}\nAmount: {amount}\n\nRegards,\n{st.session_state.get('full_name','RBM ERP')}\nRBM ERP SaaS"
-
-    subject = st.text_input("Email Subject", value=subject)
-    body = st.text_area("Message", value=body, height=180)
-
-    mailto_link = f"mailto:{to_email}?subject={_url_quote_text(subject)}&body={_url_quote_text(body)}"
-    wa_text = _url_quote_text(body)
-    clean_no = ''.join(ch for ch in str(whatsapp_no) if ch.isdigit())
-    whatsapp_link = f"https://wa.me/{clean_no}?text={wa_text}" if clean_no else f"https://wa.me/?text={wa_text}"
-
-    b1, b2 = st.columns(2)
-    b1.markdown(f"<a href='{mailto_link}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#0f766e;color:white;border:0;font-weight:700;'>📧 Open Email</button></a>", unsafe_allow_html=True)
-    b2.markdown(f"<a href='{whatsapp_link}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#16a34a;color:white;border:0;font-weight:700;'>🟢 Open WhatsApp</button></a>", unsafe_allow_html=True)
-
-    st.divider()
-    st.subheader("Selected Record")
-    st.dataframe(pd.DataFrame([row]), use_container_width=True)
+        st.dataframe(notif, use_container_width=True)
 
 
-def user_activity_dashboard():
-    show_header("User Activity Dashboard", "section-tools")
-    st.info("This dashboard combines login history and audit log activity.")
-
-    login_df = load_table("login_history", 5000) if "login_history" in TABLES else _client_filtered_direct("login_history", 5000)
-    audit_df = load_table("audit_logs", 5000) if "audit_logs" in TABLES else _client_filtered_direct("audit_logs", 5000)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Login Records", len(login_df))
-    c2.metric("Audit Actions", len(audit_df))
-    if not login_df.empty and "login_status" in login_df.columns:
-        c3.metric("Successful Logins", len(login_df[login_df["login_status"].astype(str).str.lower().str.contains("success")]))
-        c4.metric("Failed Logins", len(login_df[login_df["login_status"].astype(str).str.lower().str.contains("fail|wrong|invalid", regex=True)]))
-    else:
-        c3.metric("Successful Logins", 0)
-        c4.metric("Failed Logins", 0)
-
-    tab1, tab2, tab3 = st.tabs(["Login History", "Audit Log", "User-wise Summary"])
+def dashboard_analytics():
+    show_header("Dashboard Analytics", "section-master")
+    sales_df = load_table("sales", 10000)
+    purchase_df = load_table("purchase", 10000)
+    exp_df = load_table("expenses", 10000)
+    c1,c2,c3,c4 = st.columns(4)
+    sales_total = float(pd.to_numeric(sales_df.get("total_value", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not sales_df.empty else 0
+    pur_total = float(pd.to_numeric(purchase_df.get("total_value", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not purchase_df.empty else 0
+    exp_total = float(pd.to_numeric(exp_df.get("total_value", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()) if not exp_df.empty else 0
+    with c1: enterprise_card("Sales", f"₹ {sales_total:,.2f}")
+    with c2: enterprise_card("Purchase", f"₹ {pur_total:,.2f}")
+    with c3: enterprise_card("Expense", f"₹ {exp_total:,.2f}")
+    with c4: enterprise_card("Gross Margin", f"₹ {sales_total-pur_total-exp_total:,.2f}")
+    tab1,tab2,tab3 = st.tabs(["Top Customers", "Top Vendors", "Monthly Trend"])
     with tab1:
-        st.dataframe(login_df, use_container_width=True)
-        if not login_df.empty:
-            st.download_button("Download Login History", to_excel_bytes(login_df), "login_history.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        if not sales_df.empty and "customer_name" in sales_df:
+            st.dataframe(sales_df.groupby("customer_name", dropna=False)["total_value"].sum().reset_index().sort_values("total_value", ascending=False).head(20), use_container_width=True)
     with tab2:
-        st.dataframe(audit_df, use_container_width=True)
-        if not audit_df.empty:
-            st.download_button("Download Audit Log", to_excel_bytes(audit_df), "audit_log.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        if not purchase_df.empty and "supplier_name" in purchase_df:
+            st.dataframe(purchase_df.groupby("supplier_name", dropna=False)["total_value"].sum().reset_index().sort_values("total_value", ascending=False).head(20), use_container_width=True)
     with tab3:
-        summaries = []
-        if not login_df.empty and "username" in login_df.columns:
-            summaries.append(login_df.groupby("username").size().reset_index(name="login_count"))
-        if not audit_df.empty and "created_by" in audit_df.columns:
-            summaries.append(audit_df.groupby("created_by").size().reset_index(name="action_count").rename(columns={"created_by":"username"}))
-        if summaries:
-            summary = summaries[0]
-            for s in summaries[1:]:
-                summary = summary.merge(s, on="username", how="outer")
-            summary = summary.fillna(0)
-            st.dataframe(summary, use_container_width=True)
-        else:
-            st.info("No activity summary available yet.")
+        st.info("Monthly sales/purchase/expense trend can be expanded with date-wise charts after clean invoice date data is available.")
 
 
-def auto_daily_backup_center():
-    show_header("Auto Daily Backup / Manual Backup", "section-tools")
-    st.warning("Streamlit Cloud cannot run true background jobs continuously. This screen creates an on-demand full backup. For automatic daily backup, schedule this app/API externally or deploy with a cron job.")
-    all_keys = [k for k in TABLES.keys() if k not in ["settings"]]
-    default_keys = [k for k in all_keys if is_super_admin() or k != "clients"]
-    selected = st.multiselect("Select tables for backup", all_keys, default=default_keys[:25])
-    if st.button("Create Backup Excel", use_container_width=True):
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for key in selected:
-                try:
-                    df = load_table(key, 10000)
-                    sheet = key[:31]
-                    df.to_excel(writer, index=False, sheet_name=sheet)
-                except Exception as e:
-                    pd.DataFrame([{"error": str(e)}]).to_excel(writer, index=False, sheet_name=key[:31])
-        st.success("Backup created. Download below.")
-        st.download_button("Download Full ERP Backup", output.getvalue(), f"RBM_ERP_Backup_{india_now().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+def budget_vs_actual():
+    show_header("Budget vs Actual", "section-master")
+    with st.form("budget_form"):
+        c1,c2,c3,c4=st.columns(4)
+        budget_year=c1.text_input("Financial Year", value=financial_year(india_now().date()))
+        cost_center=c2.text_input("Cost Center / Department")
+        ledger_group=c3.selectbox("Ledger Group", DEFAULT_LEDGER_GROUPS)
+        budget_amount=c4.number_input("Budget Amount", min_value=0.0, value=0.0, step=1000.0)
+        remarks=st.text_input("Remarks")
+        if st.form_submit_button("Save Budget", use_container_width=True):
+            if _insert_table("budgets", {"budget_year":budget_year,"cost_center":cost_center,"ledger_group":ledger_group,"budget_amount":budget_amount,"remarks":remarks}):
+                st.success("Budget saved."); st.rerun()
+    budgets=_table_df("budgets")
+    if budgets.empty:
+        st.info("No budget found.")
+    else:
+        st.dataframe(budgets, use_container_width=True)
+        st.download_button("Download Budget Excel", to_excel_bytes(budgets), "budget_vs_actual.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
 
-def restore_from_backup_center():
-    show_header("Data Restore From Backup", "section-tools")
-    st.warning("Use carefully. Restore inserts uploaded rows into selected table. Recommended: test on demo client first.")
-    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
-        st.error("Only Admin / Super Admin can restore data.")
-        return
-    key = st.selectbox("Restore Into Table", [k for k in TABLES.keys() if k not in ["clients"] or is_super_admin()])
-    uploaded = st.file_uploader("Upload Excel/CSV Backup Sheet", type=["xlsx", "csv"])
+def bank_reconciliation():
+    show_header("Bank Reconciliation", "section-master")
+    st.info("Upload bank statement and mark matching entries. This is a practical starter BRS module.")
+    uploaded = st.file_uploader("Upload Bank Statement CSV/XLSX", type=["csv","xlsx"], key="bank_stmt_upload")
     if uploaded is not None:
         try:
-            if uploaded.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded)
-            else:
-                df = pd.read_excel(uploaded)
-            st.dataframe(df.head(100), use_container_width=True)
-            confirm = st.checkbox("I confirm to restore/insert these rows")
-            if confirm and st.button("Restore Data", use_container_width=True):
-                rows = df.fillna("").to_dict("records")
-                cleaned = []
-                for r in rows:
-                    r = {k2: (None if str(v) in ["nan", "NaT"] else v) for k2, v in r.items() if k2 != "id"}
-                    if not is_super_admin() and "client_code" in DISPLAY_COLUMNS.get(key, []):
-                        r["client_code"] = get_client_code()
-                    cleaned.append(r)
-                if cleaned:
-                    supabase.table(TABLES[key]).insert(cleaned).execute()
-                st.success(f"Restore completed: {len(cleaned)} rows inserted.")
+            df = pd.read_csv(uploaded) if uploaded.name.lower().endswith(".csv") else pd.read_excel(uploaded)
+            st.dataframe(df, use_container_width=True)
+            st.download_button("Download Uploaded Statement Excel", to_excel_bytes(df), "bank_statement_review.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
         except Exception as e:
-            st.error(f"Restore failed: {e}")
+            st.error(e)
+    with st.form("brs_manual_form"):
+        c1,c2,c3=st.columns(3)
+        bank_name=c1.text_input("Bank Name")
+        stmt_date=c2.date_input("Statement Date", value=india_now().date(), format="DD-MM-YYYY")
+        bank_balance=c3.number_input("Bank Statement Balance", value=0.0, step=1000.0)
+        books_balance=c1.number_input("Books Balance", value=0.0, step=1000.0)
+        remarks=c2.text_input("Remarks")
+        if st.form_submit_button("Save BRS Snapshot", use_container_width=True):
+            if _insert_table("bank_reconciliations", {"bank_name":bank_name,"statement_date":str(stmt_date),"bank_balance":bank_balance,"books_balance":books_balance,"difference":bank_balance-books_balance,"remarks":remarks}):
+                st.success("BRS snapshot saved."); st.rerun()
+    df=_table_df("bank_reconciliations")
+    if not df.empty: st.dataframe(df, use_container_width=True)
 
 
-def backup_restore_center():
-    tab1, tab2 = st.tabs(["Backup", "Restore"])
+def document_management():
+    show_header("Document Management System", "section-master")
+    with st.form("dms_form"):
+        c1,c2,c3=st.columns(3)
+        module_name=c1.selectbox("Module", ["Sales","Purchase","Expense","Service","Stock","Quotation","Fixed Asset","Other"])
+        record_ref=c2.text_input("Record / Voucher Ref")
+        doc_title=c3.text_input("Document Title")
+        upload=st.file_uploader("Attach PDF/Image/Excel", type=["pdf","png","jpg","jpeg","xlsx","xls","csv"], key="dms_upload")
+        remarks=st.text_input("Remarks")
+        if st.form_submit_button("Save Document", use_container_width=True):
+            fn=""; data=""
+            if upload is not None:
+                fn=upload.name; data=base64.b64encode(upload.read()).decode("utf-8")
+            if _insert_table("documents", {"module_name":module_name,"record_ref":record_ref,"document_title":doc_title,"file_name":fn,"file_data":data,"remarks":remarks}):
+                st.success("Document saved."); st.rerun()
+    df=_table_df("documents")
+    if not df.empty: st.dataframe(df.drop(columns=[c for c in ["file_data"] if c in df.columns]), use_container_width=True)
+
+
+def purchase_cycle():
+    show_header("Purchase Cycle: Indent → RFQ → PO → GRN → Invoice", "section-accounts")
+    tab1,tab2,tab3=st.tabs(["Purchase Indent", "Purchase Order", "GRN"])
     with tab1:
-        auto_daily_backup_center()
+        with st.form("indent_form"):
+            c1,c2,c3=st.columns(3)
+            indent_no=c1.text_input("Indent No")
+            indent_date=c2.date_input("Indent Date", value=india_now().date(), format="DD-MM-YYYY")
+            item=c3.text_input("Item / Requirement")
+            qty=c1.number_input("Qty", min_value=0.0, value=1.0)
+            purpose=c2.text_input("Purpose")
+            status=c3.selectbox("Status", ["Draft","Submitted","Approved","Closed"])
+            if st.form_submit_button("Save Indent", use_container_width=True):
+                _insert_table("purchase_indents", {"indent_no":indent_no,"indent_date":str(indent_date),"item_name":item,"qty":qty,"purpose":purpose,"status":status}); st.rerun()
+        df=_table_df("purchase_indents")
+        if not df.empty: st.dataframe(df, use_container_width=True)
     with tab2:
-        restore_from_backup_center()
-
-
-def outstanding_dataframe():
-    ledgers = load_table("ledgers", 10000) if "ledgers" in TABLES else pd.DataFrame()
-    sales = load_table("sales", 10000) if "sales" in TABLES else pd.DataFrame()
-    purchase = load_table("purchase", 10000) if "purchase" in TABLES else pd.DataFrame()
-    rows = []
-    if not ledgers.empty:
-        for _, l in ledgers.iterrows():
-            name = str(l.get("ledger_name", ""))
-            group = str(l.get("ledger_group", ""))
-            opening = _safe_number(l.get("opening_balance", 0))
-            amount = opening
-            if not sales.empty and group == "Sundry Debtors" and "customer_name" in sales.columns:
-                amount += sales[sales["customer_name"].astype(str) == name].apply(lambda r: _safe_number(r.get("net_value", r.get("total_value", 0))), axis=1).sum()
-            if not purchase.empty and group == "Sundry Creditors" and "supplier_name" in purchase.columns:
-                amount += purchase[purchase["supplier_name"].astype(str) == name].apply(lambda r: _safe_number(r.get("net_value", r.get("total_value", 0))), axis=1).sum()
-            if group in ["Sundry Debtors", "Sundry Creditors"]:
-                rows.append({
-                    "ledger_group": group,
-                    "party_name": name,
-                    "email": l.get("email", ""),
-                    "mobile": l.get("contact_no", ""),
-                    "opening_balance": opening,
-                    "outstanding_amount": round(amount, 2),
-                })
-    return pd.DataFrame(rows)
-
-
-def outstanding_reminder_center():
-    show_header("Outstanding Reminder Center", "section-reports")
-    df = outstanding_dataframe()
-    if df.empty:
-        st.info("No Sundry Debtors/Creditors found in Ledger Master.")
-        return
-    group = st.selectbox("Select Group", ["All", "Sundry Debtors", "Sundry Creditors"])
-    if group != "All":
-        df = df[df["ledger_group"] == group]
-    st.dataframe(df, use_container_width=True)
-    st.download_button("Download Outstanding Report", to_excel_bytes(df), "outstanding_report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-    st.divider()
-    st.subheader("Prepare Reminder")
-    if df.empty:
-        return
-    party = st.selectbox("Select Party", df["party_name"].astype(str).tolist())
-    row = df[df["party_name"].astype(str) == str(party)].iloc[0]
-    msg = st.text_area("Reminder Message", value=f"Dear Sir/Madam,\n\nAs per our records, your outstanding amount is {row['outstanding_amount']}. Kindly arrange payment / confirmation.\n\nRegards,\nRBM ERP")
-    mailto = f"mailto:{row.get('email','')}?subject={_url_quote_text('Outstanding Reminder')}&body={_url_quote_text(msg)}"
-    mobile = ''.join(ch for ch in str(row.get('mobile','')) if ch.isdigit())
-    whatsapp = f"https://wa.me/{mobile}?text={_url_quote_text(msg)}" if mobile else f"https://wa.me/?text={_url_quote_text(msg)}"
-    c1, c2 = st.columns(2)
-    c1.markdown(f"<a href='{mailto}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#0f766e;color:white;border:0;font-weight:700;'>📧 Email Reminder</button></a>", unsafe_allow_html=True)
-    c2.markdown(f"<a href='{whatsapp}' target='_blank'><button style='width:100%;padding:10px;border-radius:10px;background:#16a34a;color:white;border:0;font-weight:700;'>🟢 WhatsApp Reminder</button></a>", unsafe_allow_html=True)
-
-
-def gst_return_summary():
-    show_header("GST Return Summary", "section-reports")
-    sales = load_table("sales", 10000) if "sales" in TABLES else pd.DataFrame()
-    purchase = load_table("purchase", 10000) if "purchase" in TABLES else pd.DataFrame()
-    tab1, tab2, tab3 = st.tabs(["GSTR-1 Sales Summary", "GSTR-2B Purchase Style", "GST ITC / Output Summary"])
-    with tab1:
-        if sales.empty:
-            st.info("No sales data found.")
-        else:
-            gst_cols = [c for c in ["cgst", "sgst", "igst", "taxable_value", "total_value"] if c in sales.columns]
-            if "customer_name" in sales.columns:
-                summary = sales.groupby("customer_name")[gst_cols].sum(numeric_only=True).reset_index()
-            else:
-                summary = sales[gst_cols].sum(numeric_only=True).to_frame().T
-            st.dataframe(summary, use_container_width=True)
-            st.download_button("Download GSTR-1 Summary", to_excel_bytes(summary), "gstr1_sales_summary.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-    with tab2:
-        if purchase.empty:
-            st.info("No purchase data found.")
-        else:
-            gst_cols = [c for c in ["cgst", "sgst", "igst", "taxable_value", "total_value"] if c in purchase.columns]
-            if "supplier_name" in purchase.columns:
-                summary = purchase.groupby("supplier_name")[gst_cols].sum(numeric_only=True).reset_index()
-            else:
-                summary = purchase[gst_cols].sum(numeric_only=True).to_frame().T
-            summary["matching_status"] = "Books - Pending 2B Match"
-            st.dataframe(summary, use_container_width=True)
-            st.download_button("Download GSTR-2B Style Summary", to_excel_bytes(summary), "gstr2b_purchase_style_summary.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with st.form("po_form"):
+            c1,c2,c3=st.columns(3)
+            po_no=c1.text_input("PO No")
+            po_date=c2.date_input("PO Date", value=india_now().date(), format="DD-MM-YYYY")
+            vendor=c3.selectbox("Vendor", get_ledger_names("Sundry Creditors"))
+            item=c1.selectbox("Item", get_stock_item_names())
+            qty=c2.number_input("Qty", min_value=0.0, value=1.0)
+            rate=c3.number_input("Rate", min_value=0.0, value=0.0)
+            if st.form_submit_button("Save PO", use_container_width=True):
+                _insert_table("purchase_orders", {"po_no":po_no,"po_date":str(po_date),"vendor_name":vendor,"item_name":item,"qty":qty,"rate":rate,"amount":qty*rate,"status":"Open"}); st.rerun()
+        df=_table_df("purchase_orders")
+        if not df.empty: st.dataframe(df, use_container_width=True)
     with tab3:
-        output_gst = 0
-        input_gst = 0
-        if not sales.empty:
-            output_gst = sum(sales[c].apply(_safe_number).sum() for c in ["cgst", "sgst", "igst"] if c in sales.columns)
-        if not purchase.empty:
-            input_gst = sum(purchase[c].apply(_safe_number).sum() for c in ["cgst", "sgst", "igst"] if c in purchase.columns)
-        net = output_gst - input_gst
-        gst_df = pd.DataFrame([{"Output GST": output_gst, "Input GST / ITC": input_gst, "Net GST Payable": net}])
-        st.dataframe(gst_df, use_container_width=True)
+        with st.form("grn_form"):
+            c1,c2,c3=st.columns(3)
+            grn_no=c1.text_input("GRN No")
+            grn_date=c2.date_input("GRN Date", value=india_now().date(), format="DD-MM-YYYY")
+            po_no=c3.text_input("PO No")
+            item=c1.selectbox("Received Item", get_stock_item_names(), key="grn_item")
+            qty=c2.number_input("Received Qty", min_value=0.0, value=1.0)
+            remarks=c3.text_input("Remarks")
+            if st.form_submit_button("Save GRN", use_container_width=True):
+                _insert_table("goods_receipt_notes", {"grn_no":grn_no,"grn_date":str(grn_date),"po_no":po_no,"item_name":item,"received_qty":qty,"remarks":remarks,"status":"Received"}); st.rerun()
+        df=_table_df("goods_receipt_notes")
+        if not df.empty: st.dataframe(df, use_container_width=True)
 
 
-def offline_desktop_sync_planning():
-    show_header("Offline Desktop + Sync Planning", "section-tools")
-    st.info("This is the implementation blueprint for your future offline desktop ERP.")
-    plan = """
-RBM ERP Offline + Online Sync Plan
+def sales_cycle():
+    show_header("Sales Cycle: Quotation → Sales Order → Delivery Challan → Invoice", "section-accounts")
+    tab1,tab2=st.tabs(["Sales Order", "Delivery Challan"])
+    with tab1:
+        with st.form("so_form"):
+            c1,c2,c3=st.columns(3)
+            so_no=c1.text_input("SO No")
+            so_date=c2.date_input("SO Date", value=india_now().date(), format="DD-MM-YYYY")
+            customer=c3.selectbox("Customer", get_ledger_names("Sundry Debtors"))
+            item=c1.selectbox("Item", get_stock_item_names(), key="so_item")
+            qty=c2.number_input("Qty", min_value=0.0, value=1.0)
+            rate=c3.number_input("Rate", min_value=0.0, value=0.0)
+            if st.form_submit_button("Save Sales Order", use_container_width=True):
+                _insert_table("sales_orders", {"so_no":so_no,"so_date":str(so_date),"customer_name":customer,"item_name":item,"qty":qty,"rate":rate,"amount":qty*rate,"status":"Open"}); st.rerun()
+        df=_table_df("sales_orders")
+        if not df.empty: st.dataframe(df, use_container_width=True)
+    with tab2:
+        with st.form("dc_form"):
+            c1,c2,c3=st.columns(3)
+            dc_no=c1.text_input("Delivery Challan No")
+            dc_date=c2.date_input("DC Date", value=india_now().date(), format="DD-MM-YYYY")
+            so_no=c3.text_input("SO No")
+            customer=c1.selectbox("Customer", get_ledger_names("Sundry Debtors"), key="dc_cust")
+            item=c2.selectbox("Item", get_stock_item_names(), key="dc_item")
+            qty=c3.number_input("Delivered Qty", min_value=0.0, value=1.0)
+            if st.form_submit_button("Save Delivery Challan", use_container_width=True):
+                _insert_table("delivery_challans", {"dc_no":dc_no,"dc_date":str(dc_date),"so_no":so_no,"customer_name":customer,"item_name":item,"qty":qty,"status":"Delivered"}); st.rerun()
+        df=_table_df("delivery_challans")
+        if not df.empty: st.dataframe(df, use_container_width=True)
 
-1. Offline Desktop Version
-- Frontend: Python CustomTkinter or Streamlit local
-- Database: SQLite
-- Packaging: PyInstaller EXE
-- Backup: Excel/SQLite backup to local folder or OneDrive
 
-2. Online SaaS Version
-- Frontend: Streamlit Cloud
-- Database: Supabase PostgreSQL
+def asset_management_advanced():
+    show_header("Advanced Asset Management", "section-inventory")
+    with st.form("asset_adv_form"):
+        c1,c2,c3,c4=st.columns(4)
+        asset_code=c1.text_input("Asset Code / Tag")
+        asset_name=c2.text_input("Asset Name")
+        location=c3.text_input("Location")
+        status=c4.selectbox("Status", ["Active","Transferred","Under Repair","Scrapped","Sold"])
+        purchase_date=c1.date_input("Purchase Date", value=india_now().date(), format="DD-MM-YYYY")
+        cost=c2.number_input("Cost", min_value=0.0, value=0.0)
+        dep_rate=c3.number_input("Dep %", min_value=0.0, value=0.0)
+        amc_due=c4.date_input("AMC / Maintenance Due", value=india_now().date(), format="DD-MM-YYYY")
+        if st.form_submit_button("Save Asset Control", use_container_width=True):
+            _insert_table("asset_controls", {"asset_code":asset_code,"asset_name":asset_name,"location":location,"asset_status":status,"purchase_date":str(purchase_date),"cost":cost,"depreciation_rate":dep_rate,"maintenance_due_date":str(amc_due)}); st.rerun()
+    df=_table_df("asset_controls")
+    if not df.empty: st.dataframe(df, use_container_width=True)
 
-3. Sync Engine Design
-Every table should include:
-- uuid_id
-- client_code
-- updated_at
-- sync_status: Pending / Synced / Conflict
-- online_id
-- local_id
 
-4. Sync Rules
-- Offline creates/updates data in SQLite with sync_status = Pending
-- Sync button uploads pending records to Supabase
-- Online changes can be downloaded to SQLite
-- Conflict rule: newest updated_at wins, or user chooses manually
+def pwa_mobile_app():
+    show_header("Mobile PWA Setup", "section-tools")
+    st.success("RBM ERP can be installed on Android/iPhone as a browser app shortcut.")
+    st.markdown("""
+    **Android Chrome:** Open ERP URL → 3 dots → Add to Home screen.  
+    **iPhone Safari:** Open ERP URL → Share → Add to Home Screen.  
+    For custom icon, add a PWA manifest and host logo files with the app.
+    """)
 
-5. Recommended Next Development
-- Create SQLite schema from Supabase SQL
-- Build Desktop login
-- Build Sync Upload button
-- Build Sync Download button
-- Add conflict report
-"""
-    st.code(plan)
-    st.download_button("Download Offline Sync Plan", plan.encode("utf-8"), "RBM_ERP_Offline_Sync_Plan.txt", "text/plain", use_container_width=True)
+
+def digital_audit_module():
+    show_header("RBM Digital Audit Module", "section-reports")
+    st.info("Exception analytics for duplicate invoices, duplicate payments, GST mismatch and stock mismatch.")
+    sales_df=load_table("sales",10000); purchase_df=load_table("purchase",10000); exp_df=load_table("expenses",10000)
+    tab1,tab2,tab3=st.tabs(["Duplicate Invoices", "High Value Expenses", "GST Exceptions"])
+    with tab1:
+        if not purchase_df.empty and "invoice_no" in purchase_df:
+            dup=purchase_df[purchase_df.duplicated(["invoice_no","supplier_name"], keep=False)] if "supplier_name" in purchase_df else purchase_df[purchase_df.duplicated(["invoice_no"], keep=False)]
+            st.dataframe(dup, use_container_width=True)
+        else: st.info("No purchase data.")
+    with tab2:
+        if not exp_df.empty and "total_value" in exp_df:
+            val=pd.to_numeric(exp_df["total_value"], errors="coerce").fillna(0)
+            st.dataframe(exp_df[val > val.quantile(.90)] if len(val)>0 else exp_df, use_container_width=True)
+    with tab3:
+        frames=[]
+        for name,df in [("Sales",sales_df),("Purchase",purchase_df),("Expense",exp_df)]:
+            if not df.empty:
+                tmp=df.copy(); tmp["source"]=name
+                frames.append(tmp)
+        if frames: st.dataframe(pd.concat(frames, ignore_index=True).head(500), use_container_width=True)
+
+
+def ai_assistant():
+    show_header("Ask RBM AI - ERP Assistant", "section-tools")
+    question=st.text_area("Ask question about ERP data", placeholder="Example: Show top 10 customers, pending approvals, overdue receivables...")
+    if st.button("Analyze", use_container_width=True):
+        sales_df=load_table("sales",5000); purchase_df=load_table("purchase",5000); exp_df=load_table("expenses",5000)
+        st.info("Local rule-based assistant summary below. API-based AI can be integrated later.")
+        if "customer" in question.lower() and not sales_df.empty and "customer_name" in sales_df:
+            st.dataframe(sales_df.groupby("customer_name")["total_value"].sum().reset_index().sort_values("total_value", ascending=False).head(10), use_container_width=True)
+        elif "vendor" in question.lower() and not purchase_df.empty and "supplier_name" in purchase_df:
+            st.dataframe(purchase_df.groupby("supplier_name")["total_value"].sum().reset_index().sort_values("total_value", ascending=False).head(10), use_container_width=True)
+        elif "expense" in question.lower() and not exp_df.empty:
+            st.dataframe(exp_df.head(100), use_container_width=True)
+        else:
+            st.write("Summary:")
+            st.write(f"Sales records: {len(sales_df)} | Purchase records: {len(purchase_df)} | Expense records: {len(exp_df)}")
+
+
+def multi_company_branch():
+    show_header("Multi Company / Multi Branch Control", "section-master")
+    tab1,tab2=st.tabs(["Company / Business Unit", "Branch / Location"])
+    with tab1:
+        with st.form("business_unit_form"):
+            c1,c2,c3=st.columns(3)
+            name=c1.text_input("Company / Unit Name")
+            gst=c2.text_input("GST No")
+            status=c3.selectbox("Status", ["Active","Inactive"])
+            address=st.text_area("Address")
+            if st.form_submit_button("Save Business Unit", use_container_width=True):
+                _insert_table("business_units", {"unit_name":name,"gst_no":gst,"address":address,"status":status}); st.rerun()
+        df=_table_df("business_units")
+        if not df.empty: st.dataframe(df, use_container_width=True)
+    with tab2:
+        with st.form("branch_form"):
+            c1,c2,c3=st.columns(3)
+            branch=c1.text_input("Branch / Location")
+            city=c2.text_input("City")
+            status=c3.selectbox("Status", ["Active","Inactive"], key="branch_status")
+            if st.form_submit_button("Save Branch", use_container_width=True):
+                _insert_table("branches", {"branch_name":branch,"city":city,"status":status}); st.rerun()
+        df=_table_df("branches")
+        if not df.empty: st.dataframe(df, use_container_width=True)
+
+
+def offline_sync_engine():
+    show_header("Online / Offline Sync Engine", "section-tools")
+    st.info("Future-ready sync control for SQLite desktop + Supabase online ERP.")
+    with st.form("sync_log_form"):
+        c1,c2,c3=st.columns(3)
+        device_id=c1.text_input("Device ID", value="DESKTOP-001")
+        sync_direction=c2.selectbox("Sync Direction", ["Upload Offline to Online", "Download Online to Offline", "Two-way Sync"])
+        status=c3.selectbox("Status", ["Planned", "Running", "Completed", "Failed"])
+        remarks=st.text_input("Remarks")
+        if st.form_submit_button("Save Sync Log", use_container_width=True):
+            _insert_table("sync_logs", {"device_id":device_id,"sync_direction":sync_direction,"sync_status":status,"remarks":remarks}); st.rerun()
+    df=_table_df("sync_logs")
+    if not df.empty: st.dataframe(df, use_container_width=True)
+
 
 # ---------- MAIN MENU ----------
 def get_menu_modules(group):
@@ -2983,7 +2731,7 @@ def get_menu_modules(group):
         if is_super_admin():
             modules += ["Client Master"]
         if st.session_state.get("role") in ["Admin", "Super Admin"]:
-            modules += ["User Management", "Role Permission Control", "Employee Master"]
+            modules += ["User Management", "Employee Master"]
         if st.session_state.get("allow_appointment", False):
             modules += ["Appointments"]
     elif group == "HR":
@@ -3022,18 +2770,21 @@ def get_menu_modules(group):
             modules = ["Quotation"]
     elif group == "Reports":
         if is_super_admin():
-            modules = ["Registers / Reports", "GST Return Summary", "Outstanding Reminder", "Import Center", "Audit Log"]
+            modules = ["Registers / Reports", "Import Center", "Audit Log"]
         else:
             # Reports group appears only when enabled groups exist.
-            modules = ["Registers / Reports", "GST Return Summary", "Outstanding Reminder"]
+            modules = ["Registers / Reports"]
             if st.session_state.get("allow_excel_upload", False) or st.session_state.get("allow_google_sheet_import", False):
                 modules.append("Import Center")
             if st.session_state.get("role") == "Admin":
                 modules.append("Audit Log")
     elif group == "Tools":
         if is_super_admin() or st.session_state.get("role") == "Admin":
-            modules = ["Calculation Book", "ERP Control Center", "Email / WhatsApp Share", "User Activity Dashboard", "Backup / Restore Center", "Offline Desktop Sync Plan"]
-    return filter_modules_by_permission(modules) if modules else ["No module available"]
+            modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Ask RBM AI", "Offline Sync Engine"]
+    elif group == "Enterprise":
+        if is_super_admin() or st.session_state.get("role") == "Admin":
+            modules = ["Workflow Engine", "Budget vs Actual", "Bank Reconciliation", "Document Management", "Purchase Cycle", "Sales Cycle", "Advanced Asset Management", "Digital Audit", "Multi Company / Branch"]
+    return modules or ["No module available"]
 
 def build_group_list():
     # Super Admin can see every group always.
@@ -3041,7 +2792,7 @@ def build_group_list():
         return ["Quotation"]
 
     if is_super_admin():
-        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Tools"]
+        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Enterprise", "Tools"]
 
     # Client users/admins should see ONLY groups enabled for that client.
     groups = []
@@ -3116,8 +2867,9 @@ def build_group_list():
     ]):
         groups.append("Reports")
 
-    # Tools are only for client Admin when normal ERP modules are enabled.
+    # Enterprise and Tools are only for client Admin when normal ERP modules are enabled.
     if st.session_state.get("role") == "Admin" and has_any_normal_module:
+        groups.append("Enterprise")
         groups.append("Tools")
 
     return groups or ["Quotation"]
@@ -3182,7 +2934,6 @@ def get_module_mapping():
         "Dashboard": dashboard,
         "Client Master": client_master,
         "User Management": user_management,
-        "Role Permission Control": role_permission_control,
         "Employee Master": employee_master,
         "Company Profile": company_profile,
         "Financial Year Master": financial_year_master,
@@ -3214,12 +2965,20 @@ def get_module_mapping():
         "ERP Control Center": erp_control_center,
         "Audit Log": audit_log_report,
         "Quotation": quotation_module,
-        "Email / WhatsApp Share": email_whatsapp_share_center,
-        "User Activity Dashboard": user_activity_dashboard,
-        "Backup / Restore Center": backup_restore_center,
-        "Outstanding Reminder": outstanding_reminder_center,
-        "GST Return Summary": gst_return_summary,
-        "Offline Desktop Sync Plan": offline_desktop_sync_planning,
+        "Workflow Engine": workflow_engine,
+        "Notification Center": notification_center,
+        "Dashboard Analytics": dashboard_analytics,
+        "Budget vs Actual": budget_vs_actual,
+        "Bank Reconciliation": bank_reconciliation,
+        "Document Management": document_management,
+        "Purchase Cycle": purchase_cycle,
+        "Sales Cycle": sales_cycle,
+        "Advanced Asset Management": asset_management_advanced,
+        "PWA Mobile App": pwa_mobile_app,
+        "Digital Audit": digital_audit_module,
+        "Ask RBM AI": ai_assistant,
+        "Multi Company / Branch": multi_company_branch,
+        "Offline Sync Engine": offline_sync_engine,
     }
 
 
@@ -3232,29 +2991,25 @@ def main_app():
     if "active_choice" not in st.session_state:
         st.session_state["active_choice"] = "Dashboard"
 
+    # Always visible reliable toggle button.
+    top_col1, top_col2 = st.columns([1, 8])
+    with top_col1:
+        button_text = "☰ Show Menu" if not st.session_state["sidebar_open"] else "☰ Menu"
+        if st.button(button_text, use_container_width=True, key="always_menu_toggle"):
+            st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
+            st.rerun()
+
     mapping = get_module_mapping()
 
     if st.session_state["sidebar_open"]:
-        # IMPORTANT: no separate top row here. Menu and content start on the same line,
-        # so there is no blank white space above the ERP header after login.
         menu_col, content_col = st.columns([1.15, 4.85], gap="large")
-
         with menu_col:
-            st.button("☰ Menu", use_container_width=True, key="menu_caption_button", disabled=True)
             group, choice = render_custom_menu()
-
         with content_col:
             rbm_header()
             mapping.get(choice, placeholder_denied)()
-
     else:
         # Menu hidden: keep the SAME current module open. Do not jump to Dashboard.
-        c_show, c_blank = st.columns([1.05, 8.95])
-        with c_show:
-            if st.button("☰ Show Menu", use_container_width=True, key="show_menu_when_hidden"):
-                st.session_state["sidebar_open"] = True
-                st.rerun()
-
         rbm_header()
         st.info("Menu is hidden. Click ☰ Show Menu at the top-left to show it again.")
         choice = st.session_state.get("active_choice", "Dashboard")
