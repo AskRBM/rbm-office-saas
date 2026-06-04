@@ -982,7 +982,7 @@ def rbm_header():
 def init_users():
     df = safe_df(supabase.table("users").select("*").execute().data)
     if df.empty:
-        supabase.table("users").insert({"client_code":"RBM","username":"admin","password":"rbm123","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
+        supabase.table("users").insert({"client_code":"RBM","username":"CST RBM","password":"*****","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
         df = safe_df(supabase.table("users").select("*").execute().data)
     return df
 
