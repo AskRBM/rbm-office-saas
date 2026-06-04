@@ -982,7 +982,7 @@ def rbm_header():
 def init_users():
     df = safe_df(supabase.table("users").select("*").execute().data)
     if df.empty:
-        supabase.table("users").insert({"client_code":"RBM","username":"CST RBM","password":"*****","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
+        supabase.table("users").insert({"client_code":"RBM","username":"Admin","password":"rbm123","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
         df = safe_df(supabase.table("users").select("*").execute().data)
     return df
 
@@ -1017,7 +1017,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Default Super Admin: admin / rbm123")
+        st.info("Default Super Admin: CST / ******")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
