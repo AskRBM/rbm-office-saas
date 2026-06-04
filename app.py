@@ -39,10 +39,22 @@ TABLES = {
     "quotation_access": "quotation_access",
     "quotations": "quotations",
     "audit_logs": "audit_logs",
+    "bom_headers": "bom_headers",
+    "bom_lines": "bom_lines",
+    "production_orders": "production_orders",
+    "production_entries": "production_entries",
+    "consumption_entries": "consumption_entries",
+    "fg_entries": "fg_entries",
+    "production_costing": "production_costing",
+    "mrp": "mrp",
+    "project_accounting": "project_accounting",
+    "amc_subscriptions": "amc_subscriptions",
+    "support_tickets": "support_tickets",
+    "license_manager": "license_manager",
 }
 
 DISPLAY_COLUMNS = {
-    "clients": ["id","client_code","client_name","allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation","status","created_at"],
+    "clients": ["id","client_code","client_name","allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation","allow_manufacturing","allow_project_accounting","allow_subscription","allow_support","allow_license_manager","status","created_at"],
     "users": ["id","client_code","username","password","role","full_name","status"],
     "employees": ["id","client_code","employee_id","employee_name","mobile","email","department","designation","branch_division","status"],
     "attendance": ["id","client_code","attendance_date","financial_year","employee_name","attendance_type","office_location","status","in_time","out_time","working_hours","in_latitude","in_longitude","out_latitude","out_longitude","remarks","created_by"],
@@ -78,6 +90,18 @@ DISPLAY_COLUMNS = {
     "quotation_access": ["id","client_code","requirement_id","requirement_no","business_username","business_name","status","created_by","created_at"],
     "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","remarks","created_by","created_at"],
     "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
+    "bom_headers": ["id","client_code","bom_no","bom_date","fg_item","fg_qty","labour_cost","power_cost","packing_cost","other_cost","material_cost","total_cost","cost_per_unit","status","remarks","created_by","created_at"],
+    "bom_lines": ["id","client_code","bom_header_id","bom_no","rm_item","rm_qty","rm_rate","rm_amount","unit","remarks","created_by","created_at"],
+    "production_orders": ["id","client_code","order_no","order_date","bom_no","fg_item","planned_qty","due_date","status","remarks","created_by","created_at"],
+    "production_entries": ["id","client_code","entry_no","entry_date","order_no","fg_item","produced_qty","warehouse","status","remarks","created_by","created_at"],
+    "consumption_entries": ["id","client_code","entry_no","entry_date","order_no","rm_item","consumed_qty","rate","amount","warehouse","remarks","created_by","created_at"],
+    "fg_entries": ["id","client_code","entry_no","entry_date","fg_item","qty","rate","amount","warehouse","remarks","created_by","created_at"],
+    "production_costing": ["id","client_code","costing_no","costing_date","order_no","fg_item","material_cost","labour_cost","overhead_cost","total_cost","qty","cost_per_unit","remarks","created_by","created_at"],
+    "mrp": ["id","client_code","plan_no","plan_date","fg_item","required_qty","bom_no","rm_item","rm_required_qty","available_qty","shortage_qty","remarks","created_by","created_at"],
+    "project_accounting": ["id","client_code","project_name","project_code","customer_name","income","expense","profit","status","remarks","created_by","created_at"],
+    "amc_subscriptions": ["id","client_code","plan_name","client_name","start_date","expiry_date","no_of_users","storage_limit_mb","amount","renewal_status","remarks","created_by","created_at"],
+    "support_tickets": ["id","client_code","ticket_no","ticket_date","raised_by","subject","priority","status","assigned_to","remarks","created_by","created_at"],
+    "license_manager": ["id","client_code","license_key","client_name","machine_id","start_date","expiry_date","status","remarks","created_by","created_at"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -87,7 +111,9 @@ COMMON_CONTROL_COLUMNS = ["parking_status", "approval_status", "cost_center", "a
 CONTROL_TABLE_KEYS = [
     "attendance", "attendance_visits", "inout", "visitors", "tasks", "appointments",
     "stock_raw", "stock_fg", "stock_wip", "stock_vouchers", "sales", "purchase",
-    "expenses", "service_vouchers", "fixed_assets", "accounting_entries"
+    "expenses", "service_vouchers", "fixed_assets", "accounting_entries",
+    "bom_headers", "production_orders", "production_entries", "consumption_entries", "fg_entries",
+    "production_costing", "mrp", "project_accounting", "amc_subscriptions", "support_tickets", "license_manager"
 ]
 for _k in CONTROL_TABLE_KEYS:
     if _k in DISPLAY_COLUMNS:
@@ -98,7 +124,9 @@ for _k in CONTROL_TABLE_KEYS:
 REVERSIBLE_TABLE_KEYS = [
     "attendance", "attendance_visits", "inout", "visitors", "tasks", "appointments",
     "stock_raw", "stock_fg", "stock_wip", "stock_vouchers", "sales", "purchase",
-    "expenses", "service_vouchers", "fixed_assets", "accounting_entries"
+    "expenses", "service_vouchers", "fixed_assets", "accounting_entries",
+    "bom_headers", "production_orders", "production_entries", "consumption_entries", "fg_entries",
+    "production_costing", "mrp", "project_accounting", "amc_subscriptions", "support_tickets", "license_manager"
 ]
 REVERSAL_COLUMNS = ["reversal_status", "reversed_from_id", "reversal_reason", "reversed_by", "reversed_at"]
 for _k in REVERSIBLE_TABLE_KEYS:
@@ -921,7 +949,13 @@ def get_saved_invoice_preview_html(key, title, party_col):
 # ---------- LOGIN / SIDEBAR ----------
 def rbm_header():
     name = st.session_state.get("client_name", get_client_code())
-    st.markdown(f'<div class="rbm-header"><div class="rbm-title">RBM AI</div><div class="rbm-divider">|</div><div class="rbm-subtitle">Robotic Business Management</div><div class="rbm-client">RBM ERP SaaS | {name}</div></div>', unsafe_allow_html=True)
+    html = f"""<div class="rbm-header">
+        <div class="rbm-title">RBM AI</div>
+        <div class="rbm-divider">|</div>
+        <div><div class="rbm-subtitle">Robotic Business Management</div><div style="font-size:11px;color:#e0f2fe;font-weight:700;margin-top:2px;letter-spacing:.5px;">स्वदेशी • Made in India</div></div>
+        <div class="rbm-client">RBM ERP SaaS | {name}</div>
+    </div>"""
+    st.markdown(html, unsafe_allow_html=True)
 
 def init_users():
     df = safe_df(supabase.table("users").select("*").execute().data)
@@ -932,7 +966,7 @@ def init_users():
 
 def load_client_permissions(client_code):
     data = safe_df(supabase.table("clients").select("*").eq("client_code", client_code).limit(1).execute().data)
-    permissions = ["allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation"]
+    permissions = ["allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation","allow_manufacturing","allow_project_accounting","allow_subscription","allow_support","allow_license_manager"]
     for p in permissions: st.session_state[p] = True
     name = client_code
     if not data.empty:
@@ -2720,6 +2754,127 @@ def offline_sync_engine():
     if not df.empty: st.dataframe(df, use_container_width=True)
 
 
+
+# ---------- MANUFACTURING / BOM / SUPPORT EXTENSIONS ----------
+def _bom_no_list():
+    try:
+        df = load_table("bom_headers", 2000)
+        vals = df["bom_no"].dropna().astype(str).unique().tolist() if not df.empty and "bom_no" in df.columns else []
+        return vals or ["No BOM Found"]
+    except Exception:
+        return ["No BOM Found"]
+
+
+def bill_of_material_module():
+    show_header("Bill of Material (BOM)", "section-inv")
+    st.info("Create Finished Goods recipe with raw material consumption and cost per unit.")
+    if "bom_line_count" not in st.session_state:
+        st.session_state["bom_line_count"] = 1
+    cadd, crem, creset = st.columns(3)
+    if cadd.button("➕ Add Raw Material Line", use_container_width=True, key="bom_add_line"):
+        st.session_state["bom_line_count"] += 1; st.rerun()
+    if crem.button("➖ Remove Last Line", use_container_width=True, key="bom_remove_line"):
+        if st.session_state["bom_line_count"] > 1:
+            st.session_state["bom_line_count"] -= 1; st.rerun()
+    if creset.button("🔄 Reset BOM Lines", use_container_width=True, key="bom_reset_line"):
+        st.session_state["bom_line_count"] = 1; st.rerun()
+    stock_items = get_stock_items()
+    with st.form("bom_form"):
+        c1, c2, c3 = st.columns(3)
+        bom_no = c1.text_input("BOM No")
+        bom_date = c2.date_input("BOM Date", value=india_now().date(), format="DD-MM-YYYY")
+        fg_item = c3.selectbox("Finished Goods Item", stock_items, key="bom_fg_item")
+        fg_qty = c1.number_input("FG Qty", min_value=0.0, value=1.0, step=1.0)
+        status = c2.selectbox("Status", ["Draft", "Active", "Inactive"])
+        remarks = c3.text_input("Remarks")
+        st.subheader("Raw Material Consumption")
+        line_rows, material_cost = [], 0.0
+        for i in range(st.session_state["bom_line_count"]):
+            st.markdown(f"**Raw Material {i + 1}**")
+            a, b, c, d, e = st.columns(5)
+            rm_item = a.selectbox("RM Item", stock_items, key=f"bom_rm_item_{i}")
+            unit = b.text_input("Unit", key=f"bom_unit_{i}")
+            rm_qty = c.number_input("Qty", min_value=0.0, value=0.0, step=1.0, key=f"bom_qty_{i}")
+            rm_rate = d.number_input("Rate", min_value=0.0, value=0.0, step=1.0, key=f"bom_rate_{i}")
+            rm_amount = rm_qty * rm_rate
+            e.metric("Amount", f"{rm_amount:,.2f}")
+            line_rows.append({"rm_item": rm_item, "unit": unit, "rm_qty": rm_qty, "rm_rate": rm_rate, "rm_amount": rm_amount})
+            material_cost += rm_amount
+        st.subheader("Production Cost")
+        c4, c5, c6, c7 = st.columns(4)
+        labour_cost = c4.number_input("Labour Cost", min_value=0.0, value=0.0, step=100.0)
+        power_cost = c5.number_input("Power Cost", min_value=0.0, value=0.0, step=100.0)
+        packing_cost = c6.number_input("Packing Cost", min_value=0.0, value=0.0, step=100.0)
+        other_cost = c7.number_input("Other Cost", min_value=0.0, value=0.0, step=100.0)
+        total_cost = material_cost + labour_cost + power_cost + packing_cost + other_cost
+        cost_per_unit = total_cost / fg_qty if fg_qty else 0
+        st.info(f"Material Cost: {material_cost:,.2f} | Total Cost: {total_cost:,.2f} | Cost Per Unit: {cost_per_unit:,.2f}")
+        if st.form_submit_button("Save BOM", use_container_width=True):
+            if not bom_no.strip():
+                st.error("BOM No is required.")
+            elif fg_item == "No Item Found":
+                st.error("Please create Stock Ledger / Item first.")
+            else:
+                res = insert_row("bom_headers", {"bom_no": bom_no.strip(), "bom_date": str(bom_date), "fg_item": fg_item, "fg_qty": fg_qty, "labour_cost": labour_cost, "power_cost": power_cost, "packing_cost": packing_cost, "other_cost": other_cost, "material_cost": material_cost, "total_cost": total_cost, "cost_per_unit": cost_per_unit, "status": status, "remarks": remarks, "created_by": current_user()})
+                header_id = ""
+                try:
+                    header_id = res.data[0].get("id", "") if res.data else ""
+                except Exception:
+                    header_id = ""
+                for line in line_rows:
+                    if line["rm_item"] != "No Item Found" and float(line["rm_qty"] or 0) > 0:
+                        insert_row("bom_lines", {"bom_header_id": header_id, "bom_no": bom_no.strip(), "rm_item": line["rm_item"], "unit": line["unit"], "rm_qty": line["rm_qty"], "rm_rate": line["rm_rate"], "rm_amount": line["rm_amount"], "created_by": current_user()})
+                st.success("BOM saved successfully."); st.rerun()
+    tab1, tab2 = st.tabs(["BOM Register", "BOM Raw Material Lines"])
+    with tab1: show_table_with_edit_delete("bom_headers", load_table("bom_headers", 1000), "BOM Register")
+    with tab2: show_table_with_edit_delete("bom_lines", load_table("bom_lines", 2000), "BOM Lines")
+
+
+def production_order_module():
+    simple_module_form("production_orders", "Production Order", [("order_no", "Order No", "text"), ("order_date", "Order Date", "date"), ("bom_no", "BOM No", _bom_no_list()), ("fg_item", "FG Item", get_stock_items()), ("planned_qty", "Planned Qty", "number"), ("due_date", "Due Date", "date"), ("status", "Status", ["Draft", "Released", "In Process", "Completed", "Cancelled"]), ("remarks", "Remarks", "text")], "section-inv")
+
+def production_entry_module():
+    simple_module_form("production_entries", "Production Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("order_no", "Production Order No", "text"), ("fg_item", "Finished Goods", get_stock_items()), ("produced_qty", "Produced Qty", "number"), ("warehouse", "Warehouse", "text"), ("status", "Status", ["Draft", "Posted", "Cancelled"]), ("remarks", "Remarks", "text")], "section-inv")
+
+def consumption_entry_module():
+    simple_module_form("consumption_entries", "Consumption Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("order_no", "Production Order No", "text"), ("rm_item", "Raw Material", get_stock_items()), ("consumed_qty", "Consumed Qty", "number"), ("rate", "Rate", "number"), ("amount", "Amount", "number"), ("warehouse", "Warehouse", "text"), ("remarks", "Remarks", "text")], "section-inv")
+
+def finished_goods_entry_module():
+    simple_module_form("fg_entries", "Finished Goods Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("fg_item", "Finished Goods", get_stock_items()), ("qty", "Qty", "number"), ("rate", "Rate", "number"), ("amount", "Amount", "number"), ("warehouse", "Warehouse", "text"), ("remarks", "Remarks", "text")], "section-inv")
+
+def production_costing_module():
+    show_header("Production Costing", "section-inv")
+    with st.form("production_costing_form"):
+        c1, c2, c3 = st.columns(3)
+        costing_no = c1.text_input("Costing No"); costing_date = c2.date_input("Costing Date", value=india_now().date(), format="DD-MM-YYYY"); order_no = c3.text_input("Production Order No")
+        fg_item = c1.selectbox("FG Item", get_stock_items()); material_cost = c2.number_input("Material Cost", min_value=0.0, value=0.0, step=100.0); labour_cost = c3.number_input("Labour Cost", min_value=0.0, value=0.0, step=100.0)
+        overhead_cost = c1.number_input("Overhead Cost", min_value=0.0, value=0.0, step=100.0); qty = c2.number_input("Qty", min_value=0.0, value=1.0, step=1.0); total_cost = material_cost + labour_cost + overhead_cost; cost_per_unit = total_cost / qty if qty else 0; remarks = c3.text_input("Remarks")
+        st.info(f"Total Cost: {total_cost:,.2f} | Cost Per Unit: {cost_per_unit:,.2f}")
+        if st.form_submit_button("Save Production Costing", use_container_width=True):
+            insert_row("production_costing", {"costing_no":costing_no,"costing_date":str(costing_date),"order_no":order_no,"fg_item":fg_item,"material_cost":material_cost,"labour_cost":labour_cost,"overhead_cost":overhead_cost,"total_cost":total_cost,"qty":qty,"cost_per_unit":cost_per_unit,"remarks":remarks,"created_by":current_user()}); st.rerun()
+    show_table_with_edit_delete("production_costing", load_table("production_costing", 1000), "Production Costing Register")
+
+def mrp_module():
+    simple_module_form("mrp", "Material Requirement Planning (MRP)", [("plan_no", "Plan No", "text"), ("plan_date", "Plan Date", "date"), ("fg_item", "FG Item", get_stock_items()), ("required_qty", "Required FG Qty", "number"), ("bom_no", "BOM No", _bom_no_list()), ("rm_item", "Raw Material", get_stock_items()), ("rm_required_qty", "RM Required Qty", "number"), ("available_qty", "Available Qty", "number"), ("shortage_qty", "Shortage Qty", "number"), ("remarks", "Remarks", "text")], "section-inv")
+
+def project_accounting_module():
+    show_header("Project Accounting", "section-accounts")
+    with st.form("project_accounting_form"):
+        c1,c2,c3=st.columns(3); project_name=c1.text_input("Project Name"); project_code=c2.text_input("Project Code"); customer_name=c3.selectbox("Customer", get_ledger_names("Sundry Debtors")); income=c1.number_input("Project Income", min_value=0.0, value=0.0, step=1000.0); expense=c2.number_input("Project Expense", min_value=0.0, value=0.0, step=1000.0); profit=income-expense; status=c3.selectbox("Status", ["Open", "In Progress", "Completed", "Closed"]); remarks=st.text_input("Remarks")
+        st.info(f"Project Profit: {profit:,.2f}")
+        if st.form_submit_button("Save Project Accounting", use_container_width=True):
+            insert_row("project_accounting", {"project_name":project_name,"project_code":project_code,"customer_name":customer_name,"income":income,"expense":expense,"profit":profit,"status":status,"remarks":remarks,"created_by":current_user()}); st.rerun()
+    show_table_with_edit_delete("project_accounting", load_table("project_accounting", 1000), "Project Accounting Register")
+
+def amc_subscription_module():
+    simple_module_form("amc_subscriptions", "AMC / Subscription Management", [("plan_name", "Plan Name", ["Trial", "Basic", "Standard", "Professional", "Enterprise"]), ("client_name", "Client Name", "text"), ("start_date", "Start Date", "date"), ("expiry_date", "Expiry Date", "date"), ("no_of_users", "No of Users", "number"), ("storage_limit_mb", "Storage Limit MB", "number"), ("amount", "Amount", "number"), ("renewal_status", "Renewal Status", ["Active", "Due Soon", "Expired", "Renewed"]), ("remarks", "Remarks", "text")], "section-admin")
+
+def support_ticket_module():
+    simple_module_form("support_tickets", "Ticket / Support Desk", [("ticket_no", "Ticket No", "text"), ("ticket_date", "Ticket Date", "date"), ("raised_by", "Raised By", "text"), ("subject", "Subject", "text"), ("priority", "Priority", ["Low", "Medium", "High", "Urgent"]), ("status", "Status", ["Open", "In Progress", "Resolved", "Closed"]), ("assigned_to", "Assigned To", "text"), ("remarks", "Remarks", "text")], "section-admin")
+
+def license_manager_module():
+    simple_module_form("license_manager", "License Manager", [("license_key", "License Key", "text"), ("client_name", "Client Name", "text"), ("machine_id", "Machine ID", "text"), ("start_date", "Start Date", "date"), ("expiry_date", "Expiry Date", "date"), ("status", "Status", ["Active", "Expired", "Blocked", "Trial"]), ("remarks", "Remarks", "text")], "section-admin")
+
 # ---------- MAIN MENU ----------
 def get_menu_modules(group):
     modules = []
@@ -2768,6 +2923,19 @@ def get_menu_modules(group):
     elif group == "Quotation":
         if is_super_admin() or st.session_state.get("allow_quotation", False) or _quote_role():
             modules = ["Quotation"]
+    elif group == "Manufacturing":
+        if is_super_admin() or st.session_state.get("allow_manufacturing", False):
+            modules = ["Bill of Material", "Production Order", "Production Entry", "Consumption Entry", "Finished Goods Entry", "Production Costing", "Material Requirement Planning"]
+    elif group == "Projects":
+        if is_super_admin() or st.session_state.get("allow_project_accounting", False):
+            modules = ["Project Accounting"]
+    elif group == "Support":
+        if is_super_admin() or st.session_state.get("allow_support", False) or st.session_state.get("role") == "Admin":
+            modules = ["Support Desk"]
+        if is_super_admin() or st.session_state.get("allow_subscription", False):
+            modules.append("AMC / Subscription")
+        if is_super_admin() or st.session_state.get("allow_license_manager", False):
+            modules.append("License Manager")
     elif group == "Reports":
         if is_super_admin():
             modules = ["Registers / Reports", "Import Center", "Audit Log"]
@@ -2792,7 +2960,7 @@ def build_group_list():
         return ["Quotation"]
 
     if is_super_admin():
-        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Accounts", "Quotation", "Reports", "Enterprise", "Tools"]
+        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Manufacturing", "Accounts", "Projects", "Quotation", "Reports", "Enterprise", "Support", "Tools"]
 
     # Client users/admins should see ONLY groups enabled for that client.
     groups = []
@@ -2847,6 +3015,9 @@ def build_group_list():
     ]):
         groups.append("Inventory")
 
+    if st.session_state.get("allow_manufacturing", False):
+        groups.append("Manufacturing")
+
     if any([
         st.session_state.get("allow_sales", False),
         st.session_state.get("allow_purchase", False),
@@ -2857,6 +3028,9 @@ def build_group_list():
     ]):
         groups.append("Accounts")
 
+    if st.session_state.get("allow_project_accounting", False):
+        groups.append("Projects")
+
     if st.session_state.get("allow_quotation", False):
         groups.append("Quotation")
 
@@ -2866,6 +3040,9 @@ def build_group_list():
         has_any_normal_module,
     ]):
         groups.append("Reports")
+
+    if any([st.session_state.get("allow_support", False), st.session_state.get("allow_subscription", False), st.session_state.get("allow_license_manager", False)]):
+        groups.append("Support")
 
     # Enterprise and Tools are only for client Admin when normal ERP modules are enabled.
     if st.session_state.get("role") == "Admin" and has_any_normal_module:
@@ -2953,6 +3130,13 @@ def get_module_mapping():
         "Finished Goods Stock": stock_fg,
         "WIP Stock": stock_wip,
         "Stock Voucher": stock_voucher,
+        "Bill of Material": bill_of_material_module,
+        "Production Order": production_order_module,
+        "Production Entry": production_entry_module,
+        "Consumption Entry": consumption_entry_module,
+        "Finished Goods Entry": finished_goods_entry_module,
+        "Production Costing": production_costing_module,
+        "Material Requirement Planning": mrp_module,
         "Sales GST Invoice": sales_invoice,
         "Purchase GST Invoice": purchase_invoice,
         "Expense GST": expense_gst,
@@ -2979,6 +3163,10 @@ def get_module_mapping():
         "Ask RBM AI": ai_assistant,
         "Multi Company / Branch": multi_company_branch,
         "Offline Sync Engine": offline_sync_engine,
+        "Project Accounting": project_accounting_module,
+        "AMC / Subscription": amc_subscription_module,
+        "Support Desk": support_ticket_module,
+        "License Manager": license_manager_module,
     }
 
 
