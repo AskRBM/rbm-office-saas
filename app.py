@@ -169,6 +169,14 @@ section[data-testid="stSidebar"] button[kind="header"] {display:none!important;}
 .rbm-show-menu {position:fixed;top:86px;left:12px;z-index:999999;background:linear-gradient(135deg,#0f172a,#2563eb);color:white;padding:8px 12px;border-radius:12px;font-weight:900;box-shadow:0 10px 24px rgba(15,23,42,.25);}
 .rbm-menu-note {font-size:12px;color:#64748b;margin-bottom:8px;}
 .ctrl-card {background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fed7aa;border-radius:14px;padding:12px;margin:10px 0;}
+
+/* Final top-space fix */
+[data-testid="stToolbar"] {display:none !important;}
+[data-testid="stDecoration"] {display:none !important;}
+[data-testid="stStatusWidget"] {display:none !important;}
+section.main > div {padding-top:0rem !important;}
+div[data-testid="stVerticalBlock"] {gap:0.55rem !important;}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3336,27 +3344,24 @@ def main_app():
     if "active_choice" not in st.session_state:
         st.session_state["active_choice"] = "Dashboard"
 
-    # Always visible reliable toggle button.
-    top_col1, top_col2 = st.columns([1, 8])
-    with top_col1:
-        button_text = "☰ Show Menu" if not st.session_state["sidebar_open"] else "☰ Menu"
-        if st.button(button_text, use_container_width=True, key="always_menu_toggle"):
-            st.session_state["sidebar_open"] = not st.session_state["sidebar_open"]
-            st.rerun()
-
     mapping = get_module_mapping()
 
     if st.session_state["sidebar_open"]:
         menu_col, content_col = st.columns([1.15, 4.85], gap="large")
         with menu_col:
+            if st.button("☰ Menu", use_container_width=True, key="menu_open_label"):
+                pass
             group, choice = render_custom_menu()
         with content_col:
             rbm_header()
             mapping.get(choice, placeholder_denied)()
     else:
-        # Menu hidden: keep the SAME current module open. Do not jump to Dashboard.
+        # When hidden, show the unhide button, but keep the same current module open.
+        if st.button("☰ Show Menu", key="show_menu_when_hidden"):
+            st.session_state["sidebar_open"] = True
+            st.rerun()
         rbm_header()
-        st.info("Menu is hidden. Click ☰ Show Menu at the top-left to show it again.")
+        st.info("Menu is hidden. Click ☰ Show Menu to show it again.")
         choice = st.session_state.get("active_choice", "Dashboard")
         mapping.get(choice, placeholder_denied)()
 
