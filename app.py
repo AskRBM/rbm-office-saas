@@ -277,7 +277,7 @@ def write_audit_log(module_name, action_type, record_id="", details=""):
     try:
         if "audit_logs" not in TABLES:
             return
-        supabase.table(TABLES["audit_logs","quotation_requirements","quotation_business_users","quotation_access","quotations"]).insert({
+        supabase.table(TABLES["audit_logs"]).insert({
             "client_code": get_client_code(),
             "action_date": india_now().date().isoformat(),
             "module_name": str(module_name),
@@ -288,6 +288,12 @@ def write_audit_log(module_name, action_type, record_id="", details=""):
         }).execute()
     except Exception:
         pass
+
+
+
+def log_audit(module_name, action_type, record_id="", details=""):
+    """Backward-compatible alias used by enterprise modules."""
+    return write_audit_log(module_name, action_type, record_id, details)
 
 
 def insert_row(key, row):
@@ -609,6 +615,12 @@ def get_stock_items(group_name=None):
     if not df.empty and "status" in df.columns: df = df[df["status"].astype(str).str.lower() == "active"]
     names = df["item_name"].dropna().astype(str).sort_values().unique().tolist() if not df.empty and "item_name" in df.columns else []
     return names if names else ["No Item Found"]
+
+
+def get_stock_item_names(group_name=None):
+    """Compatibility wrapper for Enterprise Purchase/Sales Cycle modules."""
+    return get_stock_items(group_name)
+
 
 def get_groups(table_key, col, defaults):
     df = raw_table(table_key, 1000)
@@ -982,7 +994,7 @@ def rbm_header():
 def init_users():
     df = safe_df(supabase.table("users").select("*").execute().data)
     if df.empty:
-        supabase.table("users").insert({"client_code":"RBM","username":"Admin","password":"rbm123","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
+        supabase.table("users").insert({"client_code":"RBM","username":"admin","password":"rbm123","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
         df = safe_df(supabase.table("users").select("*").execute().data)
     return df
 
@@ -1017,7 +1029,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Welcome At Robotic Business Management")
+        st.info("Default Super Admin: admin / rbm123")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
