@@ -622,6 +622,11 @@ def get_stock_item_names(group_name=None):
     return get_stock_items(group_name)
 
 
+def get_stock_item_names():
+    """Backward compatible alias used by Enterprise Purchase/Sales Cycle modules."""
+    return get_stock_items()
+
+
 def get_groups(table_key, col, defaults):
     df = raw_table(table_key, 1000)
     names = df[col].dropna().astype(str).unique().tolist() if not df.empty and col in df.columns else []
@@ -1001,11 +1006,18 @@ def init_users():
 def load_client_permissions(client_code):
     data = safe_df(supabase.table("clients").select("*").eq("client_code", client_code).limit(1).execute().data)
     permissions = ["allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation","allow_manufacturing","allow_project_accounting","allow_subscription","allow_support","allow_license_manager"]
-    for p in permissions: st.session_state[p] = True
+    # Strict client security:
+    # If a feature is not explicitly enabled for the client, it is treated as disabled.
+    # RBM/Super Admin account can still see everything through is_super_admin().
+    default_enabled = str(client_code).upper() == "RBM" and data.empty
+    for p in permissions:
+        st.session_state[p] = default_enabled
     name = client_code
     if not data.empty:
         row = data.iloc[0]; name = str(row.get("client_name", client_code))
-        for p in permissions: st.session_state[p] = bool(row.get(p, True))
+        for p in permissions:
+            # If column is missing/null, do NOT auto-enable for clients.
+            st.session_state[p] = bool(row[p]) if p in row.index and pd.notna(row[p]) else False
     return name
 
 def login_page():
@@ -2699,12 +2711,54 @@ def asset_management_advanced():
 
 def pwa_mobile_app():
     show_header("Mobile PWA Setup", "section-tools")
-    st.success("RBM ERP can be installed on Android/iPhone as a browser app shortcut.")
+    st.success("RBM ERP can be installed on Android/iPhone as a browser app shortcut with custom icon.")
+
     st.markdown("""
-    **Android Chrome:** Open ERP URL → 3 dots → Add to Home screen.  
-    **iPhone Safari:** Open ERP URL → Share → Add to Home Screen.  
-    For custom icon, add a PWA manifest and host logo files with the app.
+    ### How to host custom PWA icon files
+
+    In your GitHub repository, create this folder structure:
+
+    ```text
+    .streamlit/config.toml
+    static/manifest.json
+    static/rbm-logo-192.png
+    static/rbm-logo-512.png
+    ```
+
+    In `.streamlit/config.toml` keep:
+
+    ```toml
+    [server]
+    enableStaticServing = true
+    ```
+
+    Then your icon files will be available from:
+
+    ```text
+    /app/static/rbm-logo-192.png
+    /app/static/rbm-logo-512.png
+    /app/static/manifest.json
+    ```
+
+    Android Chrome: open ERP URL → 3 dots → Add to Home screen.  
+    iPhone Safari: open ERP URL → Share → Add to Home Screen.
     """)
+
+    manifest = {
+        "name": "RBM Swadeshi ERP AI Enterprise",
+        "short_name": "RBM ERP",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#075985",
+        "description": "RBM Swadeshi ERP AI Enterprise",
+        "icons": [
+            {"src": "/app/static/rbm-logo-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/app/static/rbm-logo-512.png", "sizes": "512x512", "type": "image/png"}
+        ]
+    }
+    st.download_button("Download manifest.json", json.dumps(manifest, indent=2).encode("utf-8"), "manifest.json", "application/json", use_container_width=True)
+    st.info("Logo PNG files are included in the final package ZIP. Upload/copy them to the GitHub static folder.")
 
 
 def digital_audit_module():
@@ -2731,20 +2785,46 @@ def digital_audit_module():
 
 
 def ai_assistant():
-    show_header("Ask RBM AI - ERP Assistant", "section-tools")
-    question=st.text_area("Ask question about ERP data", placeholder="Example: Show top 10 customers, pending approvals, overdue receivables...")
-    if st.button("Analyze", use_container_width=True):
-        sales_df=load_table("sales",5000); purchase_df=load_table("purchase",5000); exp_df=load_table("expenses",5000)
-        st.info("Local rule-based assistant summary below. API-based AI can be integrated later.")
-        if "customer" in question.lower() and not sales_df.empty and "customer_name" in sales_df:
-            st.dataframe(sales_df.groupby("customer_name")["total_value"].sum().reset_index().sort_values("total_value", ascending=False).head(10), use_container_width=True)
-        elif "vendor" in question.lower() and not purchase_df.empty and "supplier_name" in purchase_df:
-            st.dataframe(purchase_df.groupby("supplier_name")["total_value"].sum().reset_index().sort_values("total_value", ascending=False).head(10), use_container_width=True)
-        elif "expense" in question.lower() and not exp_df.empty:
-            st.dataframe(exp_df.head(100), use_container_width=True)
-        else:
-            st.write("Summary:")
-            st.write(f"Sales records: {len(sales_df)} | Purchase records: {len(purchase_df)} | Expense records: {len(exp_df)}")
+    show_header("Calculator", "section-tools")
+    st.info("Simple ERP calculator. AI API integration can be added later as a separate premium module.")
+
+    c1, c2, c3, c4 = st.columns(4)
+    qty = c1.number_input("Qty", value=1.0, step=1.0, key="calc_qty")
+    rate = c2.number_input("Rate", value=0.0, step=1.0, key="calc_rate")
+    gst_percent = c3.number_input("GST %", value=18.0, step=1.0, key="calc_gst")
+    discount = c4.number_input("Discount", value=0.0, step=1.0, key="calc_discount")
+
+    c5, c6, c7 = st.columns(3)
+    freight = c5.number_input("Freight", value=0.0, step=1.0, key="calc_freight")
+    other_charges = c6.number_input("Other Charges", value=0.0, step=1.0, key="calc_other")
+    tds = c7.number_input("Less TDS", value=0.0, step=1.0, key="calc_tds")
+
+    taxable = qty * rate
+    taxable_after_discount = max(taxable - discount, 0)
+    gst_value = taxable_after_discount * gst_percent / 100
+    gross = taxable_after_discount + gst_value + freight + other_charges
+    net = gross - tds
+
+    c8, c9, c10, c11 = st.columns(4)
+    with c8: show_metric_card("Taxable", money(taxable))
+    with c9: show_metric_card("GST", money(gst_value))
+    with c10: show_metric_card("Gross", money(gross))
+    with c11: show_metric_card("Net", money(net))
+
+    st.subheader("Calculation Summary")
+    st.dataframe(pd.DataFrame([{
+        "Qty": qty,
+        "Rate": rate,
+        "Taxable": taxable,
+        "Discount": discount,
+        "Taxable After Discount": taxable_after_discount,
+        "GST %": gst_percent,
+        "GST Value": gst_value,
+        "Freight": freight,
+        "Other Charges": other_charges,
+        "TDS": tds,
+        "Net Amount": net,
+    }]), use_container_width=True)
 
 
 def multi_company_branch():
@@ -2927,7 +3007,7 @@ ERP_MODULES = [
 SUPER_ADMIN_ONLY_MODULES = {
     "Client Master", "License Manager", "AMC / Subscription", "Workflow Engine", "Notification Center",
     "Dashboard Analytics", "Budget vs Actual", "Bank Reconciliation", "Document Management", "Purchase Cycle", "Sales Cycle",
-    "Advanced Asset Management", "Digital Audit", "Ask RBM AI", "Multi Company / Branch", "Offline Sync Engine",
+    "Advanced Asset Management", "Digital Audit", "Calculator", "Multi Company / Branch", "Offline Sync Engine",
     "ERP Control Center", "PWA Mobile App"
 }
 
@@ -2946,6 +3026,208 @@ TABLE_KEY_TO_MODULE = {
     "quotation_access": "Quotation", "quotations": "Quotation", "support_tickets": "Support Desk", "audit_logs": "Audit Log", "import_logs": "Import Center",
     "calculation_books": "Calculation Book"
 }
+
+
+# ---------- CLIENT FEATURE SECURITY ----------
+MODULE_FEATURE_FLAGS = {
+    "Dashboard": None,
+
+    # Admin/internal
+    "Client Master": "__super_admin__",
+    "User Management": "__client_admin_normal__",
+    "Role Permission Control": "__client_admin_normal__",
+    "Employee Master": "allow_master_group",
+
+    # Masters
+    "Company Profile": "allow_master_group",
+    "Financial Year Master": "allow_master_group",
+    "Cost Center Master": "allow_master_group",
+    "Document Series": "allow_master_group",
+    "GST Settings": "allow_master_group",
+    "Ledger Group Master": "allow_master_group",
+    "Ledger Master": "allow_master_group",
+    "Stock Group Master": "allow_master_group",
+    "Stock Ledger Master": "allow_master_group",
+
+    # HR
+    "Attendance Management": "allow_attendance",
+    "IN / OUT Register": "allow_inout",
+    "Visitor Register": "allow_visitor",
+    "Task Delegation": "allow_task",
+    "Appointments": "allow_appointment",
+
+    # Inventory
+    "Raw Material Stock": "allow_stock_raw",
+    "Finished Goods Stock": "allow_stock_fg",
+    "WIP Stock": "allow_stock_wip",
+    "Stock Voucher": "__stock_any__",
+
+    # Manufacturing
+    "Bill of Material": "allow_manufacturing",
+    "Production Order": "allow_manufacturing",
+    "Production Entry": "allow_manufacturing",
+    "Consumption Entry": "allow_manufacturing",
+    "Finished Goods Entry": "allow_manufacturing",
+    "Production Costing": "allow_manufacturing",
+    "Material Requirement Planning": "allow_manufacturing",
+
+    # Accounts
+    "Sales GST Invoice": "allow_sales",
+    "Purchase GST Invoice": "allow_purchase",
+    "Expense GST": "allow_expense",
+    "Service Voucher": "allow_service_voucher",
+    "Fixed Assets": "allow_fixed_assets",
+    "Accounting Entries": "allow_accounting",
+
+    # Optional modules
+    "Project Accounting": "allow_project_accounting",
+    "Quotation": "allow_quotation",
+    "Support Desk": "allow_support",
+    "AMC / Subscription": "allow_subscription",
+    "License Manager": "allow_license_manager",
+
+    # Reports/Tools
+    "Registers / Reports": "__report_any__",
+    "Import Center": "__import_any__",
+    "Audit Log": "__client_admin_normal__",
+    "Calculation Book": "__client_admin_normal__",
+
+    # Super Admin only
+    "Workflow Engine": "__super_admin__",
+    "Notification Center": "__super_admin__",
+    "Dashboard Analytics": "__super_admin__",
+    "Budget vs Actual": "__super_admin__",
+    "Bank Reconciliation": "__super_admin__",
+    "Document Management": "__super_admin__",
+    "Purchase Cycle": "__super_admin__",
+    "Sales Cycle": "__super_admin__",
+    "Advanced Asset Management": "__super_admin__",
+    "Digital Audit": "__super_admin__",
+    "Multi Company / Branch": "__super_admin__",
+    "Offline Sync Engine": "__super_admin__",
+    "ERP Control Center": "__super_admin__",
+    "PWA Mobile App": "__super_admin__",
+    "Calculator": "__super_admin__",
+}
+
+def _normal_feature_enabled_from_session():
+    return any([
+        st.session_state.get("allow_master_group", False),
+        st.session_state.get("allow_attendance", False),
+        st.session_state.get("allow_inout", False),
+        st.session_state.get("allow_visitor", False),
+        st.session_state.get("allow_task", False),
+        st.session_state.get("allow_appointment", False),
+        st.session_state.get("allow_stock_raw", False),
+        st.session_state.get("allow_stock_fg", False),
+        st.session_state.get("allow_stock_wip", False),
+        st.session_state.get("allow_sales", False),
+        st.session_state.get("allow_purchase", False),
+        st.session_state.get("allow_expense", False),
+        st.session_state.get("allow_service_voucher", False),
+        st.session_state.get("allow_fixed_assets", False),
+        st.session_state.get("allow_accounting", False),
+        st.session_state.get("allow_manufacturing", False),
+        st.session_state.get("allow_project_accounting", False),
+        st.session_state.get("allow_support", False),
+        st.session_state.get("allow_subscription", False),
+    ])
+
+def module_enabled_for_current_client(module_name):
+    """Client-wise feature gate. If client is assigned only Quotation, nothing else appears."""
+    if is_super_admin():
+        return True
+    if _quote_role():
+        return module_name == "Quotation"
+
+    flag = MODULE_FEATURE_FLAGS.get(module_name)
+
+    if flag is None:
+        return _normal_feature_enabled_from_session() or st.session_state.get("allow_quotation", False)
+
+    if flag == "__super_admin__":
+        return False
+
+    if flag == "__client_admin_normal__":
+        return st.session_state.get("role") == "Admin" and _normal_feature_enabled_from_session()
+
+    if flag == "__stock_any__":
+        return any([st.session_state.get("allow_stock_raw", False), st.session_state.get("allow_stock_fg", False), st.session_state.get("allow_stock_wip", False)])
+
+    if flag == "__report_any__":
+        return _normal_feature_enabled_from_session() or st.session_state.get("allow_quotation", False)
+
+    if flag == "__import_any__":
+        return st.session_state.get("allow_excel_upload", False) or st.session_state.get("allow_google_sheet_import", False)
+
+    return bool(st.session_state.get(flag, False))
+
+def _client_feature_row(client_code):
+    try:
+        df = safe_df(supabase.table("clients").select("*").eq("client_code", client_code).limit(1).execute().data)
+        if df.empty:
+            return {}
+        return df.iloc[0].to_dict()
+    except Exception:
+        return {}
+
+def _row_bool(row, flag):
+    try:
+        return bool(row.get(flag, False)) if pd.notna(row.get(flag, None)) else False
+    except Exception:
+        return False
+
+def _normal_feature_enabled_from_row(row):
+    return any([
+        _row_bool(row, "allow_master_group"),
+        _row_bool(row, "allow_attendance"),
+        _row_bool(row, "allow_inout"),
+        _row_bool(row, "allow_visitor"),
+        _row_bool(row, "allow_task"),
+        _row_bool(row, "allow_appointment"),
+        _row_bool(row, "allow_stock_raw"),
+        _row_bool(row, "allow_stock_fg"),
+        _row_bool(row, "allow_stock_wip"),
+        _row_bool(row, "allow_sales"),
+        _row_bool(row, "allow_purchase"),
+        _row_bool(row, "allow_expense"),
+        _row_bool(row, "allow_service_voucher"),
+        _row_bool(row, "allow_fixed_assets"),
+        _row_bool(row, "allow_accounting"),
+        _row_bool(row, "allow_manufacturing"),
+        _row_bool(row, "allow_project_accounting"),
+        _row_bool(row, "allow_support"),
+        _row_bool(row, "allow_subscription"),
+    ])
+
+def module_enabled_for_client_code(module_name, client_code):
+    """Used by Role Permission Control. Shows only modules enabled for selected client."""
+    if str(client_code).upper() == "RBM" and is_super_admin():
+        return True
+
+    row = _client_feature_row(client_code)
+    flag = MODULE_FEATURE_FLAGS.get(module_name)
+
+    if flag is None:
+        return _normal_feature_enabled_from_row(row) or _row_bool(row, "allow_quotation")
+
+    if flag == "__super_admin__":
+        return False
+
+    if flag == "__client_admin_normal__":
+        return _normal_feature_enabled_from_row(row)
+
+    if flag == "__stock_any__":
+        return any([_row_bool(row, "allow_stock_raw"), _row_bool(row, "allow_stock_fg"), _row_bool(row, "allow_stock_wip")])
+
+    if flag == "__report_any__":
+        return _normal_feature_enabled_from_row(row) or _row_bool(row, "allow_quotation")
+
+    if flag == "__import_any__":
+        return _row_bool(row, "allow_excel_upload") or _row_bool(row, "allow_google_sheet_import")
+
+    return _row_bool(row, flag)
+
 
 PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "print", "export"]
 
@@ -2995,7 +3277,7 @@ def filter_modules_by_permission(modules):
             continue
         if m in SUPER_ADMIN_ONLY_MODULES:
             continue
-        if has_permission(m, "view"):
+        if module_enabled_for_current_client(m) and has_permission(m, "view"):
             allowed.append(m)
     return allowed or ["No module available"]
 
@@ -3023,6 +3305,10 @@ def role_permission_control():
         for i, act in enumerate(PERMISSION_ACTIONS, start=1):
             header[i].markdown(f"**{act.title()}**")
         for module in ERP_MODULES:
+            # Show only modules enabled for the selected client.
+            # Example: if the client has only Quotation enabled, only Quotation appears here.
+            if not module_enabled_for_client_code(module, selected_client):
+                continue
             # Do not let client admins assign RBM internal/super-admin-only modules.
             if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
                 continue
@@ -3059,9 +3345,14 @@ def get_menu_modules(group):
         modules = ["Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings", "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master"] if st.session_state.get("allow_master_group", False) else []
     elif group == "Admin":
         if is_super_admin():
-            modules += ["Client Master"]
-        if st.session_state.get("role") in ["Admin", "Super Admin"]:
-            modules += ["User Management", "Role Permission Control", "Employee Master"]
+            modules += ["Client Master", "User Management", "Role Permission Control", "Employee Master"]
+        else:
+            # Client Admin sees Admin tools only when normal ERP modules are enabled.
+            # Quotation-only clients do not see User Management / Role Permission / Employee Master.
+            if st.session_state.get("role") == "Admin" and _normal_feature_enabled_from_session():
+                modules += ["User Management", "Role Permission Control"]
+                if st.session_state.get("allow_master_group", False):
+                    modules += ["Employee Master"]
         if st.session_state.get("allow_appointment", False):
             modules += ["Appointments"]
     elif group == "HR":
@@ -3123,7 +3414,7 @@ def get_menu_modules(group):
                 modules.append("Audit Log")
     elif group == "Tools":
         if is_super_admin():
-            modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Ask RBM AI", "Offline Sync Engine"]
+            modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Calculator", "Offline Sync Engine"]
         elif st.session_state.get("role") == "Admin":
             modules = ["Calculation Book"]
     elif group == "Enterprise":
@@ -3170,8 +3461,10 @@ def build_group_list():
         groups.append("Master")
 
     admin_modules = []
-    if st.session_state.get("role") == "Admin":
-        admin_modules.append("User Management")
+    # Admin group is visible to client Admin only when normal ERP modules are enabled.
+    # Quotation-only clients must see only Quotation.
+    if st.session_state.get("role") == "Admin" and has_any_normal_module:
+        admin_modules.extend(["User Management", "Role Permission Control"])
     if st.session_state.get("allow_appointment", False):
         admin_modules.append("Appointments")
     if admin_modules:
@@ -3337,7 +3630,7 @@ def get_module_mapping():
         "Advanced Asset Management": asset_management_advanced,
         "PWA Mobile App": pwa_mobile_app,
         "Digital Audit": digital_audit_module,
-        "Ask RBM AI": ai_assistant,
+        "Calculator": ai_assistant,
         "Multi Company / Branch": multi_company_branch,
         "Offline Sync Engine": offline_sync_engine,
         "Project Accounting": project_accounting_module,
