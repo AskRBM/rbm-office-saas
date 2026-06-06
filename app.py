@@ -1046,7 +1046,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Default Super Admin: admin / rbm123")
+        st.info("Default Super Admin: CST / *******")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
