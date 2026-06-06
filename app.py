@@ -529,36 +529,104 @@ def show_metric_card(label, value):
 
 def show_table_with_edit_delete(key, df, title):
     st.subheader(title)
+
     msg_key = f"last_action_msg_{key}"
     if msg_key in st.session_state:
         st.success(st.session_state.pop(msg_key))
+
     search = st.text_input(f"Search {title}", key=f"search_{key}")
     filtered = filter_dataframe(df, search)
+
     st.dataframe(filtered, use_container_width=True)
+
     if has_key_permission(key, "export") or is_super_admin():
         c1, c2 = st.columns(2)
-        with c1: st.download_button("Download Excel", to_excel_bytes(filtered), f"{key}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"xlsx_{key}")
-        with c2: st.download_button("Download CSV", filtered.to_csv(index=False).encode("utf-8"), f"{key}.csv", "text/csv", use_container_width=True, key=f"csv_{key}")
-    if (is_super_admin() or (st.session_state.get("role") == "Admin" and (has_key_permission(key,"edit") or has_key_permission(key,"delete") or has_key_permission(key,"reverse")))) and not df.empty:
-        st.divider(); st.subheader("Edit / Delete")
-        selected_id = st.selectbox("Select ID", df["id"].tolist(), key=f"select_id_{key}")
-        selected_row = df[df["id"] == selected_id].iloc[0]
-        with st.expander("Edit Selected Record"):
+        with c1:
+            st.download_button(
+                "Download Excel",
+                to_excel_bytes(filtered),
+                f"{key}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"xlsx_{key}"
+            )
+        with c2:
+            st.download_button(
+                "Download CSV",
+                filtered.to_csv(index=False).encode("utf-8"),
+                f"{key}.csv",
+                "text/csv",
+                use_container_width=True,
+                key=f"csv_{key}"
+            )
+
+    can_manage = (
+        is_super_admin()
+        or (
+            st.session_state.get("role") == "Admin"
+            and (
+                has_key_permission(key, "edit")
+                or has_key_permission(key, "delete")
+                or has_key_permission(key, "reverse")
+            )
+        )
+    )
+
+    if can_manage and not filtered.empty and "id" in filtered.columns:
+        st.divider()
+        st.subheader("Edit / Delete")
+
+        # IMPORTANT FIX:
+        # Use filtered data for selection and keep keys dependent on selected_id.
+        # Earlier, text_input keys were same for every ID, so Streamlit kept old values.
+        id_list = filtered["id"].dropna().tolist()
+        if not id_list:
+            st.info("No ID available for edit/delete.")
+            return
+
+        selected_id = st.selectbox(
+            "Select ID",
+            id_list,
+            key=f"select_id_{key}_{len(id_list)}"
+        )
+
+        selected_id_str = str(selected_id).strip()
+        selected_match = filtered[filtered["id"].astype(str).str.strip() == selected_id_str]
+
+        if selected_match.empty:
+            st.warning("Selected record not found after filter. Please clear search or refresh.")
+            return
+
+        selected_row = selected_match.iloc[0]
+
+        with st.expander(f"Edit Selected Record - ID {selected_id}", expanded=False):
             edited = {}
-            for col in df.columns:
-                if col in ["id","financial_year"]: st.text_input(col, str(selected_row[col]), disabled=True, key=f"edit_{key}_{col}")
-                else: edited[col] = st.text_input(col, str(selected_row[col]), key=f"edit_{key}_{col}")
+            for col in filtered.columns:
+                value_text = "" if pd.isna(selected_row[col]) else str(selected_row[col])
+
+                # Key includes selected_id so fields refresh when ID changes.
+                field_key = f"edit_{key}_{selected_id}_{col}"
+
+                if col in ["id", "financial_year"]:
+                    st.text_input(col, value_text, disabled=True, key=field_key)
+                else:
+                    edited[col] = st.text_input(col, value_text, key=field_key)
+
             if has_key_permission(key, "edit") or is_super_admin():
-                if st.button("Update Record", use_container_width=True, key=f"update_{key}"):
-                    update_row(key, selected_id, edited); st.session_state[f"last_action_msg_{key}"] = "Record updated successfully. Details closed."; st.rerun()
+                if st.button("Update Record", use_container_width=True, key=f"update_{key}_{selected_id}"):
+                    update_row(key, selected_id, edited)
+                    st.session_state[f"last_action_msg_{key}"] = f"Record ID {selected_id} updated successfully. Details closed."
+                    st.rerun()
             else:
                 st.info("You do not have edit permission for this module.")
+
         if key in REVERSIBLE_TABLE_KEYS:
-            with st.expander("Reverse / Cancel Posted Entry"):
+            with st.expander(f"Reverse / Cancel Posted Entry - ID {selected_id}", expanded=False):
                 st.warning("This will create a separate reversal entry and mark the original as Reversed. It will not delete original data.")
-                reversal_reason = st.text_input("Reversal Reason", key=f"reverse_reason_{key}")
+                reversal_reason = st.text_input("Reversal Reason", key=f"reverse_reason_{key}_{selected_id}")
+
                 if has_key_permission(key, "reverse") or is_super_admin():
-                    if st.button("Reverse Selected Entry", use_container_width=True, key=f"reverse_{key}"):
+                    if st.button("Reverse Selected Entry", use_container_width=True, key=f"reverse_{key}_{selected_id}"):
                         ok, msg = reverse_record(key, selected_id, reversal_reason)
                         if ok:
                             st.session_state[f"last_action_msg_{key}"] = msg
@@ -568,13 +636,16 @@ def show_table_with_edit_delete(key, df, title):
                 else:
                     st.info("You do not have reverse permission for this module.")
 
-        with st.expander("Delete Selected Record"):
+        with st.expander(f"Delete Selected Record - ID {selected_id}", expanded=False):
             st.warning("This will permanently delete selected record. Prefer Reverse for posted/saved business entries.")
             if has_key_permission(key, "delete") or is_super_admin():
-                if st.button("Delete Record", use_container_width=True, key=f"delete_{key}"):
-                    delete_row(key, selected_id); st.session_state[f"last_action_msg_{key}"] = "Record deleted successfully. Details closed."; st.rerun()
+                if st.button("Delete Record", use_container_width=True, key=f"delete_{key}_{selected_id}"):
+                    delete_row(key, selected_id)
+                    st.session_state[f"last_action_msg_{key}"] = f"Record ID {selected_id} deleted successfully. Details closed."
+                    st.rerun()
             else:
                 st.info("You do not have delete permission for this module.")
+
 
 # ---------- MASTER DATA HELPERS ----------
 def get_ledger_names(group_name=None, include_all=False):
@@ -1046,7 +1117,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Default Super Admin: CST / *******")
+        st.info("Default  Admin: CST / *******")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
