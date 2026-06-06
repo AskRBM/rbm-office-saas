@@ -4,6 +4,9 @@ import pandas as pd
 import base64
 import json
 import string
+import smtplib
+from email.message import EmailMessage
+from urllib.parse import quote
 from datetime import datetime, date
 from io import BytesIO
 from zoneinfo import ZoneInfo
@@ -38,6 +41,7 @@ TABLES = {
     "quotation_business_users": "quotation_business_users",
     "quotation_access": "quotation_access",
     "quotations": "quotations",
+    "quotation_negotiations": "quotation_negotiations",
     "audit_logs": "audit_logs",
     "bom_headers": "bom_headers",
     "bom_lines": "bom_lines",
@@ -89,7 +93,8 @@ DISPLAY_COLUMNS = {
     "quotation_requirements": ["id","client_code","requirement_no","requirement_date","requirement_title","requirement_details","item_name","qty","unit","expected_date","status","remarks","created_by","created_at"],
     "quotation_business_users": ["id","client_code","business_name","contact_person","mobile","email","username","password","status","created_by","created_at"],
     "quotation_access": ["id","client_code","requirement_id","requirement_no","business_username","business_name","status","created_by","created_at"],
-    "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","remarks","created_by","created_at"],
+    "quotations": ["id","client_code","requirement_id","requirement_no","business_username","business_name","quotation_no","quotation_date","amount","gst_amount","total_amount","valid_till","quotation_file_name","quotation_status","negotiation_status","negotiation_deadline","negotiation_message","remarks","created_by","created_at"],
+    "quotation_negotiations": ["id","client_code","quotation_id","requirement_id","requirement_no","business_username","business_name","vendor_email","original_amount","requested_amount","negotiation_message","deadline","status","client_requested_by","client_requested_at","vendor_response","revised_amount","revised_gst_amount","revised_total_amount","revised_file_name","submitted_by","submitted_at","created_at"],
     "audit_logs": ["id","client_code","action_date","module_name","action_type","record_id","details","created_by","created_at"],
     "bom_headers": ["id","client_code","bom_no","bom_date","fg_item","fg_qty","labour_cost","power_cost","packing_cost","other_cost","material_cost","total_cost","cost_per_unit","status","remarks","created_by","created_at"],
     "bom_lines": ["id","client_code","bom_header_id","bom_no","rm_item","rm_qty","rm_rate","rm_amount","unit","remarks","created_by","created_at"],
@@ -1041,7 +1046,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Default Super Admin: CST / ****")
+        st.info("Default Super Admin: admin / rbm123")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
@@ -2110,6 +2115,142 @@ def _quotation_file_download(row):
         st.warning("File preview/download not available for this quotation.")
 
 
+
+
+def _get_business_user_details(business_username):
+    """Return business/vendor details from quotation_business_users."""
+    try:
+        q = supabase.table(TABLES["quotation_business_users"]).select("*").eq("username", str(business_username))
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        df = safe_df(q.limit(1).execute().data)
+        if df.empty:
+            return {}
+        return df.iloc[0].to_dict()
+    except Exception:
+        return {}
+
+def _get_requirement_details(requirement_id):
+    try:
+        q = supabase.table(TABLES["quotation_requirements"]).select("*").eq("id", int(requirement_id))
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        df = safe_df(q.limit(1).execute().data)
+        if df.empty:
+            return {}
+        return df.iloc[0].to_dict()
+    except Exception:
+        return {}
+
+def _safe_secret(name, default=""):
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+def send_negotiation_email(to_email, subject, body):
+    """Send email if SMTP secrets are configured. If not configured, return mailto link."""
+    to_email = str(to_email or "").strip()
+    if not to_email:
+        return False, "Vendor email ID is not available.", ""
+
+    smtp_host = _safe_secret("SMTP_HOST", "")
+    smtp_port = int(_safe_secret("SMTP_PORT", 587) or 587)
+    smtp_user = _safe_secret("SMTP_USER", "")
+    smtp_password = _safe_secret("SMTP_PASSWORD", "")
+    smtp_from = _safe_secret("SMTP_FROM", smtp_user)
+
+    mailto = f"mailto:{quote(to_email)}?subject={quote(subject)}&body={quote(body)}"
+
+    if not smtp_host or not smtp_user or not smtp_password or not smtp_from:
+        return False, "SMTP not configured. Use the mail link below to send email from your email app.", mailto
+
+    try:
+        msg = EmailMessage()
+        msg["From"] = smtp_from
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.set_content(body)
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+        return True, "Email sent successfully.", ""
+    except Exception as e:
+        return False, f"Email sending failed: {e}. Use the mail link below.", mailto
+
+def _request_negotiation_for_quotation(qrow, deadline, message, requested_amount=None):
+    """Create negotiation request, update quotation status, and send/email-draft to vendor."""
+    try:
+        qid = int(qrow.get("id"))
+        business_username = str(qrow.get("business_username", ""))
+        business_name = str(qrow.get("business_name", ""))
+        vendor = _get_business_user_details(business_username)
+        vendor_email = str(vendor.get("email", "") or "")
+        req_id = qrow.get("requirement_id", None)
+        req = _get_requirement_details(req_id) if req_id not in ["", None] else {}
+
+        subject = f"Negotiation Requested for Quotation {qrow.get('quotation_no','')}"
+        body = f"""Dear {business_name or business_username},
+
+We have reviewed your quotation and would like to negotiate.
+
+Requirement No: {qrow.get('requirement_no','')}
+Requirement Title: {req.get('requirement_title','')}
+Quotation No: {qrow.get('quotation_no','')}
+Original Amount: {qrow.get('total_amount', qrow.get('amount',''))}
+
+Negotiation Deadline: {deadline}
+
+Message from Client:
+{message}
+
+Please login to RBM ERP Quotation Portal and submit your revised quotation before the deadline.
+
+ERP URL:
+{_safe_secret('ERP_PUBLIC_URL', 'https://rbm-office-saas.streamlit.app/')}
+
+Regards,
+{st.session_state.get('full_name', 'RBM ERP Admin')}
+RBM ERP SaaS
+"""
+
+        neg_row = {
+            "quotation_id": qid,
+            "requirement_id": qrow.get("requirement_id"),
+            "requirement_no": str(qrow.get("requirement_no", "")),
+            "business_username": business_username,
+            "business_name": business_name,
+            "vendor_email": vendor_email,
+            "original_amount": float(qrow.get("total_amount", qrow.get("amount", 0)) or 0),
+            "requested_amount": float(requested_amount or 0),
+            "negotiation_message": str(message or ""),
+            "deadline": str(deadline),
+            "status": "Negotiation Requested",
+            "client_requested_by": current_user(),
+            "client_requested_at": india_now().isoformat(),
+        }
+        insert_row("quotation_negotiations", neg_row)
+
+        try:
+            supabase.table(TABLES["quotations"]).update({
+                "quotation_status": "Negotiation Requested",
+                "negotiation_status": "Negotiation Requested",
+                "negotiation_deadline": str(deadline),
+                "negotiation_message": str(message or "")
+            }).eq("id", qid).execute()
+        except Exception:
+            pass
+
+        sent, msg, mailto = send_negotiation_email(vendor_email, subject, body)
+        write_audit_log("Quotation Negotiation", "REQUEST", qid, f"Negotiation requested. Email status: {msg}")
+        return sent, msg, mailto, body
+    except Exception as e:
+        return False, f"Negotiation request failed: {e}", "", ""
+
+
 def quotation_module():
     show_header("Quotation Portal", "section-acc")
 
@@ -2117,11 +2258,12 @@ def quotation_module():
     username = current_user()
 
     if role in ["Admin", "Super Admin"]:
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "Our Requirements",
             "Business Users",
             "Requirement Access",
             "Received Quotations",
+            "Negotiation Center",
         ])
 
         with tab1:
@@ -2249,13 +2391,59 @@ def quotation_module():
             with c2:
                 st.download_button("Download Quotation Register CSV", qdf.to_csv(index=False).encode("utf-8"), "quotation_register.csv", "text/csv", use_container_width=True, key="quote_reg_csv")
 
+        with tab5:
+            st.subheader("Negotiation Center")
+            st.info("Select a received quotation, set negotiation deadline, write message, and inform vendor by email/mail draft.")
+            qdf = load_table("quotations", 5000)
+            if qdf.empty:
+                st.info("No quotation received yet.")
+            else:
+                qdf_show = qdf.copy()
+                st.dataframe(qdf_show, use_container_width=True)
+                quote_ids = qdf_show["id"].dropna().astype(int).tolist() if "id" in qdf_show.columns else []
+                if quote_ids:
+                    selected_qid = st.selectbox("Select Quotation ID for Negotiation", quote_ids, key="neg_select_quote")
+                    raw = safe_df(supabase.table(TABLES["quotations"]).select("*").eq("id", int(selected_qid)).limit(1).execute().data)
+                    if not raw.empty:
+                        qrow = raw.iloc[0].to_dict()
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Quotation No", str(qrow.get("quotation_no", "")))
+                        c2.metric("Vendor", str(qrow.get("business_name", "")))
+                        c3.metric("Total Amount", money(qrow.get("total_amount", qrow.get("amount", 0))))
+                        deadline_date = st.date_input("Negotiation Deadline Date", value=india_now().date(), format="DD-MM-YYYY", key="neg_deadline_date")
+                        deadline_time = st.time_input("Negotiation Deadline Time", value=india_now().time().replace(second=0, microsecond=0), key="neg_deadline_time")
+                        requested_amount = st.number_input("Expected / Target Amount (optional)", min_value=0.0, value=0.0, step=100.0, key="neg_target_amount")
+                        message = st.text_area("Message to Vendor", value="Please review your quotation and submit your best revised offer within the given time frame.", key="neg_message")
+                        if st.button("Request Negotiation & Inform Vendor", use_container_width=True, key="request_negotiation_btn"):
+                            deadline = f"{deadline_date} {deadline_time}"
+                            sent, msg, mailto, body = _request_negotiation_for_quotation(qrow, deadline, message, requested_amount)
+                            if sent:
+                                st.success(msg)
+                            else:
+                                st.warning(msg)
+                                if mailto:
+                                    st.markdown(f"[Open Email Draft to Vendor]({mailto})")
+                                    st.text_area("Email Draft Body", value=body, height=240)
+                            st.rerun()
+
+            st.divider()
+            st.subheader("Negotiation History")
+            ndf = load_table("quotation_negotiations", 5000)
+            st.dataframe(ndf, use_container_width=True)
+            if not ndf.empty:
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.download_button("Download Negotiation Excel", to_excel_bytes(ndf), "quotation_negotiations.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="neg_xlsx")
+                with c2:
+                    st.download_button("Download Negotiation CSV", ndf.to_csv(index=False).encode("utf-8"), "quotation_negotiations.csv", "text/csv", use_container_width=True, key="neg_csv")
+
     elif _quote_role():
         st.info("You can see only requirements assigned to your business username and only your own quotations.")
         access_df = load_table("quotation_access", 5000)
         access_df = access_df[access_df["business_username"].astype(str) == username] if not access_df.empty and "business_username" in access_df.columns else pd.DataFrame()
         allowed_ids = access_df["requirement_id"].dropna().astype(int).tolist() if not access_df.empty and "requirement_id" in access_df.columns else []
 
-        tab1, tab2 = st.tabs(["Assigned Requirements", "My Submitted Quotations"])
+        tab1, tab2, tab3 = st.tabs(["Assigned Requirements", "My Submitted Quotations", "Negotiation Requests"])
         with tab1:
             req_df = load_table("quotation_requirements", 5000)
             if allowed_ids and not req_df.empty:
@@ -2322,6 +2510,70 @@ def quotation_module():
                 raw = safe_df(supabase.table("quotations").select("*").eq("id", int(selected)).limit(1).execute().data)
                 if not raw.empty:
                     _quotation_file_download(raw.iloc[0])
+
+        with tab3:
+            st.subheader("Negotiation Requests")
+            ndf = load_table("quotation_negotiations", 5000)
+            ndf = ndf[ndf["business_username"].astype(str) == username] if not ndf.empty and "business_username" in ndf.columns else pd.DataFrame()
+            if ndf.empty:
+                st.info("No negotiation request received.")
+            else:
+                st.dataframe(ndf, use_container_width=True)
+                open_ndf = ndf[ndf["status"].astype(str).isin(["Negotiation Requested", "Open", "Pending"])] if "status" in ndf.columns else ndf
+                if open_ndf.empty:
+                    st.info("No open negotiation pending.")
+                else:
+                    neg_ids = open_ndf["id"].dropna().astype(int).tolist()
+                    selected_neg = st.selectbox("Select Negotiation ID to Respond", neg_ids, key="vendor_neg_id")
+                    neg_raw = safe_df(supabase.table(TABLES["quotation_negotiations"]).select("*").eq("id", int(selected_neg)).limit(1).execute().data)
+                    if not neg_raw.empty:
+                        neg = neg_raw.iloc[0].to_dict()
+                        st.info(f"Deadline: {neg.get('deadline','')} | Message: {neg.get('negotiation_message','')}")
+                        with st.form("vendor_negotiation_response_form", clear_on_submit=True):
+                            c1, c2, c3 = st.columns(3)
+                            revised_amount = c1.number_input("Revised Amount", min_value=0.0, value=float(neg.get("original_amount", 0) or 0), step=100.0)
+                            revised_gst = c2.number_input("Revised GST Amount", min_value=0.0, value=0.0, step=100.0)
+                            revised_total = c3.number_input("Revised Total Amount", min_value=0.0, value=float(revised_amount + revised_gst), step=100.0)
+                            response = st.text_area("Vendor Response / Negotiation Remarks")
+                            revised_file = st.file_uploader("Upload Revised Quotation", type=["pdf", "png", "jpg", "jpeg", "xlsx", "xls", "csv"], key="revised_quote_file")
+                            submit_neg = st.form_submit_button("Submit Revised Quotation", use_container_width=True)
+                            if submit_neg:
+                                fname, fdata = "", ""
+                                if revised_file is not None:
+                                    if revised_file.size > 10 * 1024 * 1024:
+                                        st.error("Revised quotation file should be max 10 MB.")
+                                        return
+                                    fname = revised_file.name
+                                    fdata = base64.b64encode(revised_file.read()).decode("utf-8")
+
+                                supabase.table(TABLES["quotation_negotiations"]).update({
+                                    "status": "Revised Submitted",
+                                    "vendor_response": response,
+                                    "revised_amount": revised_amount,
+                                    "revised_gst_amount": revised_gst,
+                                    "revised_total_amount": revised_total,
+                                    "revised_file_name": fname,
+                                    "revised_file_data": fdata,
+                                    "submitted_by": username,
+                                    "submitted_at": india_now().isoformat(),
+                                }).eq("id", int(selected_neg)).execute()
+
+                                try:
+                                    qid = int(neg.get("quotation_id"))
+                                    supabase.table(TABLES["quotations"]).update({
+                                        "quotation_status": "Revised Submitted",
+                                        "negotiation_status": "Revised Submitted",
+                                        "amount": revised_amount,
+                                        "gst_amount": revised_gst,
+                                        "total_amount": revised_total,
+                                        "remarks": response,
+                                    }).eq("id", qid).execute()
+                                except Exception:
+                                    pass
+
+                                write_audit_log("Quotation Negotiation", "REVISED_SUBMITTED", selected_neg, f"Vendor submitted revised quotation {revised_total}")
+                                st.success("Revised quotation submitted.")
+                                st.rerun()
     else:
         st.warning("You do not have access to Quotation Portal.")
 
