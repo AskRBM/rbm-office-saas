@@ -1041,7 +1041,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Default Super Admin: CST / ****")
+        st.info("Default Super Admin: admin / rbm123")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
@@ -1112,7 +1112,7 @@ def client_master():
         labels = [("allow_master_group","Master"),("allow_attendance","Attendance"),("allow_inout","IN/OUT"),("allow_visitor","Visitor"),("allow_task","Task"),("allow_appointment","Appointment"),("allow_stock_raw","Raw Stock"),("allow_stock_fg","FG Stock"),("allow_stock_wip","WIP Stock"),("allow_sales","Sales"),("allow_purchase","Purchase"),("allow_expense","Expense"),("allow_service_voucher","Service Voucher"),("allow_fixed_assets","Assets"),("allow_accounting","Accounting"),("allow_excel_upload","Excel Upload"),("allow_google_sheet_import","Google Sheet"),("allow_quotation","Quotation"),("allow_manufacturing","Manufacturing / BOM"),("allow_project_accounting","Project Accounting"),("allow_subscription","AMC / Subscription"),("allow_support","Support Desk"),("allow_license_manager","License Manager")]
         vals = {}
         cols = st.columns(4)
-        for i,(k,l) in enumerate(labels): vals[k] = cols[i%4].checkbox(l, value=True)
+        for i,(k,l) in enumerate(labels): vals[k] = cols[i%4].checkbox(l, value=False)
         if st.form_submit_button("Save Client", use_container_width=True):
             if not client_code or not client_name: st.error("Client Code and Name required")
             else:
@@ -3133,11 +3133,45 @@ def _normal_feature_enabled_from_session():
         st.session_state.get("allow_subscription", False),
     ])
 
+def _core_feature_enabled_from_session():
+    """Core ERP features only. Optional enterprise flags do not count.
+    This prevents old/default TRUE optional columns from showing Manufacturing/Projects/etc.
+    If a client is given only Quotation, only Quotation will show.
+    """
+    return any([
+        st.session_state.get("allow_master_group", False),
+        st.session_state.get("allow_attendance", False),
+        st.session_state.get("allow_inout", False),
+        st.session_state.get("allow_visitor", False),
+        st.session_state.get("allow_task", False),
+        st.session_state.get("allow_appointment", False),
+        st.session_state.get("allow_stock_raw", False),
+        st.session_state.get("allow_stock_fg", False),
+        st.session_state.get("allow_stock_wip", False),
+        st.session_state.get("allow_sales", False),
+        st.session_state.get("allow_purchase", False),
+        st.session_state.get("allow_expense", False),
+        st.session_state.get("allow_service_voucher", False),
+        st.session_state.get("allow_fixed_assets", False),
+        st.session_state.get("allow_accounting", False),
+        st.session_state.get("allow_excel_upload", False),
+        st.session_state.get("allow_google_sheet_import", False),
+    ])
+
+
+def _quotation_only_from_session():
+    return bool(st.session_state.get("allow_quotation", False)) and not _core_feature_enabled_from_session()
+
+
 def module_enabled_for_current_client(module_name):
     """Client-wise feature gate. If client is assigned only Quotation, nothing else appears."""
     if is_super_admin():
         return True
     if _quote_role():
+        return module_name == "Quotation"
+    # Highest priority security rule:
+    # If client is assigned only Quotation, no Dashboard/Admin/Projects/Manufacturing/Reports/Tools must appear.
+    if _quotation_only_from_session():
         return module_name == "Quotation"
 
     flag = MODULE_FEATURE_FLAGS.get(module_name)
@@ -3200,12 +3234,41 @@ def _normal_feature_enabled_from_row(row):
         _row_bool(row, "allow_subscription"),
     ])
 
+def _core_feature_enabled_from_row(row):
+    return any([
+        _row_bool(row, "allow_master_group"),
+        _row_bool(row, "allow_attendance"),
+        _row_bool(row, "allow_inout"),
+        _row_bool(row, "allow_visitor"),
+        _row_bool(row, "allow_task"),
+        _row_bool(row, "allow_appointment"),
+        _row_bool(row, "allow_stock_raw"),
+        _row_bool(row, "allow_stock_fg"),
+        _row_bool(row, "allow_stock_wip"),
+        _row_bool(row, "allow_sales"),
+        _row_bool(row, "allow_purchase"),
+        _row_bool(row, "allow_expense"),
+        _row_bool(row, "allow_service_voucher"),
+        _row_bool(row, "allow_fixed_assets"),
+        _row_bool(row, "allow_accounting"),
+        _row_bool(row, "allow_excel_upload"),
+        _row_bool(row, "allow_google_sheet_import"),
+    ])
+
+
+def _quotation_only_from_row(row):
+    return _row_bool(row, "allow_quotation") and not _core_feature_enabled_from_row(row)
+
+
 def module_enabled_for_client_code(module_name, client_code):
     """Used by Role Permission Control. Shows only modules enabled for selected client."""
     if str(client_code).upper() == "RBM" and is_super_admin():
         return True
 
     row = _client_feature_row(client_code)
+    if _quotation_only_from_row(row):
+        return module_name == "Quotation"
+
     flag = MODULE_FEATURE_FLAGS.get(module_name)
 
     if flag is None:
@@ -3427,32 +3490,17 @@ def build_group_list():
     if _quote_role():
         return ["Quotation"]
 
+    if (not is_super_admin()) and _quotation_only_from_session():
+        return ["Quotation"]
+
     if is_super_admin():
         return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Manufacturing", "Accounts", "Projects", "Quotation", "Reports", "Enterprise", "Support", "Tools"]
 
     # Client users/admins should see ONLY groups enabled for that client.
     groups = []
 
-    # Dashboard only when user has at least one normal ERP module, otherwise quotation-only users see only Quotation.
-    has_any_normal_module = any([
-        st.session_state.get("allow_master_group", False),
-        st.session_state.get("allow_attendance", False),
-        st.session_state.get("allow_inout", False),
-        st.session_state.get("allow_visitor", False),
-        st.session_state.get("allow_task", False),
-        st.session_state.get("allow_appointment", False),
-        st.session_state.get("allow_stock_raw", False),
-        st.session_state.get("allow_stock_fg", False),
-        st.session_state.get("allow_stock_wip", False),
-        st.session_state.get("allow_sales", False),
-        st.session_state.get("allow_purchase", False),
-        st.session_state.get("allow_expense", False),
-        st.session_state.get("allow_service_voucher", False),
-        st.session_state.get("allow_fixed_assets", False),
-        st.session_state.get("allow_accounting", False),
-        st.session_state.get("allow_excel_upload", False),
-        st.session_state.get("allow_google_sheet_import", False),
-    ])
+    # Dashboard only when user has at least one core ERP module. Optional enterprise defaults do not count.
+    has_any_normal_module = _core_feature_enabled_from_session()
 
     if has_any_normal_module:
         groups.append("Dashboard")
