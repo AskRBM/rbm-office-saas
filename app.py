@@ -2508,12 +2508,105 @@ def quotation_module():
             st.subheader("Negotiation History")
             ndf = load_table("quotation_negotiations", 5000)
             st.dataframe(ndf, use_container_width=True)
+
             if not ndf.empty:
                 c1, c2 = st.columns(2)
                 with c1:
                     st.download_button("Download Negotiation Excel", to_excel_bytes(ndf), "quotation_negotiations.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="neg_xlsx")
                 with c2:
                     st.download_button("Download Negotiation CSV", ndf.to_csv(index=False).encode("utf-8"), "quotation_negotiations.csv", "text/csv", use_container_width=True, key="neg_csv")
+
+                st.divider()
+                st.subheader("Edit / Delete / Re-Send Negotiation")
+                neg_ids = ndf["id"].dropna().astype(int).tolist() if "id" in ndf.columns else []
+                if neg_ids:
+                    selected_neg_id = st.selectbox("Select Negotiation ID", neg_ids, key="admin_neg_edit_id")
+                    neg_match = ndf[ndf["id"].astype(str) == str(selected_neg_id)]
+                    if not neg_match.empty:
+                        neg_row = neg_match.iloc[0].to_dict()
+
+                        with st.expander(f"Edit Negotiation - ID {selected_neg_id}", expanded=False):
+                            c1, c2, c3 = st.columns(3)
+                            vendor_email_edit = c1.text_input("Vendor Email", value=str(neg_row.get("vendor_email", "") or ""), key=f"neg_email_{selected_neg_id}")
+                            deadline_edit = c2.text_input("Deadline", value=str(neg_row.get("deadline", "") or ""), key=f"neg_deadline_{selected_neg_id}")
+                            statuses = ["Negotiation Requested", "Open", "Pending", "Revised Submitted", "Accepted", "Rejected", "Closed", "Converted To PO"]
+                            current_status = str(neg_row.get("status", "Negotiation Requested") or "Negotiation Requested")
+                            status_index = statuses.index(current_status) if current_status in statuses else 0
+                            status_edit = c3.selectbox("Status", statuses, index=status_index, key=f"neg_status_{selected_neg_id}")
+
+                            c4, c5, c6 = st.columns(3)
+                            requested_amount_edit = c4.number_input("Target / Requested Amount", value=float(neg_row.get("requested_amount", 0) or 0), step=100.0, key=f"neg_req_amt_{selected_neg_id}")
+                            revised_total_edit = c5.number_input("Revised Total Amount", value=float(neg_row.get("revised_total_amount", 0) or 0), step=100.0, key=f"neg_rev_total_{selected_neg_id}")
+                            vendor_response_edit = c6.text_input("Vendor Response", value=str(neg_row.get("vendor_response", "") or ""), key=f"neg_vendor_resp_{selected_neg_id}")
+                            message_edit = st.text_area("Negotiation Message", value=str(neg_row.get("negotiation_message", "") or ""), key=f"neg_msg_{selected_neg_id}")
+
+                            b1, b2, b3, b4 = st.columns(4)
+
+                            with b1:
+                                if st.button("Update Negotiation", use_container_width=True, key=f"neg_update_{selected_neg_id}"):
+                                    update_row("quotation_negotiations", selected_neg_id, {
+                                        "vendor_email": vendor_email_edit,
+                                        "deadline": deadline_edit,
+                                        "status": status_edit,
+                                        "requested_amount": requested_amount_edit,
+                                        "revised_total_amount": revised_total_edit,
+                                        "vendor_response": vendor_response_edit,
+                                        "negotiation_message": message_edit,
+                                    })
+                                    try:
+                                        qid = int(neg_row.get("quotation_id", 0) or 0)
+                                        if qid:
+                                            supabase.table(TABLES["quotations"]).update({
+                                                "negotiation_status": status_edit,
+                                                "negotiation_deadline": deadline_edit,
+                                                "negotiation_message": message_edit,
+                                                "quotation_status": status_edit,
+                                            }).eq("id", qid).execute()
+                                    except Exception:
+                                        pass
+                                    st.success("Negotiation updated.")
+                                    st.rerun()
+
+                            with b2:
+                                if st.button("Delete Negotiation", use_container_width=True, key=f"neg_delete_{selected_neg_id}"):
+                                    delete_row("quotation_negotiations", selected_neg_id)
+                                    st.success("Negotiation deleted.")
+                                    st.rerun()
+
+                            with b3:
+                                if st.button("Re-Send Email", use_container_width=True, key=f"neg_resend_{selected_neg_id}"):
+                                    qid = int(neg_row.get("quotation_id", 0) or 0)
+                                    qraw = safe_df(supabase.table(TABLES["quotations"]).select("*").eq("id", qid).limit(1).execute().data) if qid else pd.DataFrame()
+                                    if qraw.empty:
+                                        st.error("Linked quotation not found.")
+                                    else:
+                                        qrow = qraw.iloc[0].to_dict()
+                                        qrow["business_name"] = neg_row.get("business_name", qrow.get("business_name", ""))
+                                        qrow["business_username"] = neg_row.get("business_username", qrow.get("business_username", ""))
+                                        sent, msg, mailto, body = _request_negotiation_for_quotation(qrow, deadline_edit, message_edit, requested_amount_edit)
+                                        if sent:
+                                            st.success("Negotiation email re-sent successfully.")
+                                        else:
+                                            st.warning(msg)
+                                            if mailto:
+                                                st.markdown(f"[Open Email Draft to Vendor]({mailto})")
+                                                st.text_area("Email Draft Body", value=body, height=220, key=f"neg_resend_body_{selected_neg_id}")
+
+                            with b4:
+                                if st.button("Convert To PO", use_container_width=True, key=f"neg_po_{selected_neg_id}"):
+                                    update_row("quotation_negotiations", selected_neg_id, {"status": "Converted To PO"})
+                                    try:
+                                        qid = int(neg_row.get("quotation_id", 0) or 0)
+                                        if qid:
+                                            supabase.table(TABLES["quotations"]).update({
+                                                "quotation_status": "Converted To PO",
+                                                "negotiation_status": "Converted To PO",
+                                            }).eq("id", qid).execute()
+                                    except Exception:
+                                        pass
+                                    st.success("Marked as Converted To PO.")
+                                    st.rerun()
+
 
     elif _quote_role():
         st.info("You can see only requirements assigned to your business username and only your own quotations.")
