@@ -60,7 +60,7 @@ TABLES = {
 
 DISPLAY_COLUMNS = {
     "clients": ["id","client_code","client_name","allow_master_group","allow_task","allow_attendance","allow_inout","allow_visitor","allow_appointment","allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense","allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import","allow_quotation","allow_manufacturing","allow_project_accounting","allow_subscription","allow_support","allow_license_manager","status","created_at"],
-    "users": ["id","client_code","username","password","role","full_name","status"],
+    "users": ["id","client_code","username","password","role","full_name","email","mobile","status"],
     "employees": ["id","client_code","employee_id","employee_name","mobile","email","department","designation","branch_division","status"],
     "attendance": ["id","client_code","attendance_date","financial_year","employee_name","attendance_type","office_location","status","in_time","out_time","working_hours","in_latitude","in_longitude","out_latitude","out_longitude","remarks","created_by"],
     "attendance_visits": ["id","client_code","visit_date","financial_year","employee_name","visit_place","in_time","out_time","in_latitude","in_longitude","out_latitude","out_longitude","remarks","created_by"],
@@ -1117,7 +1117,7 @@ def login_page():
                 st.session_state["client_code"] = client_code
                 st.session_state["client_name"] = load_client_permissions(client_code)
                 st.rerun()
-        st.info("Default  Admin: CST / *******")
+        st.info("Default Super Admin: admin / rbm123")
 
 def sidebar_toggle_top():
     if "sidebar_open" not in st.session_state:
@@ -1203,8 +1203,6 @@ def user_management():
         st.warning("Only Admin can access User Management.")
         return
 
-    # Super Admin can create users for any client.
-    # Client Admin can create users only for his own client_code/business.
     if is_super_admin():
         clients_df = load_table("clients", 1000)
         client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
@@ -1221,15 +1219,19 @@ def user_management():
         c1, c2 = st.columns(2)
 
         c1.text_input("Client Code", value=selected_client_code, disabled=True)
-        username = c1.text_input("Username")
         password = c2.text_input("Password", type="password")
+
+        username = c1.text_input("Username")
+        full_name = c2.text_input("Full Name")
+
+        email = c1.text_input("Email ID")
+        mobile = c2.text_input("Mobile No.")
 
         if is_super_admin():
             role = c1.selectbox("Role", ["Admin", "User", "Quotation User", "Super Admin"])
         else:
             role = c1.selectbox("Role", ["Admin", "User", "Quotation User"])
 
-        full_name = c2.text_input("Full Name")
         status = c2.selectbox("Status", ["Active", "Inactive"])
 
         if st.form_submit_button("Create User", use_container_width=True):
@@ -1257,6 +1259,8 @@ def user_management():
                         "password": password_clean,
                         "role": role,
                         "full_name": full_name.strip(),
+                        "email": email.strip(),
+                        "mobile": mobile.strip(),
                         "status": status
                     })
                     st.success("User created successfully.")
@@ -1267,6 +1271,7 @@ def user_management():
         users_df = users_df[users_df["client_code"].astype(str) == selected_client_code]
 
     show_table_with_edit_delete("users", users_df, "User List")
+
 
 def employee_master():
     show_header("Employee Master", "section-admin")
@@ -2223,7 +2228,7 @@ def send_negotiation_email(to_email, subject, body):
     """Send email if SMTP secrets are configured. If not configured, return mailto link."""
     to_email = str(to_email or "").strip()
     if not to_email:
-        return False, "Vendor email ID is not available.", ""
+        return False, "Vendor email ID is not available. Please add vendor Email ID in Business Users / User Management.", ""
 
     smtp_host = _safe_secret("SMTP_HOST", "")
     smtp_port = int(_safe_secret("SMTP_PORT", 587) or 587)
@@ -2404,6 +2409,8 @@ def quotation_module():
                             "password": business_password,
                             "role": "Quotation User",
                             "full_name": business_name.strip(),
+                            "email": email.strip(),
+                            "mobile": mobile.strip(),
                             "status": status,
                         })
                         st.success("Business quotation login created.")
@@ -3176,6 +3183,51 @@ def multi_company_branch():
         if not df.empty: st.dataframe(df, use_container_width=True)
 
 
+
+def email_sms_settings():
+    show_header("Email / SMS Settings", "section-tools")
+    st.info("Email auto-send ke liye Streamlit Cloud Secrets me SMTP details add karni hongi. Password app me store mat karo.")
+    st.markdown("""
+    **Streamlit Cloud → App → Settings → Secrets** me ye add karo:
+
+    ```toml
+    SMTP_HOST = "smtp.gmail.com"
+    SMTP_PORT = "587"
+    SMTP_USER = "your_email@gmail.com"
+    SMTP_PASSWORD = "your_gmail_app_password"
+    SMTP_FROM = "your_email@gmail.com"
+    ERP_PUBLIC_URL = "https://rbm-office-saas.streamlit.app/"
+    ```
+
+    Gmail ke liye normal password nahi chalega. Gmail **App Password** banana padega.
+    """)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("Current SMTP Status")
+        st.write("SMTP_HOST:", "✅ Set" if _safe_secret("SMTP_HOST", "") else "❌ Missing")
+        st.write("SMTP_USER:", "✅ Set" if _safe_secret("SMTP_USER", "") else "❌ Missing")
+        st.write("SMTP_PASSWORD:", "✅ Set" if _safe_secret("SMTP_PASSWORD", "") else "❌ Missing")
+        st.write("SMTP_FROM:", "✅ Set" if _safe_secret("SMTP_FROM", "") else "❌ Missing")
+    with c2:
+        st.write("Test Email")
+        test_to = st.text_input("Send test email to")
+        if st.button("Send Test Email", use_container_width=True):
+            subject = "RBM ERP Test Email"
+            body = "This is a test email from RBM ERP SaaS."
+            sent, msg, mailto = send_negotiation_email(test_to, subject, body)
+            if sent:
+                st.success(msg)
+            else:
+                st.warning(msg)
+                if mailto:
+                    st.markdown(f"[Open Email Draft]({mailto})")
+
+    st.divider()
+    st.subheader("SMS / WhatsApp")
+    st.info("Direct SMS/WhatsApp auto-send ke liye Twilio / WhatsApp Business API / SMS provider API add karna padega. Abhi mobile number store hoga; email draft support hai.")
+
+
 def offline_sync_engine():
     show_header("Online / Offline Sync Engine", "section-tools")
     st.info("Future-ready sync control for SQLite desktop + Supabase online ERP.")
@@ -3800,7 +3852,7 @@ def get_menu_modules(group):
                 modules.append("Audit Log")
     elif group == "Tools":
         if is_super_admin():
-            modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Calculator", "Offline Sync Engine"]
+            modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Calculator", "Email / SMS Settings", "Offline Sync Engine"]
         elif st.session_state.get("role") == "Admin":
             modules = ["Calculation Book"]
     elif group == "Enterprise":
@@ -4004,6 +4056,7 @@ def get_module_mapping():
         "Calculator": ai_assistant,
         "Multi Company / Branch": multi_company_branch,
         "Offline Sync Engine": offline_sync_engine,
+        "Email / SMS Settings": email_sms_settings,
         "Project Accounting": project_accounting_module,
         "AMC / Subscription": amc_subscription_module,
         "Support Desk": support_ticket_module,
