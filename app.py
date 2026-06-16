@@ -840,6 +840,59 @@ def show_header(title, cls=""): st.markdown(f'<div class="section-title {cls}">{
 def show_metric_card(label, value):
     st.markdown(f'<div class="metric-card"><div class="metric-number">{value}</div><div class="metric-label">{label}</div></div>', unsafe_allow_html=True)
 
+
+
+def _rbm_html_escape(x):
+    return (str(x)
+        .replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+        .replace('\"', '&quot;')
+        .replace("'", '&#39;'))
+
+def print_dataframe_preview(title, df, key_prefix='print_df'):
+    """Show browser print preview for any module/register dataframe."""
+    try:
+        if df is None or df.empty:
+            st.warning('No data available for print.')
+            return
+        max_rows = min(len(df), 500)
+        pdf = df.head(max_rows).copy()
+        html = """
+        <html><head><meta charset='utf-8'>
+        <style>
+            body{font-family:Arial, sans-serif; padding:18px; color:#111;}
+            .top{display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #111; padding-bottom:8px; margin-bottom:12px;}
+            h2{margin:0; font-size:22px;}
+            .meta{font-size:12px;}
+            table{border-collapse:collapse; width:100%; font-size:11px;}
+            th,td{border:1px solid #777; padding:5px; vertical-align:top;}
+            th{background:#f1f1f1;}
+            .no-print{margin-bottom:12px;}
+            button{padding:8px 16px; font-weight:bold; cursor:pointer;}
+            @media print{.no-print{display:none;} body{padding:0;} table{font-size:10px;}}
+        </style></head><body>
+        <div class='no-print'><button onclick='window.print()'>Print / Save PDF</button></div>
+        """
+        html += f"<div class='top'><h2>RBM ERP - {_rbm_html_escape(title)}</h2><div class='meta'>Rows: {len(df)} | Printed: {_rbm_html_escape(india_now().strftime('%d-%m-%Y %H:%M'))}</div></div>"
+        html += '<table><thead><tr>'
+        for c in pdf.columns:
+            html += f'<th>{_rbm_html_escape(str(c).replace("_"," ").title())}</th>'
+        html += '</tr></thead><tbody>'
+        for _, r in pdf.iterrows():
+            html += '<tr>'
+            for c in pdf.columns:
+                v = '' if pd.isna(r[c]) else r[c]
+                html += f'<td>{_rbm_html_escape(v)}</td>'
+            html += '</tr>'
+        html += '</tbody></table>'
+        if len(df) > max_rows:
+            html += f"<p>Showing first {max_rows} rows for print preview.</p>"
+        html += '</body></html>'
+        st.components.v1.html(html, height=650, scrolling=True)
+    except Exception as e:
+        st.error(f'Print preview failed: {e}')
+
 def show_table_with_edit_delete(key, df, title):
     st.subheader(title)
 
@@ -852,26 +905,35 @@ def show_table_with_edit_delete(key, df, title):
 
     st.dataframe(filtered, use_container_width=True)
 
-    if has_key_permission(key, "export") or is_super_admin():
-        c1, c2 = st.columns(2)
+    if has_key_permission(key, "export") or has_key_permission(key, "print") or is_super_admin():
+        c1, c2, c3 = st.columns(3)
         with c1:
-            st.download_button(
-                "Download Excel",
-                to_excel_bytes(filtered),
-                f"{key}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key=f"xlsx_{key}"
-            )
+            if has_key_permission(key, "export") or is_super_admin():
+                st.download_button(
+                    "Download Excel",
+                    to_excel_bytes(filtered),
+                    f"{key}.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key=f"xlsx_{key}"
+                )
         with c2:
-            st.download_button(
-                "Download CSV",
-                filtered.to_csv(index=False).encode("utf-8"),
-                f"{key}.csv",
-                "text/csv",
-                use_container_width=True,
-                key=f"csv_{key}"
-            )
+            if has_key_permission(key, "export") or is_super_admin():
+                st.download_button(
+                    "Download CSV",
+                    filtered.to_csv(index=False).encode("utf-8"),
+                    f"{key}.csv",
+                    "text/csv",
+                    use_container_width=True,
+                    key=f"csv_{key}"
+                )
+        with c3:
+            if has_key_permission(key, "print") or is_super_admin():
+                if st.button("Print Preview / PDF", use_container_width=True, key=f"print_table_{key}"):
+                    st.session_state[f"show_print_table_{key}"] = not st.session_state.get(f"show_print_table_{key}", False)
+
+    if st.session_state.get(f"show_print_table_{key}", False):
+        print_dataframe_preview(title, filtered, key_prefix=f"print_table_{key}")
 
     can_manage = (
         is_super_admin()
@@ -5750,9 +5812,10 @@ def online_generic_module(module_title):
         st.dataframe(pd.DataFrame([sample]), use_container_width=True)
     else:
         st.dataframe(df, use_container_width=True)
-        c1,c2 = st.columns(2)
+        c1,c2,c3 = st.columns(3)
         c1.download_button("Export CSV", df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True)
-        with c2:
+        c2.download_button("Export Excel", to_excel_bytes(df), file_name=f"{module_title.replace(' ','_')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with c3:
             show_pp = st.button("Print Preview / PDF", use_container_width=True, key=f"pp_btn_{module_title}")
         if show_pp:
             _generic_print_preview_ui(module_title, df)
