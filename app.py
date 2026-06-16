@@ -4502,6 +4502,13 @@ def online_generic_module(module_title):
 
 def _page(function_name, title):
     fn = globals().get(function_name)
+    # IMPORTANT FIX:
+    # online_generic_module needs one argument (module title).
+    # Streamlit menu calls page functions without arguments, so always wrap it in lambda.
+    # This fixes TypeError in User Password Change, Data Purge, Data Locking, CRM, Payroll,
+    # Barcode, Warehouse, Production Planning/Schedule and all other starter modules.
+    if function_name == "online_generic_module":
+        return lambda title=title: online_generic_module(title)
     if callable(fn):
         return fn
     return lambda title=title: online_generic_module(title)
