@@ -1587,14 +1587,36 @@ def client_master():
             if selected_groups.get("Tools"):
                 row.update({"allow_excel_upload": True, "allow_google_sheet_import": True})
 
+            # Supabase clients table may be old/new schema.
+            # Save only safe columns so client creation never crashes because of an extra column.
+            safe_client_columns = [
+                "client_code", "client_name", "status",
+                "allow_master_group", "allow_attendance", "allow_inout", "allow_visitor", "allow_task", "allow_appointment",
+                "allow_stock_raw", "allow_stock_fg", "allow_stock_wip", "allow_sales", "allow_purchase", "allow_expense",
+                "allow_service_voucher", "allow_fixed_assets", "allow_accounting", "allow_excel_upload", "allow_google_sheet_import",
+                "allow_quotation", "allow_manufacturing", "allow_project_accounting", "allow_subscription", "allow_support", "allow_license_manager"
+            ]
+            client_row = {k: v for k, v in row.items() if k in safe_client_columns}
+
             try:
                 exists = safe_df(supabase.table("clients").select("id,client_code").eq("client_code", company_code).limit(1).execute().data)
-                if not exists.empty and "id" in exists.columns:
-                    supabase.table("clients").update(row).eq("client_code", company_code).execute()
+                if not exists.empty:
+                    supabase.table("clients").update(client_row).eq("client_code", company_code).execute()
                 else:
-                    insert_row("clients", row)
-            except Exception:
-                insert_row("clients", row)
+                    supabase.table("clients").insert(client_row).execute()
+            except Exception as e:
+                # Last fallback for very old clients table: save only the minimum columns.
+                try:
+                    minimal_client_row = {"client_code": company_code, "client_name": client_name, "status": status}
+                    exists = safe_df(supabase.table("clients").select("id,client_code").eq("client_code", company_code).limit(1).execute().data)
+                    if not exists.empty:
+                        supabase.table("clients").update(minimal_client_row).eq("client_code", company_code).execute()
+                    else:
+                        supabase.table("clients").insert(minimal_client_row).execute()
+                except Exception as e2:
+                    st.error("Client save failed. Please check Supabase clients table columns: client_code, client_name, status.")
+                    st.exception(e2)
+                    return
 
             try:
                 supabase.table("client_module_permissions").delete().eq("client_code", company_code).execute()
