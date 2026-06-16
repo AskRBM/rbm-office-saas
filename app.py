@@ -4389,91 +4389,105 @@ def filter_modules_by_permission(modules):
 
 
 def role_based_security_control():
-    """Role Based Security screen: same layout as Role Permission Control, but Select Role dropdown shows USERNAMES."""
-    show_header("Role-wise Permission Control", "section-admin")
+    """Role Based Security screen: same as Role Permission Control, but Select Role dropdown shows USERNAMES."""
+    show_header("Role Based Security", "section-admin")
     if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
         st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Based Security.")
         return
 
-    st.info("Role Based Security = username wise permission. Here the Select Role dropdown shows USERNAMES/login IDs. बाकी सब Role Permission Control जैसा ही रहेगा.")
+    st.info("Role Based Security = username/login wise permission. Screen same as Role Permission Control, but Select Role dropdown shows username created in User Management.")
 
+    # Select client exactly like Role Permission Control
     if is_super_admin():
         clients_df = load_table("clients", 1000)
         client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty and "client_code" in clients_df.columns else ["RBM"]
         if "RBM" not in client_codes:
             client_codes = ["RBM"] + client_codes
-        selected_client = st.selectbox("Select Client", add_all(client_codes), key="usersec_client")
-        if selected_client == "All":
-            selected_client = get_client_code()
+        selected_client = st.selectbox("Select Client", client_codes, key="rbs_client")
     else:
         selected_client = get_client_code()
-        st.info(f"User security for your own business only: {selected_client}")
+        st.selectbox("Select Client", [selected_client], key="rbs_client_fixed", disabled=True)
 
-    users_df = load_table("users", 2000)
+    # Select Role label remains same, but options are USERNAME only
+    users_df = load_table("users", 5000)
+    users_df = safe_df(users_df)
     if not users_df.empty and "client_code" in users_df.columns:
         users_df = users_df[users_df["client_code"].astype(str) == str(selected_client)]
-    current_role = st.session_state.get("role", "")
     if not is_super_admin() and not users_df.empty and "role" in users_df.columns:
-        # Client Super Admin/Admin cannot manage Developer/Super Admin accounts.
         users_df = users_df[~users_df["role"].astype(str).isin(["Developer", "Super Admin"])]
     if users_df.empty or "username" not in users_df.columns:
-        st.warning("No username found for this client. First create users in User Management.")
+        st.warning("No username found for this client. First create username in User Management.")
         return
 
     usernames = users_df["username"].dropna().astype(str).unique().tolist()
-    # User requirement: in Role Based Security screen, label must remain Select Role,
-    # but dropdown values must be usernames/login IDs.
-    selected_username = st.selectbox("Select Role", usernames, key="usersec_username")
-    role_show = ""
+    if not usernames:
+        st.warning("No username found for this client. First create username in User Management.")
+        return
+    selected_username = st.selectbox("Select Role", usernames, key="rbs_username_select")
+
+    user_role = ""
     if "role" in users_df.columns:
-        role_rows = users_df[users_df["username"].astype(str) == str(selected_username)]
-        if not role_rows.empty:
-            role_show = str(role_rows.iloc[0].get("role", ""))
-    if role_show:
-        st.caption(f"Selected user role: {role_show}")
+        rr = users_df[users_df["username"].astype(str) == str(selected_username)]
+        if not rr.empty:
+            user_role = str(rr.iloc[0].get("role", ""))
+    if user_role:
+        st.caption(f"Selected Username: {selected_username} | Actual Role: {user_role}")
 
     try:
-        existing = safe_df(supabase.table("user_permissions").select("*").eq("client_code", selected_client).eq("username", selected_username).execute().data)
+        existing = safe_df(
+            supabase.table("user_permissions")
+            .select("*")
+            .eq("client_code", selected_client)
+            .eq("username", selected_username)
+            .execute().data
+        )
     except Exception:
-        st.error("Supabase table user_permissions is missing. Run the updated supabase_required_patch.sql once in Supabase SQL Editor.")
+        st.error("Supabase table user_permissions missing. Run supabase_required_patch.sql once in Supabase SQL Editor.")
         existing = pd.DataFrame()
 
     perm_rows = []
-    with st.form("username_security_form"):
+    with st.form("role_based_security_username_form"):
         st.markdown("### Module Permissions")
         header = st.columns([2.5,1,1,1,1,1,1,1,1])
         header[0].markdown("**Module**")
         for i, act in enumerate(PERMISSION_ACTIONS, start=1):
             header[i].markdown(f"**{act.title()}**")
+
         for module in ERP_MODULES:
+            if module == "No module available":
+                continue
             if not module_enabled_for_client_code(module, selected_client):
                 continue
             if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
                 continue
-            current = existing[existing["module_name"].astype(str) == module] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
+            current = existing[existing["module_name"].astype(str) == str(module)] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
             cols = st.columns([2.5,1,1,1,1,1,1,1,1])
             cols[0].write(module)
             row = {"module_name": module}
             for i, act in enumerate(PERMISSION_ACTIONS, start=1):
                 colname = f"can_{act}"
-                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if not current.empty and colname in current.columns else default_permission(module, act)
-                row[colname] = cols[i].checkbox("", value=default_val, key=f"usersec_{selected_client}_{selected_username}_{module}_{act}")
+                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if (not current.empty and colname in current.columns) else default_permission(module, act)
+                row[colname] = cols[i].checkbox("", value=default_val, key=f"rbs_{selected_client}_{selected_username}_{module}_{act}")
             perm_rows.append(row)
-        if st.form_submit_button("Save Username Security", use_container_width=True):
-            try:
-                supabase.table("user_permissions").delete().eq("client_code", selected_client).eq("username", selected_username).execute()
-                rows = []
-                for r in perm_rows:
-                    rec = {"client_code": selected_client, "username": selected_username, "created_by": current_user()}
-                    rec.update(r)
-                    rows.append(rec)
-                if rows:
-                    supabase.table("user_permissions").insert(rows).execute()
-                write_audit_log("Role Based Security", "UPDATE", "", f"Saved username permissions for {selected_client} / {selected_username}")
-                st.success("Role Based Security saved successfully for selected username.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Unable to save username security. Please run updated SQL patch. Error: {e}")
+
+        save_btn = st.form_submit_button("Save Role Based Security", use_container_width=True)
+
+    if save_btn:
+        try:
+            supabase.table("user_permissions").delete().eq("client_code", selected_client).eq("username", selected_username).execute()
+            rows = []
+            for r in perm_rows:
+                rec = {"client_code": selected_client, "username": selected_username, "created_by": current_user()}
+                rec.update(r)
+                rows.append(rec)
+            if rows:
+                supabase.table("user_permissions").insert(rows).execute()
+            write_audit_log("Role Based Security", "UPDATE", "", f"Saved username wise permission for {selected_client} / {selected_username}")
+            st.success("Role Based Security saved successfully for selected username.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Unable to save Role Based Security. Run updated SQL patch if needed. Error: {e}")
+
     st.divider()
     try:
         show_table_with_edit_delete("user_permissions", load_table("user_permissions", 2000), "Saved Role Based Security")
