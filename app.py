@@ -4176,13 +4176,24 @@ def has_permission(module_name, action="view"):
         action = str(action).lower().strip()
         if action not in PERMISSION_ACTIONS:
             return False
-        role_name = str(st.session_state.get("role", "User"))
+
         client_code = get_client_code()
+        username = str(st.session_state.get("username", "")).strip()
+        role_name = str(st.session_state.get("role", "User")).strip()
+        col = f"can_{action}"
+
+        # 1) Role Based Security: username/login-wise permission gets first priority.
+        if username:
+            user_data = supabase.table("role_permissions").select("*").eq("client_code", client_code).eq("role_name", username).eq("module_name", module_name).limit(1).execute().data
+            dfu = safe_df(user_data)
+            if not dfu.empty:
+                return bool(dfu.iloc[0].get(col, default_permission(module_name, action))) if col in dfu.columns else default_permission(module_name, action)
+
+        # 2) Role Permission Control: role-wise permission fallback.
         data = supabase.table("role_permissions").select("*").eq("client_code", client_code).eq("role_name", role_name).eq("module_name", module_name).limit(1).execute().data
         dfp = safe_df(data)
         if dfp.empty:
             return default_permission(module_name, action)
-        col = f"can_{action}"
         return bool(dfp.iloc[0].get(col, default_permission(module_name, action))) if col in dfp.columns else default_permission(module_name, action)
     except Exception:
         return default_permission(module_name, action)
@@ -4257,6 +4268,112 @@ def role_permission_control():
             st.rerun()
     st.divider()
     show_table_with_edit_delete("role_permissions", load_table("role_permissions", 2000), "Saved Role Permissions")
+
+
+
+def _get_login_usernames_for_client(selected_client):
+    """Return login usernames from users table for Role Based Security dropdown."""
+    try:
+        q = supabase.table("users").select("username,client_code,status").eq("client_code", selected_client)
+        df = safe_df(q.execute().data)
+        if df.empty or "username" not in df.columns:
+            return ["No Username Found"]
+        if "status" in df.columns:
+            df = df[df["status"].astype(str).str.lower().isin(["active", "", "none", "nan"])]
+        names = sorted(df["username"].dropna().astype(str).str.strip().unique().tolist())
+        names = [x for x in names if x]
+        return names if names else ["No Username Found"]
+    except Exception:
+        return ["No Username Found"]
+
+
+def role_based_security_control():
+    """Same as Role Permission Control, but Select Role dropdown is login username-wise.
+    Saved records are stored in role_permissions.role_name = username.
+    has_permission() gives username-wise permissions first priority.
+    """
+    show_header("Role Based Security", "section-admin")
+    if st.session_state.get("role") not in ["Admin", "Super Admin", "Developer", "Client Super Admin"]:
+        st.warning("Only Admin / Client Super Admin / Super Admin can access Role Based Security.")
+        return
+
+    if is_super_admin():
+        clients_df = load_table("clients", 1000)
+        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty and "client_code" in clients_df.columns else ["RBM"]
+        if "RBM" not in client_codes:
+            client_codes = ["RBM"] + client_codes
+        selected_client = st.selectbox("Select Client", client_codes, key="rbs_client")
+    else:
+        selected_client = get_client_code()
+        st.info(f"Username-wise permission setting for your own business only: {selected_client}")
+
+    usernames = _get_login_usernames_for_client(selected_client)
+    if usernames == ["No Username Found"]:
+        st.warning("No username found for this client. First create username in User Management.")
+        return
+
+    selected_username = st.selectbox("Select Role", usernames, key="rbs_username")
+
+    existing = safe_df(
+        supabase.table("role_permissions")
+        .select("*")
+        .eq("client_code", selected_client)
+        .eq("role_name", selected_username)
+        .execute().data
+    )
+
+    perm_rows = []
+    with st.form("role_based_security_form"):
+        st.markdown("### Module Permissions")
+        header = st.columns([2.5,1,1,1,1,1,1,1,1])
+        header[0].markdown("**Module**")
+        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+            header[i].markdown(f"**{act.title()}**")
+
+        for module in ERP_MODULES:
+            if not module_enabled_for_client_code(module, selected_client):
+                continue
+            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
+                continue
+
+            current = existing[existing["module_name"].astype(str) == module] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
+            cols = st.columns([2.5,1,1,1,1,1,1,1,1])
+            cols[0].write(module)
+            row = {"module_name": module}
+            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+                colname = f"can_{act}"
+                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if not current.empty and colname in current.columns else default_permission(module, act)
+                row[colname] = cols[i].checkbox("", value=default_val, key=f"rbs_{selected_client}_{selected_username}_{module}_{act}")
+            perm_rows.append(row)
+
+        if st.form_submit_button("Save Role Based Security", use_container_width=True):
+            supabase.table("role_permissions").delete().eq("client_code", selected_client).eq("role_name", selected_username).execute()
+            rows = []
+            for r in perm_rows:
+                rec = {"client_code": selected_client, "role_name": selected_username, "created_by": current_user()}
+                rec.update(r)
+                rows.append(rec)
+            if rows:
+                supabase.table("role_permissions").insert(rows).execute()
+            write_audit_log("Role Based Security", "UPDATE", "", f"Saved username-wise permissions for {selected_client} / {selected_username}")
+            st.success("Role Based Security saved successfully.")
+            st.rerun()
+
+    st.divider()
+    try:
+        df = load_table("role_permissions", 2000)
+        if not df.empty:
+            if "client_code" in df.columns:
+                df = df[df["client_code"].astype(str) == str(selected_client)]
+            if "role_name" in df.columns:
+                df = df[df["role_name"].astype(str) == str(selected_username)]
+            st.subheader("Saved Username-wise Permissions")
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("No saved username-wise permission found yet.")
+    except Exception:
+        st.info("Saved Role Based Security list will show after role_permissions table is created.")
+
 
 # ---------- MAIN MENU ----------
 def get_menu_modules(group):
@@ -4396,7 +4513,7 @@ def get_module_mapping():
         "Client Master": _page("client_master", "Client Master"),
         "User Management": _page("user_management", "User Management"),
         "Role Permission Control": _page("role_permission_control", "Role Permission Control"),
-        "Role Based Security": _page("role_permission_control", "Role Based Security"),
+        "Role Based Security": _page("role_based_security_control", "Role Based Security"),
         "Client License Dashboard": _page("license_manager_module", "Client License Dashboard"),
         "User Password Change": _page("online_generic_module", "User Password Change"),
         "License Status Screen": _page("license_manager_module", "License Status Screen"),
