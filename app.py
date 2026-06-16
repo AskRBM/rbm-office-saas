@@ -5895,18 +5895,48 @@ _GENERIC_MODULE_FIELDS.update({
 # only Select Role dropdown must show USERNAME from User Management.
 
 def _rbm_username_list_for_client(selected_client):
+    """Return usernames created in User Management for Role Based Security.
+    Robust fallback: first selected client, then current login client, then all users.
+    """
+    usernames = []
     try:
         df = safe_df(load_table("users", 5000))
-        if df.empty or "username" not in df.columns:
-            return []
-        if "client_code" in df.columns and str(selected_client) != "All":
-            df = df[df["client_code"].astype(str) == str(selected_client)]
-        if not is_super_admin() and "role" in df.columns:
-            df = df[~df["role"].astype(str).isin(["Developer", "Super Admin"])]
-        return [str(x) for x in df["username"].dropna().unique().tolist() if str(x).strip()]
     except Exception:
-        return []
+        df = pd.DataFrame()
 
+    if not df.empty and "username" in df.columns:
+        try:
+            df2 = df.copy()
+            if "client_code" in df2.columns and str(selected_client) not in ["", "All"]:
+                filtered = df2[df2["client_code"].astype(str).str.strip() == str(selected_client).strip()]
+                if filtered.empty and st.session_state.get("client_code"):
+                    filtered = df2[df2["client_code"].astype(str).str.strip() == str(st.session_state.get("client_code")).strip()]
+                if not filtered.empty:
+                    df2 = filtered
+            if not is_super_admin() and "role" in df2.columns:
+                df2 = df2[~df2["role"].astype(str).isin(["Developer", "Super Admin"])]
+            usernames = [str(x).strip() for x in df2["username"].dropna().unique().tolist() if str(x).strip()]
+        except Exception:
+            usernames = []
+
+    # Final fallback: direct Supabase select, then all usernames.
+    if not usernames:
+        try:
+            data = supabase.table("users").select("username,client_code,role").execute().data or []
+            df3 = safe_df(data)
+            if not df3.empty and "username" in df3.columns:
+                if "client_code" in df3.columns and str(selected_client) not in ["", "All"]:
+                    filtered = df3[df3["client_code"].astype(str).str.strip() == str(selected_client).strip()]
+                    if not filtered.empty:
+                        df3 = filtered
+                if not is_super_admin() and "role" in df3.columns:
+                    df3 = df3[~df3["role"].astype(str).isin(["Developer", "Super Admin"])]
+                usernames = [str(x).strip() for x in df3["username"].dropna().unique().tolist() if str(x).strip()]
+        except Exception:
+            usernames = []
+
+    # Remove duplicates but keep order.
+    return list(dict.fromkeys(usernames))
 
 def _rbm_client_code_options_for_security():
     try:
@@ -5953,7 +5983,7 @@ def role_based_security_control():
         st.warning("No username found for this client. First create username in User Management.")
         return
 
-    selected_username = st.selectbox("Select Role", usernames, key="rbs_fixed_username")
+    selected_username = st.selectbox("Select Username", usernames, key="rbs_fixed_username")
 
     try:
         existing = safe_df(
