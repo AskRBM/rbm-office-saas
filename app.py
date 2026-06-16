@@ -322,6 +322,8 @@ ONLINE_MODULE_GROUPS = {
     ],
 }
 
+GROUP_MODULES = ONLINE_MODULE_GROUPS
+
 GROUP_ACCESS_KEYS = {
     "Admin": ["__client_admin_group__"],
     "Master": ["allow_master_group"],
@@ -5399,6 +5401,88 @@ def render_current_page(mapping, choice):
         st.info("Safe fallback opened. Please check Supabase table/columns if this module requires permanent save.")
         online_generic_module(choice)
 # ================= END RBM ONLINE FINAL INTEGRATION PATCH 3 =================
+
+
+# ================= RBM PATCH25 BASE MODULE MAPPING FIX =================
+def get_module_mapping():
+    """Base module mapping. This prevents NameError and keeps all modules routed.
+    Working modules open their own screen; remaining modules open integrated generic screen.
+    """
+    return {
+        "Dashboard": dashboard,
+        "Client Master": client_master,
+        "User Management": user_management,
+        "Role Permission Control": role_permission_control,
+        "Role Based Security": role_based_security_control,
+        "Employee Master": employee_master,
+        "Company Profile": company_profile,
+        "Financial Year Master": financial_year_master,
+        "Cost Center Master": cost_center_master,
+        "Document Series": document_series_master,
+        "GST Settings": gst_settings_master,
+        "Ledger Group Master": ledger_group_master,
+        "Ledger Master": ledger_master,
+        "Stock Group Master": stock_group_master,
+        "Stock Ledger Master": stock_ledger_master,
+        "Inventory Item Master": stock_ledger_master,
+        "Attendance Management": attendance,
+        "Attendance Visits": attendance,
+        "IN / OUT Register": inout_register,
+        "Visitor Register": visitor_register,
+        "Task Delegation": task_delegation,
+        "Appointments": appointment_module,
+        "Sales GST Invoice": sales_invoice,
+        "Purchase GST Invoice": purchase_invoice,
+        "Expense GST": expense_gst,
+        "Service Voucher": service_voucher,
+        "Fixed Assets": fixed_assets,
+        "Accounting Entries": accounting_entries,
+        "Calculation Book": calculation_book,
+        "Quotation": quotation_module,
+        "Reports": reports,
+        "Digital Audit": digital_audit_module,
+        "Dashboard Analytics": dashboard_analytics,
+        "Budget vs Actual": budget_vs_actual,
+        "Bank Reconciliation": bank_reconciliation,
+        "Document Management": document_management,
+        "Purchase Cycle": purchase_cycle,
+        "Sales Cycle": sales_cycle,
+        "Asset Management": asset_management_advanced,
+        "Mobile App Sync": pwa_mobile_app,
+        "AI Chat Assistant": ai_assistant,
+        "Multi Company / Branch": multi_company_branch,
+        "Email Utility": email_sms_settings,
+        "Email Integration": email_sms_settings,
+        "Optional Online Sync Center": offline_sync_engine,
+        "BOM Header": bill_of_material_module,
+        "Manufacturing BOM": bill_of_material_module,
+        "BOM Lines": bill_of_material_module,
+        "Production Orders": production_order_module,
+        "Production Planning": production_order_module,
+        "Production Entries": production_entry_module,
+        "Consumption Entries": consumption_entry_module,
+        "FG Entries": finished_goods_entry_module,
+        "Production Schedule": online_generic_module,
+        "Capacity Planning": online_generic_module,
+        "Production Costing": production_costing_module,
+        "MRP": mrp_module,
+        "Project Accounting": project_accounting_module,
+        "AMC / Subscription": amc_subscription_module,
+        "Support Tickets": support_ticket_module,
+        "Client License Dashboard": license_manager_module,
+        "License Status Screen": license_manager_module,
+        "Audit Log": audit_log_report,
+        "Trial Balance": lambda: report_module_screen("Trial Balance") if 'report_module_screen' in globals() else reports(),
+        "Ledger Statement": lambda: report_module_screen("Ledger Statement") if 'report_module_screen' in globals() else reports(),
+        "Profit Loss": lambda: report_module_screen("Profit Loss") if 'report_module_screen' in globals() else reports(),
+        "Balance Sheet": lambda: report_module_screen("Balance Sheet") if 'report_module_screen' in globals() else reports(),
+        "Sundry Receivable": lambda: report_module_screen("Sundry Receivable") if 'report_module_screen' in globals() else reports(),
+        "Sundry Payable": lambda: report_module_screen("Sundry Payable") if 'report_module_screen' in globals() else reports(),
+        "Stock Report": lambda: report_module_screen("Stock Report") if 'report_module_screen' in globals() else reports(),
+        "Gst Report": lambda: report_module_screen("Gst Report") if 'report_module_screen' in globals() else reports(),
+        "Tds Report": lambda: report_module_screen("Tds Report") if 'report_module_screen' in globals() else reports(),
+    }
+# ================= END PATCH25 BASE MODULE MAPPING FIX =================
 
 
 _PATCH5_OLD_GET_MODULE_MAPPING = get_module_mapping
