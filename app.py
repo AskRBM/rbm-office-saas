@@ -4870,6 +4870,69 @@ def _company_codes():
     codes = list(dict.fromkeys([cur] + codes + ["RBM", "SJM01", "CST01"]))
     return codes
 
+def _collect_generic_values(module_name=None, column_name=None):
+    vals = []
+    try:
+        for r in st.session_state.get(_SPECIAL_STORAGE_KEY, []):
+            if module_name is None or r.get("module_name") == module_name:
+                if column_name and r.get(column_name):
+                    vals.append(str(r.get(column_name)))
+    except Exception:
+        pass
+    try:
+        q = supabase.table("generic_erp_records").select("module_name,data_json").limit(1000).execute().data or []
+        for rec in q:
+            data = rec.get("data_json") if isinstance(rec.get("data_json"), dict) else {}
+            if data and (module_name is None or rec.get("module_name") == module_name or data.get("module_name") == module_name):
+                if column_name and data.get(column_name):
+                    vals.append(str(data.get(column_name)))
+    except Exception:
+        pass
+    return list(dict.fromkeys([v for v in vals if str(v).strip() and str(v) != "All"]))
+
+def _online_stock_items():
+    vals = []
+    try:
+        vals += get_stock_items() or []
+    except Exception:
+        pass
+    # Barcode Master and Inventory Item Master entries must become available in every Item dropdown.
+    for mod in ["Barcode Master", "Inventory Item Master", "Stock Ledger / Item Master", "Raw Material Stock", "Finished Goods Stock"]:
+        vals += _collect_generic_values(mod, "item_name")
+        vals += _collect_generic_values(mod, "finished_item")
+        vals += _collect_generic_values(mod, "raw_material")
+    return list(dict.fromkeys([str(v) for v in vals if str(v).strip() and str(v) != "All"])) or ["Item 1"]
+
+def _item_code_for_name(item_name):
+    if not item_name or str(item_name) in ["All", "Add New..."]:
+        return ""
+    # First check online generic records including Barcode Master.
+    try:
+        for r in st.session_state.get(_SPECIAL_STORAGE_KEY, []):
+            if str(r.get("item_name", "")) == str(item_name) and r.get("item_code"):
+                return str(r.get("item_code"))
+    except Exception:
+        pass
+    try:
+        q = supabase.table("generic_erp_records").select("data_json").limit(1000).execute().data or []
+        for rec in q:
+            data = rec.get("data_json") if isinstance(rec.get("data_json"), dict) else {}
+            if str(data.get("item_name", "")) == str(item_name) and data.get("item_code"):
+                return str(data.get("item_code"))
+    except Exception:
+        pass
+    # Then check existing stock master tables if columns exist.
+    for tbl in ["stock_items", "items", "stock_ledgers"]:
+        try:
+            df = load_table(tbl, 1000)
+            if not df.empty and "item_name" in df.columns and "item_code" in df.columns:
+                m = df[df["item_name"].astype(str) == str(item_name)]
+                if not m.empty:
+                    return str(m.iloc[0].get("item_code", ""))
+        except Exception:
+            pass
+    return ""
+
 def _generic_lookup(kind):
     try:
         if kind == "company": return _company_codes()
@@ -4878,12 +4941,15 @@ def _generic_lookup(kind):
         if kind == "employee":
             df = load_table("employees", 500); return [str(x) for x in df.get("employee_name", pd.Series(dtype=str)).dropna().unique().tolist()] or ["Sample Employee"]
         if kind == "stock_item":
-            return get_stock_items() or ["Sample Item"]
+            return _online_stock_items()
         if kind == "bom":
-            df = load_table("bom_headers", 500); return [str(x) for x in df.get("bom_no", pd.Series(dtype=str)).dropna().unique().tolist()] or ["BOM001"]
+            vals = _collect_generic_values("BOM Header", "bom_no") + _collect_generic_values("BOM Lines", "bom_no")
+            try:
+                df = load_table("bom_headers", 500); vals += [str(x) for x in df.get("bom_no", pd.Series(dtype=str)).dropna().unique().tolist()]
+            except Exception: pass
+            return list(dict.fromkeys(vals)) or ["BOM001"]
         if kind == "plan":
-            recs = st.session_state.get(_SPECIAL_STORAGE_KEY, [])
-            vals=[r.get("plan_no") for r in recs if r.get("module_name")=="Production Planning" and r.get("plan_no")]
+            vals = _collect_generic_values("Production Planning", "plan_no") + _collect_generic_values("Production Orders", "production_order_no")
             return vals or ["PLAN001"]
         if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
         if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
@@ -4929,11 +4995,11 @@ def _render_generic_input(col, label, field, typ, module_title):
     if typ in ["company","user","employee","stock_item","bom","plan","group","module_name"]:
         values = modules_for_selected_group(module_title) if typ == "module_name" else _generic_lookup(typ)
         if not values:
-            values = ["Add New..."]
+            values = ["All", "Add New..."]
         else:
-            values = list(dict.fromkeys([str(v) for v in values if str(v).strip()])) + ["Add New..."]
+            values = ["All"] + list(dict.fromkeys([str(v) for v in values if str(v).strip() and str(v) != "All"])) + ["Add New..."]
         return col.selectbox(label, values, key=f"gen_{module_title}_{field}")
-    if opts: return col.selectbox(label, opts + ["Add New..."], key=f"gen_{module_title}_{field}")
+    if opts: return col.selectbox(label, ["All"] + opts + ["Add New..."], key=f"gen_{module_title}_{field}")
     return col.text_input(label, key=f"gen_{module_title}_{field}")
 
 def online_generic_module(module_title):
@@ -4955,7 +5021,12 @@ def online_generic_module(module_title):
         cols = st.columns(3)
         row = {}
         for i, (field, label, typ) in enumerate(fields):
-            row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
+            # Auto-fill Item Code wherever Item Name is selected, same working style as offline ERP.
+            if field == "item_code" and row.get("item_name"):
+                auto_code = _item_code_for_name(row.get("item_name"))
+                row[field] = cols[i % 3].text_input(label, value=auto_code, key=f"gen_{module_title}_{field}_auto")
+            else:
+                row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
         c1, c2, c3 = st.columns(3)
         submitted = c1.form_submit_button(f"Save {module_title}", use_container_width=True)
         calc = c2.form_submit_button("Calculate", use_container_width=True)
@@ -4994,6 +5065,29 @@ def online_generic_module(module_title):
     else:
         st.dataframe(df, use_container_width=True)
         st.download_button("Export CSV", df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True)
+
+
+    # Print Preview / PDF style preview for payslip, voucher, bill, note, order and other printable modules.
+    printable_words = ["Payslip", "Voucher", "Invoice", "Bill", "Receipt", "Payment", "Debit Note", "Credit Note", "Order", "Delivery Note", "Receipt Note"]
+    if any(w.lower() in module_title.lower() for w in printable_words):
+        st.markdown("### Print Preview / PDF")
+        preview_row = None
+        if not df.empty:
+            preview_row = df.iloc[-1].to_dict()
+        else:
+            preview_row = row if 'row' in locals() else {}
+        with st.expander("Open Print Preview", expanded=False):
+            st.markdown(f"""
+            <div style='border:1px solid #999;padding:18px;border-radius:8px;background:white;color:#111'>
+                <h2 style='text-align:center;margin:0'>RBM ERP</h2>
+                <h3 style='text-align:center;margin-top:4px'>{module_title}</h3>
+                <hr>
+            """, unsafe_allow_html=True)
+            if preview_row:
+                pv = pd.DataFrame([{str(k).replace('_',' ').title(): v for k, v in preview_row.items() if k not in ['module_name','created_at']}]).T.reset_index()
+                pv.columns = ["Particulars", "Details"]
+                st.table(pv)
+            st.markdown("<hr><p style='text-align:center'>This is computer generated print preview from RBM ERP Online.</p></div>", unsafe_allow_html=True)
 
 def _page(function_name, title):
     fn = globals().get(function_name)
@@ -5435,11 +5529,11 @@ def _render_generic_input(col, label, field, typ, module_title):
     if typ in ["company","user","employee","stock_item","bom","plan","production_order","consumption_entry","group","module_name"]:
         values = _generic_lookup(typ)
         if not values:
-            values = ["Add New..."]
+            values = ["All", "Add New..."]
         else:
-            values = list(dict.fromkeys([str(v) for v in values if str(v).strip()])) + ["Add New..."]
+            values = ["All"] + list(dict.fromkeys([str(v) for v in values if str(v).strip() and str(v) != "All"])) + ["Add New..."]
         return col.selectbox(label, values, key=f"gen_{module_title}_{field}")
-    if opts: return col.selectbox(label, opts + ["Add New..."], key=f"gen_{module_title}_{field}")
+    if opts: return col.selectbox(label, ["All"] + opts + ["Add New..."], key=f"gen_{module_title}_{field}")
     return col.text_input(label, key=f"gen_{module_title}_{field}")
 
 
@@ -5455,7 +5549,12 @@ def online_generic_module(module_title):
         cols = st.columns(3)
         row = {}
         for i, (field, label, typ) in enumerate(fields):
-            row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
+            # Auto-fill Item Code wherever Item Name is selected, same working style as offline ERP.
+            if field == "item_code" and row.get("item_name"):
+                auto_code = _item_code_for_name(row.get("item_name"))
+                row[field] = cols[i % 3].text_input(label, value=auto_code, key=f"gen_{module_title}_{field}_auto")
+            else:
+                row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
         c1, c2, c3 = st.columns(3)
         submitted = c1.form_submit_button(f"Save {module_title}", use_container_width=True)
         calc = c2.form_submit_button("Calculate", use_container_width=True)
