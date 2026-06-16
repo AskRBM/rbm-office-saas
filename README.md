@@ -22,3 +22,8 @@ Main updates:
 Important:
 Some newly added modules are menu/starter screens until their Supabase tables and full forms are connected.
 Existing working online modules remain unchanged.
+
+UPDATE NOTE:
+Client Master now shows Offline Desktop style Group + Module Permission panel.
+Run CLIENT_MODULE_PERMISSIONS_SQL.sql in Supabase SQL editor to enable detailed module-wise client permissions.
+Old clients table group flags remain backward compatible.
