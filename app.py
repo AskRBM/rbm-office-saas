@@ -5742,17 +5742,49 @@ _GENERIC_MODULE_FIELDS.update({
 # only Select Role dropdown must show USERNAME from User Management.
 
 def _rbm_username_list_for_client(selected_client):
+    """Return usernames for Role Based Security.
+    This is intentionally robust because old RBM ERP online code used different
+    column names in different versions (client_code/company_code/code).
+    If no user is found for selected client, it falls back to all usernames so
+    the Role Based Security screen never becomes blank.
+    """
     try:
         df = safe_df(load_table("users", 5000))
         if df.empty or "username" not in df.columns:
-            return []
-        if "client_code" in df.columns and str(selected_client) != "All":
-            df = df[df["client_code"].astype(str) == str(selected_client)]
+            cu = str(current_user()).strip() if "current_user" in globals() else ""
+            return [cu] if cu else []
+
+        # Hide developer/super admin usernames from client login.
         if not is_super_admin() and "role" in df.columns:
             df = df[~df["role"].astype(str).isin(["Developer", "Super Admin"])]
-        return [str(x) for x in df["username"].dropna().unique().tolist() if str(x).strip()]
+
+        original_df = df.copy()
+        sc = str(selected_client).strip()
+        if sc and sc != "All":
+            filtered = pd.DataFrame()
+            for col in ["client_code", "company_code", "code", "client", "client_name"]:
+                if col in df.columns:
+                    temp = df[df[col].astype(str).str.strip() == sc]
+                    if not temp.empty:
+                        filtered = temp
+                        break
+            if not filtered.empty:
+                df = filtered
+            else:
+                # Important fallback: keep all usernames instead of showing blank screen.
+                df = original_df
+
+        vals = [str(x).strip() for x in df["username"].dropna().unique().tolist() if str(x).strip()]
+        if not vals:
+            cu = str(current_user()).strip() if "current_user" in globals() else ""
+            vals = [cu] if cu else []
+        return vals
     except Exception:
-        return []
+        try:
+            cu = str(current_user()).strip()
+            return [cu] if cu else []
+        except Exception:
+            return []
 
 
 def _rbm_client_code_options_for_security():
@@ -5797,10 +5829,10 @@ def role_based_security_control():
     selected_client = st.selectbox("Select Client", _rbm_client_code_options_for_security(), key="rbs_fixed_client")
     usernames = _rbm_username_list_for_client(selected_client)
     if not usernames:
-        st.warning("No username found for this client. First create username in User Management.")
-        return
+        st.warning("No username found in users table. Create username in User Management, or check users table columns.")
+        usernames = [str(current_user())]
 
-    selected_username = st.selectbox("Select Role", usernames, key="rbs_fixed_username")
+    selected_username = st.selectbox("Select Username", usernames, key="rbs_fixed_username")
 
     try:
         existing = safe_df(
