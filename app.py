@@ -6778,6 +6778,291 @@ def get_module_mapping():
     return base
 # ================= END PATCH 19 =================
 
+
+
+# ================= PATCH 24 HR SAVED DATA EDIT DELETE PRINT =================
+# Purpose: In every HR group module (and every generic module), saved records now get:
+# 1) Search box, 2) Select saved record, 3) Edit selected, 4) Delete selected, 5) Print Preview / PDF.
+# This patch keeps the earlier working code as-is and only overrides the generic screen renderer.
+
+HR_GROUP_MODULES_PATCH24 = set(ONLINE_MODULE_GROUPS.get("HR", [])) if 'ONLINE_MODULE_GROUPS' in globals() else set()
+
+
+def _generic_records_df(module_title):
+    """Return generic saved records with internal record id/source for edit/delete.
+    UI hides these internal columns before display/print.
+    """
+    rows = []
+    try:
+        for idx, r in enumerate(st.session_state.get(_SPECIAL_STORAGE_KEY, [])):
+            if r.get("module_name") == module_title:
+                d = dict(r)
+                d["_generic_row_id"] = idx
+                d["_generic_source"] = "session"
+                rows.append(d)
+    except Exception:
+        pass
+    try:
+        q = supabase.table("generic_erp_records").select("id,module_name,data_json").eq("module_name", module_title).limit(1000).execute().data or []
+        for rec in q:
+            data = rec.get("data_json") if isinstance(rec.get("data_json"), dict) else {}
+            if data:
+                d = dict(data)
+                d["_generic_row_id"] = rec.get("id")
+                d["_generic_source"] = "supabase"
+                rows.append(d)
+    except Exception:
+        pass
+    return pd.DataFrame(rows)
+
+
+def _clean_generic_display_df(df):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    show_df = df.copy()
+    for c in ["_generic_row_id", "_generic_source"]:
+        if c in show_df.columns:
+            show_df = show_df.drop(columns=[c])
+    return show_df
+
+
+def _update_generic_saved_record(module_title, row_id, source, new_data):
+    data = dict(new_data)
+    data["module_name"] = module_title
+    data["updated_by"] = current_user() if 'current_user' in globals() else st.session_state.get('username','')
+    data["updated_at"] = india_now().isoformat() if 'india_now' in globals() else datetime.now().isoformat()
+    try:
+        if source == "supabase" and str(row_id).strip() not in ["", "None", "nan"]:
+            supabase.table("generic_erp_records").update({"data_json": data, "created_by": data.get("created_by") or data.get("updated_by")}).eq("id", int(row_id)).execute()
+            return True, "Selected saved record updated successfully."
+    except Exception as e:
+        return False, f"Online update failed: {e}"
+    try:
+        idx = int(row_id)
+        recs = st.session_state.setdefault(_SPECIAL_STORAGE_KEY, [])
+        if 0 <= idx < len(recs):
+            recs[idx].update(data)
+            return True, "Selected saved record updated successfully."
+    except Exception as e:
+        return False, f"Session update failed: {e}"
+    return False, "Record not found for update."
+
+
+def _delete_generic_saved_record(module_title, row_id, source):
+    try:
+        if source == "supabase" and str(row_id).strip() not in ["", "None", "nan"]:
+            supabase.table("generic_erp_records").delete().eq("id", int(row_id)).execute()
+            return True, "Selected saved record deleted successfully."
+    except Exception as e:
+        return False, f"Online delete failed: {e}"
+    try:
+        idx = int(row_id)
+        recs = st.session_state.setdefault(_SPECIAL_STORAGE_KEY, [])
+        if 0 <= idx < len(recs):
+            recs.pop(idx)
+            return True, "Selected saved record deleted successfully."
+    except Exception as e:
+        return False, f"Session delete failed: {e}"
+    return False, "Record not found for delete."
+
+
+def _generic_saved_data_actions(module_title, df, fields):
+    """Edit/Delete/Print selected saved data. Used especially for HR Payroll modules."""
+    if df is None or df.empty:
+        return
+    st.divider()
+    st.subheader(f"Saved Data Action - {module_title}")
+
+    work_df = df.copy().reset_index(drop=True)
+    display_df = _clean_generic_display_df(work_df)
+
+    search_text = st.text_input("Search Saved Data", key=f"patch24_search_{module_title}")
+    if search_text:
+        mask = display_df.astype(str).apply(lambda r: r.str.contains(search_text, case=False, na=False).any(), axis=1)
+        work_df = work_df[mask].reset_index(drop=True)
+        display_df = display_df[mask].reset_index(drop=True)
+
+    if work_df.empty:
+        st.warning("No saved record found for selected search.")
+        return
+
+    def _row_label(i):
+        r = display_df.iloc[int(i)].to_dict()
+        preferred = ["id", "payslip_no", "salary_month", "employee_id", "employee_name", "document_no", "voucher_no", "entry_no", "module_name"]
+        parts = []
+        for k in preferred:
+            if k in r and str(r.get(k, "")).strip():
+                parts.append(f"{k}: {r.get(k)}")
+        return " | ".join(parts[:4]) if parts else f"Record {int(i)+1}"
+
+    selected_pos = st.selectbox(
+        "Select Saved Record",
+        list(range(len(work_df))),
+        format_func=_row_label,
+        key=f"patch24_select_{module_title}_{len(work_df)}"
+    )
+    selected = work_df.iloc[int(selected_pos)].to_dict()
+    selected_show = {k: v for k, v in selected.items() if not str(k).startswith("_generic_")}
+    row_id = selected.get("_generic_row_id", selected_pos)
+    source = selected.get("_generic_source", "session")
+
+    a1, a2, a3 = st.columns(3)
+    if a1.button("Edit Selected", use_container_width=True, key=f"patch24_edit_open_{module_title}"):
+        st.session_state[f"patch24_editing_{module_title}"] = True
+    if a2.button("Print Preview / PDF", use_container_width=True, key=f"patch24_print_{module_title}"):
+        st.session_state[f"patch24_printing_{module_title}"] = True
+    if a3.button("Delete Selected", use_container_width=True, key=f"patch24_delete_open_{module_title}"):
+        st.session_state[f"patch24_deleting_{module_title}"] = True
+
+    if st.session_state.get(f"patch24_printing_{module_title}"):
+        print_saved_record_preview(module_title, selected_show, key_prefix=f"patch24_{module_title.replace(' ','_')}")
+
+    if st.session_state.get(f"patch24_editing_{module_title}"):
+        with st.expander("Edit Selected Saved Data", expanded=True):
+            edited = {}
+            edit_cols = st.columns(3)
+            edit_fields = [(f, l, t) for f, l, t in fields]
+            known_fields = [f for f, _, _ in edit_fields]
+            # Include fields from saved data that may not be in current field definition.
+            for k in selected_show.keys():
+                if k not in known_fields and k not in ["module_name", "created_at", "created_by", "updated_at", "updated_by"]:
+                    edit_fields.append((k, str(k).replace("_", " ").title(), "text"))
+            for i, (field, label, typ) in enumerate(edit_fields):
+                old_val = selected_show.get(field, "")
+                col = edit_cols[i % 3]
+                key = f"patch24_edit_{module_title}_{row_id}_{field}"
+                if typ == "number":
+                    try:
+                        edited[field] = col.number_input(label, value=float(old_val or 0), key=key)
+                    except Exception:
+                        edited[field] = col.number_input(label, value=0.0, key=key)
+                elif typ == "bool":
+                    edited[field] = col.checkbox(label, value=bool(old_val), key=key)
+                elif typ == "date":
+                    try:
+                        d = pd.to_datetime(old_val, dayfirst=True, errors="coerce")
+                        dval = d.date() if not pd.isna(d) else india_now().date()
+                    except Exception:
+                        dval = india_now().date()
+                    edited[field] = str(col.date_input(label, value=dval, format="DD-MM-YYYY", key=key))
+                elif typ in ["company", "user", "employee", "stock_item", "bom", "plan", "production_order", "consumption_entry", "group", "module_name", "module_name_by_group"] or isinstance(typ, list):
+                    if isinstance(typ, list):
+                        opts = ["All"] + [str(x) for x in typ if str(x) != "All"] + ["Add New..."]
+                    elif typ == "module_name_by_group":
+                        g = edited.get("group_name") or selected_show.get("group_name") or "Dashboard"
+                        opts = ["All"] + _module_names_for_group(g) + ["Add New..."]
+                    else:
+                        vals = _generic_lookup(typ) or []
+                        opts = ["All"] + list(dict.fromkeys([str(v) for v in vals if str(v).strip() and str(v) != "All"])) + ["Add New..."]
+                    old_str = str(old_val) if str(old_val).strip() else "All"
+                    if old_str not in opts:
+                        opts.insert(1, old_str)
+                    edited[field] = col.selectbox(label, opts, index=opts.index(old_str), key=key)
+                else:
+                    edited[field] = col.text_input(label, value="" if pd.isna(old_val) else str(old_val), key=key)
+
+            b1, b2 = st.columns(2)
+            if b1.button("Update Selected Saved Data", use_container_width=True, key=f"patch24_update_{module_title}_{row_id}"):
+                # Keep original audit fields.
+                edited["created_by"] = selected_show.get("created_by", current_user())
+                edited["created_at"] = selected_show.get("created_at", india_now().isoformat())
+                ok, msg = _update_generic_saved_record(module_title, row_id, source, edited)
+                if ok:
+                    st.success(msg)
+                    st.session_state[f"patch24_editing_{module_title}"] = False
+                    st.rerun()
+                else:
+                    st.error(msg)
+            if b2.button("Close Edit", use_container_width=True, key=f"patch24_close_edit_{module_title}"):
+                st.session_state[f"patch24_editing_{module_title}"] = False
+                st.rerun()
+
+    if st.session_state.get(f"patch24_deleting_{module_title}"):
+        with st.expander("Confirm Delete Selected Saved Data", expanded=True):
+            st.warning("This will delete only the selected saved record.")
+            st.dataframe(pd.DataFrame([selected_show]), use_container_width=True)
+            d1, d2 = st.columns(2)
+            if d1.button("Yes, Delete Selected Saved Data", use_container_width=True, key=f"patch24_delete_yes_{module_title}_{row_id}"):
+                ok, msg = _delete_generic_saved_record(module_title, row_id, source)
+                if ok:
+                    st.success(msg)
+                    st.session_state[f"patch24_deleting_{module_title}"] = False
+                    st.rerun()
+                else:
+                    st.error(msg)
+            if d2.button("Cancel Delete", use_container_width=True, key=f"patch24_delete_cancel_{module_title}"):
+                st.session_state[f"patch24_deleting_{module_title}"] = False
+                st.rerun()
+
+
+def online_generic_module(module_title):
+    """Latest generic module renderer with HR saved-data edit/delete/print."""
+    tag = module_tag(module_title)
+    cls = {"SAP":"section-master", "QuickBooks":"section-hr", "Tally":"section-rep", "Developer":"section-admin", "RBM":"section-admin"}.get(tag, "section-admin")
+    show_header(f"{module_prefix(module_title)} {module_title}", cls)
+    st.info(f"{module_title} is now integrated with data entry, save, list, CSV export, import/help screen, permission menu and Print Preview.")
+    fields = _GENERIC_MODULE_FIELDS.get(module_title, [("company_code","Company Code","company"),("entry_date","Entry Date","date"),("document_no","Document No","text"),("party_name","Party / Employee / Item Name","text"),("amount","Amount","number"),("status","Status","status"),("remarks","Remarks","text")])
+    with st.expander("Module Information / Help", expanded=False):
+        st.write(f"**{module_title}** saved data can be searched, edited, deleted, exported and printed.")
+    with st.form(f"form_{module_title}_patch24"):
+        cols = st.columns(3)
+        row = {}
+        for i, (field, label, typ) in enumerate(fields):
+            if field == "item_code" and row.get("item_name"):
+                auto_code = _item_code_for_name(row.get("item_name"))
+                row[field] = cols[i % 3].text_input(label, value=auto_code, key=f"gen_{module_title}_{field}_auto_patch24")
+            else:
+                row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
+        c1, c2, c3 = st.columns(3)
+        submitted = c1.form_submit_button(f"Save {module_title}", use_container_width=True)
+        calc = c2.form_submit_button("Calculate", use_container_width=True)
+        clear = c3.form_submit_button("Clear", use_container_width=True)
+    if submitted or calc:
+        for qty_name in ["qty","opening_qty","inward_qty","outward_qty","planned_qty","qty_scheduled","produced_qty","rm_qty"]:
+            for amt_name in ["value","amount","rm_amount"]:
+                if qty_name in row and ("rate" in row or "rm_rate" in row) and amt_name in row:
+                    row[amt_name] = float(row.get(qty_name) or 0) * float(row.get("rate") or row.get("rm_rate") or 0)
+        if {"gross_salary","deduction","net_salary"}.issubset(row):
+            row["net_salary"] = float(row.get("gross_salary") or 0)-float(row.get("deduction") or 0)
+        if {"gross_salary","total_deduction","net_salary"}.issubset(row):
+            row["net_salary"] = float(row.get("gross_salary") or 0)-float(row.get("total_deduction") or 0)
+        if {"available_hours","planned_hours","free_capacity"}.issubset(row):
+            row["free_capacity"] = float(row.get("available_hours") or 0)-float(row.get("planned_hours") or 0)
+        _generic_save(module_title, row)
+        st.success(f"{module_title} record saved.")
+        st.rerun()
+    if module_title in ["Data Import", "Excel Import Wizard"]:
+        up = st.file_uploader("Upload CSV/Excel file", type=["csv","xlsx","xls"], key=f"patch24_upload_{module_title}")
+        if up is not None:
+            try:
+                dfup = pd.read_csv(up) if up.name.lower().endswith('.csv') else pd.read_excel(up)
+                st.success(f"File loaded: {len(dfup)} rows")
+                st.dataframe(dfup.head(50), use_container_width=True)
+            except Exception as e:
+                st.error(f"Import failed: {e}")
+    df = _generic_records_df(module_title)
+    st.subheader(f"Saved Records - {module_title}")
+    show_df = _clean_generic_display_df(df)
+    if show_df.empty:
+        sample = {label: f"Sample {label}" for _, label, typ in fields[:6]}
+        sample_df = pd.DataFrame([sample])
+        st.dataframe(sample_df, use_container_width=True)
+        c1, c2, c3 = st.columns(3)
+        c1.download_button("Export CSV", sample_df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}_sample.csv", mime="text/csv", use_container_width=True, key=f"patch24_csv_empty_{module_title}")
+        c2.download_button("Export Excel", to_excel_bytes(sample_df), file_name=f"{module_title.replace(' ','_')}_sample.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"patch24_xlsx_empty_{module_title}")
+        if c3.button("Print Preview / PDF", use_container_width=True, key=f"patch24_pp_empty_{module_title}"):
+            _generic_print_preview_ui(module_title, sample_df)
+    else:
+        st.dataframe(show_df, use_container_width=True)
+        c1, c2, c3 = st.columns(3)
+        c1.download_button("Export CSV", show_df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True, key=f"patch24_csv_{module_title}")
+        c2.download_button("Export Excel", to_excel_bytes(show_df), file_name=f"{module_title.replace(' ','_')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"patch24_xlsx_{module_title}")
+        if c3.button("Print Preview / PDF", use_container_width=True, key=f"patch24_pp_all_{module_title}"):
+            _generic_print_preview_ui(module_title, show_df)
+        _generic_saved_data_actions(module_title, df, fields)
+
+# ================= END PATCH 24 HR SAVED DATA EDIT DELETE PRINT =================
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
