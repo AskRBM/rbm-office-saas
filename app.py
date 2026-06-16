@@ -114,6 +114,245 @@ DISPLAY_COLUMNS = {
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
 DEFAULT_STOCK_GROUPS = ["Raw Material", "Finished Goods", "Work in Progress", "Packing Material", "Consumables", "Stores & Spares", "Trading Goods"]
 
+# ---------- RBM ERP ONLINE FULL GROUP/MODULE CONFIG ----------
+# Source tags for colored ticks:
+# 🔴 Developer Only | 🔵 SAP Style | 🟢 QuickBooks Style | 🟠 Tally Style | 🟣 RBM Native
+DEVELOPER_ROLES = ["Developer"]
+SUPERADMIN_ROLES = ["Developer", "Super Admin"]
+CLIENT_SUPERADMIN_ROLES = ["Client Super Admin"]
+ADMIN_ROLES = ["Developer", "Super Admin", "Client Super Admin", "Admin"]
+
+DEVELOPER_ONLY_MODULES = {
+    "Client Master", "Client License Dashboard", "License Status Screen",
+    "Client Group Permission", "Client Module Permission", "Data Purge Control",
+    "Data Locking Period", "License Manager", "Offline Sync Engine",
+    "System Settings", "Settings Center", "Error Log Viewer", "Data Health Check",
+    "Backup Restore System", "Restore Backup", "Optional Online Sync Center",
+}
+
+MODULE_TAGS = {
+    # Tally style
+    "Ledger Group Master": "Tally", "Ledger Master": "Tally", "Stock Group Master": "Tally",
+    "Stock Ledger Master": "Tally", "Accounting Entries": "Tally", "Accounting Entry Lines": "Tally",
+    "Trial Balance": "Tally", "Profit Loss": "Tally", "Balance Sheet": "Tally",
+    "Sundry Receivable": "Tally", "Sundry Payable": "Tally", "Stock Report": "Tally",
+    "Gst Report": "Tally", "Tds Report": "Tally", "Calculation Book": "Tally",
+    "Auto Invoice Numbering": "Tally", "Document Series": "Tally",
+
+    # QuickBooks style
+    "CRM Leads": "QuickBooks", "CRM Followups": "QuickBooks", "CRM Customers": "QuickBooks",
+    "CRM Opportunities": "QuickBooks", "Customer Portal Access": "QuickBooks",
+    "Bank Reconciliation": "QuickBooks", "Budget vs Actual": "QuickBooks",
+    "Cash Flow Statement": "QuickBooks", "Customer Outstanding Ageing": "QuickBooks",
+    "Supplier Outstanding Ageing": "QuickBooks", "Payment Receipt Voucher": "QuickBooks",
+    "Bank Payment Voucher": "QuickBooks", "Reminder System": "QuickBooks",
+    "Email Utility": "QuickBooks", "Email Integration": "QuickBooks", "WhatsApp Integration": "QuickBooks",
+
+    # SAP style
+    "MRP": "SAP", "Material Requirement Planning": "SAP", "Production Planning": "SAP",
+    "Production Schedule": "SAP", "Production Orders": "SAP", "Production Entries": "SAP",
+    "Consumption Entries": "SAP", "FG Entries": "SAP", "Production Costing": "SAP",
+    "Manufacturing BOM": "SAP", "BOM Header": "SAP", "BOM Lines": "SAP",
+    "Quality Management": "SAP", "Preventive Maintenance": "SAP",
+    "Warehouse Bin Rack Management": "SAP", "Batch Management": "SAP",
+    "Serial Number Tracking": "SAP", "Capacity Planning": "SAP",
+    "Demand Forecasting": "SAP", "Profitability Analysis": "SAP",
+    "Profitability Analysis - Customer Product Branch": "SAP",
+    "Consolidated Financial Statements": "SAP",
+    "Inter Company Transactions": "SAP", "Workflow Engine": "SAP",
+    "Approval Matrix": "SAP", "Business Process Flow": "SAP",
+
+    # Developer only
+    **{m: "Developer" for m in DEVELOPER_ONLY_MODULES},
+}
+
+TAG_PREFIX = {
+    "Developer": "🔴",
+    "SAP": "🔵",
+    "QuickBooks": "🟢",
+    "Tally": "🟠",
+    "RBM": "🟣",
+}
+
+ONLINE_MODULE_GROUPS = {
+    "Dashboard": ["Dashboard"],
+
+    "Admin": [
+        "Client Master", "User Management", "Role Permission Control", "Role Based Security",
+        "Client License Dashboard", "User Password Change", "License Status Screen", "Data Purge Control",
+        "Data Locking Period", "Mandatory Field Settings", "Client Group Permission",
+        "User Group Permission", "Client Module Permission",
+    ],
+
+    "Master": [
+        "Company Profile", "Financial Year Master", "Cost Center Master", "Document Series",
+        "GST Settings", "Ledger Group Master", "Ledger Master", "Stock Group Master",
+        "Stock Ledger Master", "Auto Invoice Numbering",
+    ],
+
+    "CRM": [
+        "CRM Leads", "CRM Followups", "CRM Customers", "CRM Opportunities", "Customer Portal Access",
+    ],
+
+    "HR": [
+        "Employee Master", "Attendance Management", "Attendance Visits", "IN / OUT Register",
+        "Visitor Register", "Task Delegation", "Appointments", "Payroll Salary Structure",
+        "Payroll Processing", "Payroll Payslip",
+    ],
+
+    "Inventory": [
+        "Inventory Item Master", "Barcode Master", "Barcode Print Log", "Warehouse Stock",
+        "Raw Material Stock", "Finished Goods Stock", "WIP Stock", "Stock Voucher",
+        "Stock Report", "Stock Ageing / Slow Moving Stock",
+    ],
+
+    "Manufacturing": [
+        "BOM Header", "BOM Lines", "Production Orders", "Production Entries",
+        "Consumption Entries", "FG Entries", "Production Costing", "MRP",
+        "Manufacturing BOM", "Production Planning", "Production Schedule",
+        "Capacity Planning", "Demand Forecasting", "Quality Management",
+        "Preventive Maintenance", "Batch Management", "Serial Number Tracking",
+        "Warehouse Bin Rack Management",
+    ],
+
+    "Accounts": [
+        "Accounting Entries", "Accounting Entry Lines", "Fixed Assets", "Asset Management",
+        "Asset Maintenance", "Payment Receipt Voucher", "Bank Payment Voucher",
+        "Bank Reconciliation", "Year Closing / Opening Balance Transfer",
+        "Budget vs Actual", "Cash Flow Statement",
+    ],
+
+    "Sales": [
+        "Sales GST Invoice", "Sales Order", "Delivery Note", "Credit Note",
+        "Customer Outstanding Ageing", "Sales Cycle", "Recurring Invoices",
+    ],
+
+    "Purchase": [
+        "Purchase GST Invoice", "Purchase Order", "Receipt Note", "Debit Note",
+        "Supplier Outstanding Ageing", "Purchase Cycle", "GST Reconciliation",
+    ],
+
+    "Expense": [
+        "Expense GST", "Service Voucher", "Expense Approval", "Recurring Expenses",
+        "TDS Report", "Gst Report",
+    ],
+
+    "Projects": [
+        "Project Accounting", "Project Income Heads", "Project Expense Heads",
+        "Project Profitability", "Internal Orders", "Budget Control",
+    ],
+
+    "Quotation": [
+        "Quotation", "Quotation Negotiations", "Quotation Requirements",
+        "Quotation Business Users", "Quotation Access",
+    ],
+
+    "Enterprise": [
+        "Workflow Engine", "Approval Matrix", "Business Process Flow", "Document Management",
+        "OCR Invoice Scanner", "Global Smart Search", "AI Audit & Exception Dashboard",
+        "Consolidated Financial Statements", "Inter Company Transactions",
+        "Multi Company / Branch", "Multi Currency", "Customer Portal", "Vendor Portal",
+        "Profitability Analysis - Customer Product Branch",
+    ],
+
+    "Support": [
+        "Support Desk", "Support Tickets", "Customer Complaints", "Service Requests",
+        "Client Support Register", "AMC / Subscription",
+    ],
+
+    "Audit": [
+        "Audit Log", "Numbering Series Audit", "Digital Audit", "Duplicate Payment Detection",
+        "Duplicate Invoice Detection", "Suspicious Entry Report", "Backdated Voucher Report",
+        "Weekend Entry Report", "User Wise Modification Report",
+    ],
+
+    "Tools": [
+        "OneDrive Backup", "Optional Online Sync Center", "Data Import", "Data Export",
+        "Email Utility", "PDF Print Utility", "System Settings", "AI Chat Assistant",
+        "WhatsApp Integration", "Email Integration", "OneDrive Backup Advanced",
+        "Mobile App Sync", "Notification Center", "Backup Restore System",
+        "Excel Import Wizard", "Export All Data", "Reminder System", "Settings Center",
+        "Restore Backup", "Error Log Viewer", "Data Health Check",
+    ],
+
+    "Reports": [
+        "Trial Balance", "Profit Loss", "Balance Sheet", "Sundry Receivable",
+        "Sundry Payable", "Stock Report", "Gst Report", "Tds Report",
+        "Calculation Book", "Import Logs", "Dashboard Analytics", "Chairman MIS",
+        "User Activity Dashboard", "Pending Work Dashboard", "GST Return Summary",
+        "Customer Outstanding Ageing", "Supplier Outstanding Ageing",
+        "Stock Ageing / Slow Moving Stock", "Budget vs Actual", "Cash Flow Statement",
+        "GST Reconciliation", "Profitability Analysis - Customer Product Branch",
+    ],
+}
+
+GROUP_ACCESS_KEYS = {
+    "Master": ["allow_master_group"],
+    "CRM": ["allow_support", "allow_quotation", "allow_sales"],
+    "HR": ["allow_attendance", "allow_inout", "allow_visitor", "allow_task", "allow_appointment"],
+    "Inventory": ["allow_stock_raw", "allow_stock_fg", "allow_stock_wip"],
+    "Manufacturing": ["allow_manufacturing"],
+    "Accounts": ["allow_accounting", "allow_fixed_assets"],
+    "Sales": ["allow_sales"],
+    "Purchase": ["allow_purchase"],
+    "Expense": ["allow_expense", "allow_service_voucher"],
+    "Projects": ["allow_project_accounting"],
+    "Quotation": ["allow_quotation"],
+    "Enterprise": ["allow_support"],
+    "Support": ["allow_support", "allow_subscription", "allow_license_manager"],
+    "Audit": ["allow_support"],
+    "Tools": ["allow_excel_upload", "allow_google_sheet_import", "allow_support"],
+    "Reports": ["allow_master_group", "allow_sales", "allow_purchase", "allow_expense", "allow_accounting", "allow_stock_raw", "allow_stock_fg", "allow_stock_wip"],
+}
+
+def is_developer():
+    return st.session_state.get("role") == "Developer"
+
+def is_developer_or_super_admin():
+    return st.session_state.get("role") in SUPERADMIN_ROLES
+
+def is_client_super_admin():
+    return st.session_state.get("role") == "Client Super Admin"
+
+def module_tag(module_name):
+    return MODULE_TAGS.get(str(module_name), "RBM")
+
+def module_prefix(module_name):
+    tag = module_tag(module_name)
+    double = "✓✓" if tag in ["SAP", "QuickBooks", "Developer"] else "✓"
+    return f"{TAG_PREFIX.get(tag, '🟣')}{double}"
+
+def module_label(module_name):
+    return f"{module_prefix(module_name)} {module_name}"
+
+def strip_module_label(label):
+    s = str(label)
+    # remove colored icon/check prefix like "🔵✓✓ "
+    for icon in TAG_PREFIX.values():
+        s = s.replace(icon, "", 1).strip()
+    while s.startswith("✓"):
+        s = s[1:].strip()
+    return s
+
+def role_can_see_module(module_name):
+    role = st.session_state.get("role", "")
+    if module_name in DEVELOPER_ONLY_MODULES:
+        return role == "Developer"
+    if role in ["Developer", "Super Admin"]:
+        return True
+    return True
+
+def group_enabled_for_client(group_name):
+    if group_name in ["Dashboard"]:
+        return True
+    if is_developer_or_super_admin():
+        return True
+    keys = GROUP_ACCESS_KEYS.get(group_name, [])
+    if not keys:
+        return False
+    return any(bool(st.session_state.get(k, False)) for k in keys)
+
+
 COMMON_CONTROL_COLUMNS = ["parking_status", "approval_status", "cost_center", "approved_by", "approval_remarks"]
 CONTROL_TABLE_KEYS = [
     "attendance", "attendance_visits", "inout", "visitors", "tasks", "appointments",
@@ -189,7 +428,7 @@ div[data-testid="stVerticalBlock"] {gap:0.55rem !important;}
 def india_now(): return datetime.now(INDIA_TZ)
 def safe_df(data): return pd.DataFrame(data or [])
 def get_client_code(): return st.session_state.get("client_code", "RBM")
-def is_super_admin(): return st.session_state.get("role") == "Super Admin"
+def is_super_admin(): return st.session_state.get("role") in ["Developer", "Super Admin"]
 def current_user(): return st.session_state.get("username", "system")
 
 def get_cost_center_options():
@@ -1075,9 +1314,25 @@ def rbm_header():
 def init_users():
     df = safe_df(supabase.table("users").select("*").execute().data)
     if df.empty:
-        supabase.table("users").insert({"client_code":"RBM","username":"admin","password":"rbm123","role":"Super Admin","full_name":"RBM Super Admin","status":"Active"}).execute()
+        supabase.table("users").insert({
+            "client_code": "RBM",
+            "username": "developer",
+            "password": "rbm123",
+            "role": "Developer",
+            "full_name": "RBM Developer",
+            "status": "Active"
+        }).execute()
+        supabase.table("users").insert({
+            "client_code": "RBM",
+            "username": "admin",
+            "password": "rbm123",
+            "role": "Super Admin",
+            "full_name": "RBM Super Admin",
+            "status": "Active"
+        }).execute()
         df = safe_df(supabase.table("users").select("*").execute().data)
     return df
+
 
 def load_client_permissions(client_code):
     data = safe_df(supabase.table("clients").select("*").eq("client_code", client_code).limit(1).execute().data)
@@ -1228,7 +1483,7 @@ def user_management():
         mobile = c2.text_input("Mobile No.")
 
         if is_super_admin():
-            role = c1.selectbox("Role", ["Admin", "User", "Quotation User", "Super Admin"])
+            role = c1.selectbox("Role", ["Developer", "Super Admin", "Client Super Admin", "Admin", "User", "Quotation User"])
         else:
             role = c1.selectbox("Role", ["Admin", "User", "Quotation User"])
 
@@ -3869,172 +4124,40 @@ def role_permission_control():
 
 # ---------- MAIN MENU ----------
 def get_menu_modules(group):
-    modules = []
-    if group == "Dashboard":
-        modules = ["Dashboard"]
-    elif group == "Master":
-        modules = ["Company Profile", "Financial Year Master", "Cost Center Master", "Document Series", "GST Settings", "Ledger Group Master", "Ledger Master", "Stock Group Master", "Stock Ledger Master"] if st.session_state.get("allow_master_group", False) else []
-    elif group == "Admin":
-        if is_super_admin():
-            modules += ["Client Master", "User Management", "Role Permission Control", "Employee Master"]
-        else:
-            # Client Admin sees Admin tools only when normal ERP modules are enabled.
-            # Quotation-only clients do not see User Management / Role Permission / Employee Master.
-            if st.session_state.get("role") == "Admin" and _normal_feature_enabled_from_session():
-                modules += ["User Management", "Role Permission Control"]
-                if st.session_state.get("allow_master_group", False):
-                    modules += ["Employee Master"]
-        if st.session_state.get("allow_appointment", False):
-            modules += ["Appointments"]
-    elif group == "HR":
-        if st.session_state.get("allow_attendance", False):
-            modules.append("Attendance Management")
-        if st.session_state.get("allow_inout", False):
-            modules.append("IN / OUT Register")
-        if st.session_state.get("allow_visitor", False):
-            modules.append("Visitor Register")
-        if st.session_state.get("allow_task", False):
-            modules.append("Task Delegation")
-    elif group == "Inventory":
-        if st.session_state.get("allow_stock_raw", False):
-            modules.append("Raw Material Stock")
-        if st.session_state.get("allow_stock_fg", False):
-            modules.append("Finished Goods Stock")
-        if st.session_state.get("allow_stock_wip", False):
-            modules.append("WIP Stock")
-        if modules:
-            modules.append("Stock Voucher")
-    elif group == "Accounts":
-        if st.session_state.get("allow_sales", False):
-            modules.append("Sales GST Invoice")
-        if st.session_state.get("allow_purchase", False):
-            modules.append("Purchase GST Invoice")
-        if st.session_state.get("allow_expense", False):
-            modules.append("Expense GST")
-        if st.session_state.get("allow_service_voucher", False):
-            modules.append("Service Voucher")
-        if st.session_state.get("allow_fixed_assets", False):
-            modules.append("Fixed Assets")
-        if st.session_state.get("allow_accounting", False):
-            modules.append("Accounting Entries")
-    elif group == "Quotation":
-        if is_super_admin() or st.session_state.get("allow_quotation", False) or _quote_role():
-            modules = ["Quotation"]
-    elif group == "Manufacturing":
-        if is_super_admin() or st.session_state.get("allow_manufacturing", False):
-            modules = ["Bill of Material", "Production Order", "Production Entry", "Consumption Entry", "Finished Goods Entry", "Production Costing", "Material Requirement Planning"]
-    elif group == "Projects":
-        if is_super_admin() or st.session_state.get("allow_project_accounting", False):
-            modules = ["Project Accounting"]
-    elif group == "Support":
-        if is_super_admin() or st.session_state.get("allow_support", False) or st.session_state.get("role") == "Admin":
-            modules = ["Support Desk"]
-        if is_super_admin() or st.session_state.get("allow_subscription", False):
-            modules.append("AMC / Subscription")
-        if is_super_admin() or st.session_state.get("allow_license_manager", False):
-            modules.append("License Manager")
-    elif group == "Reports":
-        if is_super_admin():
-            modules = ["Registers / Reports", "Import Center", "Audit Log"]
-        else:
-            # Reports group appears only when enabled groups exist.
-            modules = ["Registers / Reports"]
-            if st.session_state.get("allow_excel_upload", False) or st.session_state.get("allow_google_sheet_import", False):
-                modules.append("Import Center")
-            if st.session_state.get("role") == "Admin":
-                modules.append("Audit Log")
-    elif group == "Tools":
-        if is_super_admin():
-            modules = ["Calculation Book", "ERP Control Center", "Notification Center", "Dashboard Analytics", "PWA Mobile App", "Calculator", "Email / SMS Settings", "Offline Sync Engine"]
-        elif st.session_state.get("role") == "Admin":
-            modules = ["Calculation Book"]
-    elif group == "Enterprise":
-        if is_super_admin():
-            modules = ["Workflow Engine", "Budget vs Actual", "Bank Reconciliation", "Document Management", "Purchase Cycle", "Sales Cycle", "Advanced Asset Management", "Digital Audit", "Multi Company / Branch"]
-    return filter_modules_by_permission(modules)
+    """Online menu based on latest offline desktop group/module structure."""
+    modules = list(ONLINE_MODULE_GROUPS.get(group, []))
+
+    # Client cannot see developer-only modules.
+    modules = [m for m in modules if role_can_see_module(m)]
+
+    # For normal client login, show group only when its client feature is enabled.
+    # Developer/Super Admin see all modules.
+    if not is_developer_or_super_admin() and group != "Dashboard":
+        if not group_enabled_for_client(group):
+            modules = []
+
+    # Role permission table support, if available.
+    modules = filter_modules_by_permission(modules)
+    return modules or ["Dashboard"]
+
 
 def build_group_list():
-    # Super Admin can see every group always.
-    if _quote_role():
-        return ["Quotation"]
-
-    if (not is_super_admin()) and _quotation_only_from_session():
-        return ["Quotation"]
-
-    if is_super_admin():
-        return ["Dashboard", "Master", "Admin", "HR", "Inventory", "Manufacturing", "Accounts", "Projects", "Quotation", "Reports", "Enterprise", "Support", "Tools"]
-
-    # Client users/admins should see ONLY groups enabled for that client.
+    """Latest offline desktop groups for online RBM ERP."""
     groups = []
+    for g in ONLINE_MODULE_GROUPS.keys():
+        if g == "Dashboard":
+            groups.append(g)
+            continue
+        if group_enabled_for_client(g):
+            visible_modules = [m for m in ONLINE_MODULE_GROUPS[g] if role_can_see_module(m)]
+            if visible_modules:
+                groups.append(g)
 
-    # Dashboard only when user has at least one core ERP module. Optional enterprise defaults do not count.
-    has_any_normal_module = _core_feature_enabled_from_session()
+    # Quotation-only user fallback.
+    if _quote_role() or ((not is_developer_or_super_admin()) and _quotation_only_from_session()):
+        return ["Quotation"]
 
-    if has_any_normal_module:
-        groups.append("Dashboard")
-
-    if st.session_state.get("allow_master_group", False):
-        groups.append("Master")
-
-    admin_modules = []
-    # Admin group is visible to client Admin only when normal ERP modules are enabled.
-    # Quotation-only clients must see only Quotation.
-    if st.session_state.get("role") == "Admin" and has_any_normal_module:
-        admin_modules.extend(["User Management", "Role Permission Control"])
-    if st.session_state.get("allow_appointment", False):
-        admin_modules.append("Appointments")
-    if admin_modules:
-        groups.append("Admin")
-
-    if any([
-        st.session_state.get("allow_attendance", False),
-        st.session_state.get("allow_inout", False),
-        st.session_state.get("allow_visitor", False),
-        st.session_state.get("allow_task", False),
-    ]):
-        groups.append("HR")
-
-    if any([
-        st.session_state.get("allow_stock_raw", False),
-        st.session_state.get("allow_stock_fg", False),
-        st.session_state.get("allow_stock_wip", False),
-    ]):
-        groups.append("Inventory")
-
-    if st.session_state.get("allow_manufacturing", False):
-        groups.append("Manufacturing")
-
-    if any([
-        st.session_state.get("allow_sales", False),
-        st.session_state.get("allow_purchase", False),
-        st.session_state.get("allow_expense", False),
-        st.session_state.get("allow_service_voucher", False),
-        st.session_state.get("allow_fixed_assets", False),
-        st.session_state.get("allow_accounting", False),
-    ]):
-        groups.append("Accounts")
-
-    if st.session_state.get("allow_project_accounting", False):
-        groups.append("Projects")
-
-    if st.session_state.get("allow_quotation", False):
-        groups.append("Quotation")
-
-    if any([
-        st.session_state.get("allow_excel_upload", False),
-        st.session_state.get("allow_google_sheet_import", False),
-        has_any_normal_module,
-    ]):
-        groups.append("Reports")
-
-    if any([st.session_state.get("allow_support", False), st.session_state.get("allow_subscription", False), st.session_state.get("allow_license_manager", False)]):
-        groups.append("Support")
-
-    # Enterprise tools are RBM internal / Super Admin only.
-    if st.session_state.get("role") == "Admin" and has_any_normal_module:
-        groups.append("Tools")
-
-    return groups or ["Quotation"]
+    return groups or ["Dashboard"]
 
 
 def render_custom_menu():
@@ -4072,7 +4195,11 @@ def render_custom_menu():
     else:
         default_module_index = 0
 
-    choice = st.radio("Module", modules, index=default_module_index, key="menu_module")
+    display_modules = [module_label(m) for m in modules]
+    default_display_index = default_module_index if default_module_index < len(display_modules) else 0
+
+    display_choice = st.radio("Module", display_modules, index=default_display_index, key="menu_module")
+    choice = strip_module_label(display_choice)
 
     # Save active page before hiding, so the same page stays open after hide.
     st.session_state["active_group"] = group
@@ -4091,69 +4218,242 @@ def render_custom_menu():
     return group, choice
 
 
+def online_generic_module(module_title):
+    """Safe placeholder/working starter page for modules that are available in offline version
+    but whose full online transaction logic is still pending. It prevents online ERP from crashing
+    and gives client a usable screen with help, filters and next-action note.
+    """
+    tag = module_tag(module_title)
+    cls = {
+        "SAP": "section-master",
+        "QuickBooks": "section-hr",
+        "Tally": "section-rep",
+        "Developer": "section-admin",
+        "RBM": "section-admin",
+    }.get(tag, "section-admin")
+    show_header(f"{module_prefix(module_title)} {module_title}", cls)
+    st.info(f"{module_title} is added in online RBM ERP menu as per offline desktop version.")
+    st.markdown("""
+    **Use / Integration Plan**
+    - This module is available in the online menu and permission structure.
+    - Existing working online modules continue as-is.
+    - Full save/edit/delete workflow can be connected to a Supabase table for this module.
+    - Developer-only modules are hidden from client users.
+    """)
+    with st.expander("Module Information / Help", expanded=False):
+        st.write(f"This help page explains how **{module_title}** will be used and how it connects with other RBM ERP modules.")
+        st.write("For production use, create the matching Supabase table and then connect this page to `insert_row`, `update_row`, `delete_row`, reports and permissions.")
+    st.warning("This is a safe online starter screen. It will not disturb your existing working online ERP code.")
+
+def _page(function_name, title):
+    fn = globals().get(function_name)
+    if callable(fn):
+        return fn
+    return lambda title=title: online_generic_module(title)
+
 def get_module_mapping():
+    """Map latest offline desktop module names to online pages. Existing online pages are reused."""
     return {
         "Dashboard": dashboard,
-        "Client Master": client_master,
-        "User Management": user_management,
-        "Role Permission Control": role_permission_control,
-        "Employee Master": employee_master,
-        "Company Profile": company_profile,
-        "Financial Year Master": financial_year_master,
-        "Cost Center Master": cost_center_master,
-        "Document Series": document_series_master,
-        "GST Settings": gst_settings_master,
-        "Ledger Group Master": ledger_group_master,
-        "Ledger Master": ledger_master,
-        "Stock Group Master": stock_group_master,
-        "Stock Ledger Master": stock_ledger_master,
-        "Attendance Management": attendance,
-        "IN / OUT Register": inout_register,
-        "Visitor Register": visitor_register,
-        "Task Delegation": task_delegation,
-        "Appointments": appointment_module,
-        "Raw Material Stock": stock_raw,
-        "Finished Goods Stock": stock_fg,
-        "WIP Stock": stock_wip,
-        "Stock Voucher": stock_voucher,
-        "Bill of Material": bill_of_material_module,
-        "Production Order": production_order_module,
-        "Production Entry": production_entry_module,
-        "Consumption Entry": consumption_entry_module,
-        "Finished Goods Entry": finished_goods_entry_module,
-        "Production Costing": production_costing_module,
-        "Material Requirement Planning": mrp_module,
-        "Sales GST Invoice": sales_invoice,
-        "Purchase GST Invoice": purchase_invoice,
-        "Expense GST": expense_gst,
-        "Service Voucher": service_voucher,
-        "Fixed Assets": fixed_assets,
-        "Accounting Entries": accounting_entries,
-        "Registers / Reports": reports,
-        "Import Center": import_center,
-        "Calculation Book": calculation_book,
-        "ERP Control Center": erp_control_center,
-        "Audit Log": audit_log_report,
-        "Quotation": quotation_module,
-        "Workflow Engine": workflow_engine,
-        "Notification Center": notification_center,
-        "Dashboard Analytics": dashboard_analytics,
-        "Budget vs Actual": budget_vs_actual,
-        "Bank Reconciliation": bank_reconciliation,
-        "Document Management": document_management,
-        "Purchase Cycle": purchase_cycle,
-        "Sales Cycle": sales_cycle,
-        "Advanced Asset Management": asset_management_advanced,
-        "PWA Mobile App": pwa_mobile_app,
-        "Digital Audit": digital_audit_module,
-        "Calculator": ai_assistant,
-        "Multi Company / Branch": multi_company_branch,
-        "Offline Sync Engine": offline_sync_engine,
-        "Email / SMS Settings": email_sms_settings,
-        "Project Accounting": project_accounting_module,
-        "AMC / Subscription": amc_subscription_module,
-        "Support Desk": support_ticket_module,
-        "License Manager": license_manager_module,
+
+        # Admin
+        "Client Master": _page("client_master", "Client Master"),
+        "User Management": _page("user_management", "User Management"),
+        "Role Permission Control": _page("role_permission_control", "Role Permission Control"),
+        "Role Based Security": _page("role_permission_control", "Role Based Security"),
+        "Client License Dashboard": _page("license_manager_module", "Client License Dashboard"),
+        "User Password Change": _page("online_generic_module", "User Password Change"),
+        "License Status Screen": _page("license_manager_module", "License Status Screen"),
+        "Data Purge Control": _page("online_generic_module", "Data Purge Control"),
+        "Data Locking Period": _page("online_generic_module", "Data Locking Period"),
+        "Mandatory Field Settings": _page("online_generic_module", "Mandatory Field Settings"),
+        "Client Group Permission": _page("online_generic_module", "Client Group Permission"),
+        "User Group Permission": _page("role_permission_control", "User Group Permission"),
+        "Client Module Permission": _page("online_generic_module", "Client Module Permission"),
+
+        # Master
+        "Company Profile": _page("company_profile", "Company Profile"),
+        "Financial Year Master": _page("financial_year_master", "Financial Year Master"),
+        "Cost Center Master": _page("cost_center_master", "Cost Center Master"),
+        "Document Series": _page("document_series_master", "Document Series"),
+        "GST Settings": _page("gst_settings_master", "GST Settings"),
+        "Ledger Group Master": _page("ledger_group_master", "Ledger Group Master"),
+        "Ledger Master": _page("ledger_master", "Ledger Master"),
+        "Stock Group Master": _page("stock_group_master", "Stock Group Master"),
+        "Stock Ledger Master": _page("stock_ledger_master", "Stock Ledger Master"),
+        "Auto Invoice Numbering": _page("document_series_master", "Auto Invoice Numbering"),
+
+        # CRM
+        "CRM Leads": _page("online_generic_module", "CRM Leads"),
+        "CRM Followups": _page("online_generic_module", "CRM Followups"),
+        "CRM Customers": _page("online_generic_module", "CRM Customers"),
+        "CRM Opportunities": _page("online_generic_module", "CRM Opportunities"),
+        "Customer Portal Access": _page("online_generic_module", "Customer Portal Access"),
+
+        # HR
+        "Employee Master": _page("employee_master", "Employee Master"),
+        "Attendance Management": _page("attendance", "Attendance Management"),
+        "Attendance Visits": _page("attendance", "Attendance Visits"),
+        "IN / OUT Register": _page("inout_register", "IN / OUT Register"),
+        "Visitor Register": _page("visitor_register", "Visitor Register"),
+        "Task Delegation": _page("task_delegation", "Task Delegation"),
+        "Appointments": _page("appointment_module", "Appointments"),
+        "Payroll Salary Structure": _page("online_generic_module", "Payroll Salary Structure"),
+        "Payroll Processing": _page("online_generic_module", "Payroll Processing"),
+        "Payroll Payslip": _page("online_generic_module", "Payroll Payslip"),
+
+        # Inventory
+        "Inventory Item Master": _page("stock_ledger_master", "Inventory Item Master"),
+        "Barcode Master": _page("online_generic_module", "Barcode Master"),
+        "Barcode Print Log": _page("online_generic_module", "Barcode Print Log"),
+        "Warehouse Stock": _page("online_generic_module", "Warehouse Stock"),
+        "Raw Material Stock": _page("stock_raw", "Raw Material Stock"),
+        "Finished Goods Stock": _page("stock_fg", "Finished Goods Stock"),
+        "WIP Stock": _page("stock_wip", "WIP Stock"),
+        "Stock Voucher": _page("stock_voucher", "Stock Voucher"),
+        "Stock Report": _page("reports", "Stock Report"),
+        "Stock Ageing / Slow Moving Stock": _page("reports", "Stock Ageing / Slow Moving Stock"),
+
+        # Manufacturing
+        "BOM Header": _page("bill_of_material_module", "BOM Header"),
+        "BOM Lines": _page("bill_of_material_module", "BOM Lines"),
+        "Production Orders": _page("production_order_module", "Production Orders"),
+        "Production Entries": _page("production_entry_module", "Production Entries"),
+        "Consumption Entries": _page("consumption_entry_module", "Consumption Entries"),
+        "FG Entries": _page("finished_goods_entry_module", "FG Entries"),
+        "Production Costing": _page("production_costing_module", "Production Costing"),
+        "MRP": _page("mrp_module", "MRP"),
+        "Manufacturing BOM": _page("bill_of_material_module", "Manufacturing BOM"),
+        "Production Planning": _page("online_generic_module", "Production Planning"),
+        "Production Schedule": _page("online_generic_module", "Production Schedule"),
+        "Capacity Planning": _page("online_generic_module", "Capacity Planning"),
+        "Demand Forecasting": _page("online_generic_module", "Demand Forecasting"),
+        "Quality Management": _page("online_generic_module", "Quality Management"),
+        "Preventive Maintenance": _page("online_generic_module", "Preventive Maintenance"),
+        "Batch Management": _page("online_generic_module", "Batch Management"),
+        "Serial Number Tracking": _page("online_generic_module", "Serial Number Tracking"),
+        "Warehouse Bin Rack Management": _page("online_generic_module", "Warehouse Bin Rack Management"),
+
+        # Accounts
+        "Accounting Entries": _page("accounting_entries", "Accounting Entries"),
+        "Accounting Entry Lines": _page("online_generic_module", "Accounting Entry Lines"),
+        "Fixed Assets": _page("fixed_assets", "Fixed Assets"),
+        "Asset Management": _page("asset_management_advanced", "Asset Management"),
+        "Asset Maintenance": _page("online_generic_module", "Asset Maintenance"),
+        "Payment Receipt Voucher": _page("online_generic_module", "Payment Receipt Voucher"),
+        "Bank Payment Voucher": _page("online_generic_module", "Bank Payment Voucher"),
+        "Bank Reconciliation": _page("bank_reconciliation", "Bank Reconciliation"),
+        "Year Closing / Opening Balance Transfer": _page("online_generic_module", "Year Closing / Opening Balance Transfer"),
+        "Budget vs Actual": _page("budget_vs_actual", "Budget vs Actual"),
+        "Cash Flow Statement": _page("reports", "Cash Flow Statement"),
+
+        # Sales/Purchase/Expense
+        "Sales GST Invoice": _page("sales_invoice", "Sales GST Invoice"),
+        "Sales Order": _page("sales_cycle", "Sales Order"),
+        "Delivery Note": _page("sales_cycle", "Delivery Note"),
+        "Credit Note": _page("sales_cycle", "Credit Note"),
+        "Customer Outstanding Ageing": _page("reports", "Customer Outstanding Ageing"),
+        "Sales Cycle": _page("sales_cycle", "Sales Cycle"),
+        "Recurring Invoices": _page("online_generic_module", "Recurring Invoices"),
+        "Purchase GST Invoice": _page("purchase_invoice", "Purchase GST Invoice"),
+        "Purchase Order": _page("purchase_cycle", "Purchase Order"),
+        "Receipt Note": _page("purchase_cycle", "Receipt Note"),
+        "Debit Note": _page("purchase_cycle", "Debit Note"),
+        "Supplier Outstanding Ageing": _page("reports", "Supplier Outstanding Ageing"),
+        "Purchase Cycle": _page("purchase_cycle", "Purchase Cycle"),
+        "GST Reconciliation": _page("reports", "GST Reconciliation"),
+        "Expense GST": _page("expense_gst", "Expense GST"),
+        "Service Voucher": _page("service_voucher", "Service Voucher"),
+        "Expense Approval": _page("online_generic_module", "Expense Approval"),
+        "Recurring Expenses": _page("online_generic_module", "Recurring Expenses"),
+        "TDS Report": _page("reports", "TDS Report"),
+        "Gst Report": _page("reports", "Gst Report"),
+
+        # Projects/Quotation
+        "Project Accounting": _page("project_accounting_module", "Project Accounting"),
+        "Project Income Heads": _page("online_generic_module", "Project Income Heads"),
+        "Project Expense Heads": _page("online_generic_module", "Project Expense Heads"),
+        "Project Profitability": _page("online_generic_module", "Project Profitability"),
+        "Internal Orders": _page("online_generic_module", "Internal Orders"),
+        "Budget Control": _page("online_generic_module", "Budget Control"),
+        "Quotation": _page("quotation_module", "Quotation"),
+        "Quotation Negotiations": _page("quotation_module", "Quotation Negotiations"),
+        "Quotation Requirements": _page("quotation_module", "Quotation Requirements"),
+        "Quotation Business Users": _page("quotation_module", "Quotation Business Users"),
+        "Quotation Access": _page("quotation_module", "Quotation Access"),
+
+        # Enterprise
+        "Workflow Engine": _page("workflow_engine", "Workflow Engine"),
+        "Approval Matrix": _page("online_generic_module", "Approval Matrix"),
+        "Business Process Flow": _page("online_generic_module", "Business Process Flow"),
+        "Document Management": _page("document_management", "Document Management"),
+        "OCR Invoice Scanner": _page("online_generic_module", "OCR Invoice Scanner"),
+        "Global Smart Search": _page("online_generic_module", "Global Smart Search"),
+        "AI Audit & Exception Dashboard": _page("digital_audit_module", "AI Audit & Exception Dashboard"),
+        "Consolidated Financial Statements": _page("online_generic_module", "Consolidated Financial Statements"),
+        "Inter Company Transactions": _page("online_generic_module", "Inter Company Transactions"),
+        "Multi Company / Branch": _page("multi_company_branch", "Multi Company / Branch"),
+        "Multi Currency": _page("online_generic_module", "Multi Currency"),
+        "Customer Portal": _page("online_generic_module", "Customer Portal"),
+        "Vendor Portal": _page("online_generic_module", "Vendor Portal"),
+        "Profitability Analysis - Customer Product Branch": _page("reports", "Profitability Analysis - Customer Product Branch"),
+
+        # Support/Audit/Tools
+        "Support Desk": _page("support_ticket_module", "Support Desk"),
+        "Support Tickets": _page("support_ticket_module", "Support Tickets"),
+        "Customer Complaints": _page("online_generic_module", "Customer Complaints"),
+        "Service Requests": _page("online_generic_module", "Service Requests"),
+        "Client Support Register": _page("online_generic_module", "Client Support Register"),
+        "AMC / Subscription": _page("amc_subscription_module", "AMC / Subscription"),
+        "License Manager": _page("license_manager_module", "License Manager"),
+
+        "Audit Log": _page("audit_log_report", "Audit Log"),
+        "Numbering Series Audit": _page("online_generic_module", "Numbering Series Audit"),
+        "Digital Audit": _page("digital_audit_module", "Digital Audit"),
+        "Duplicate Payment Detection": _page("digital_audit_module", "Duplicate Payment Detection"),
+        "Duplicate Invoice Detection": _page("digital_audit_module", "Duplicate Invoice Detection"),
+        "Suspicious Entry Report": _page("digital_audit_module", "Suspicious Entry Report"),
+        "Backdated Voucher Report": _page("digital_audit_module", "Backdated Voucher Report"),
+        "Weekend Entry Report": _page("digital_audit_module", "Weekend Entry Report"),
+        "User Wise Modification Report": _page("digital_audit_module", "User Wise Modification Report"),
+
+        "OneDrive Backup": _page("online_generic_module", "OneDrive Backup"),
+        "Optional Online Sync Center": _page("offline_sync_engine", "Optional Online Sync Center"),
+        "Data Import": _page("import_center", "Data Import"),
+        "Data Export": _page("online_generic_module", "Data Export"),
+        "Email Utility": _page("email_sms_settings", "Email Utility"),
+        "PDF Print Utility": _page("online_generic_module", "PDF Print Utility"),
+        "System Settings": _page("online_generic_module", "System Settings"),
+        "AI Chat Assistant": _page("ai_assistant", "AI Chat Assistant"),
+        "WhatsApp Integration": _page("email_sms_settings", "WhatsApp Integration"),
+        "Email Integration": _page("email_sms_settings", "Email Integration"),
+        "OneDrive Backup Advanced": _page("online_generic_module", "OneDrive Backup Advanced"),
+        "Mobile App Sync": _page("pwa_mobile_app", "Mobile App Sync"),
+        "Notification Center": _page("notification_center", "Notification Center"),
+        "Backup Restore System": _page("online_generic_module", "Backup Restore System"),
+        "Excel Import Wizard": _page("import_center", "Excel Import Wizard"),
+        "Export All Data": _page("online_generic_module", "Export All Data"),
+        "Reminder System": _page("notification_center", "Reminder System"),
+        "Settings Center": _page("online_generic_module", "Settings Center"),
+        "Restore Backup": _page("online_generic_module", "Restore Backup"),
+        "Error Log Viewer": _page("online_generic_module", "Error Log Viewer"),
+        "Data Health Check": _page("online_generic_module", "Data Health Check"),
+
+        # Reports
+        "Registers / Reports": _page("reports", "Registers / Reports"),
+        "Import Center": _page("import_center", "Import Center"),
+        "Trial Balance": _page("reports", "Trial Balance"),
+        "Profit Loss": _page("reports", "Profit Loss"),
+        "Balance Sheet": _page("reports", "Balance Sheet"),
+        "Sundry Receivable": _page("reports", "Sundry Receivable"),
+        "Sundry Payable": _page("reports", "Sundry Payable"),
+        "Calculation Book": _page("calculation_book", "Calculation Book"),
+        "Import Logs": _page("reports", "Import Logs"),
+        "Dashboard Analytics": _page("dashboard_analytics", "Dashboard Analytics"),
+        "Chairman MIS": _page("dashboard_analytics", "Chairman MIS"),
+        "User Activity Dashboard": _page("reports", "User Activity Dashboard"),
+        "Pending Work Dashboard": _page("reports", "Pending Work Dashboard"),
+        "GST Return Summary": _page("reports", "GST Return Summary"),
     }
 
 
