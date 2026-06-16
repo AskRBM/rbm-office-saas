@@ -312,7 +312,7 @@ ONLINE_MODULE_GROUPS = {
     ],
 
     "Reports": [
-        "Trial Balance", "Profit Loss", "Balance Sheet", "Sundry Receivable",
+        "Trial Balance", "Ledger Statement", "Profit Loss", "Balance Sheet", "Sundry Receivable",
         "Sundry Payable", "Stock Report", "Gst Report", "Tds Report",
         "Calculation Book", "Import Logs", "Dashboard Analytics", "Chairman MIS",
         "User Activity Dashboard", "Pending Work Dashboard", "GST Return Summary",
@@ -5108,6 +5108,157 @@ def _page(function_name, title):
     return lambda title=title: online_generic_module(title)
 
 
+
+
+def build_ledger_statement_df(selected_ledger, from_dt=None, to_dt=None):
+    """Ledger statement: opening + Dr/Cr transactions + running/net balance."""
+    ledger = str(selected_ledger or "All").strip()
+    ledgers = load_table("ledgers", 50000)
+    entries = load_table("accounting_entries", 50000)
+    lines = load_table("accounting_entry_lines", 50000)
+
+    def _date_ok(v):
+        if from_dt is None and to_dt is None:
+            return True
+        try:
+            d = pd.to_datetime(v, dayfirst=True, errors="coerce").date()
+            if pd.isna(pd.to_datetime(v, dayfirst=True, errors="coerce")):
+                return True
+            if from_dt is not None and d < from_dt:
+                return False
+            if to_dt is not None and d > to_dt:
+                return False
+            return True
+        except Exception:
+            return True
+
+    rows = []
+    opening_dr = opening_cr = 0.0
+    if not ledgers.empty and "ledger_name" in ledgers.columns:
+        ldf = ledgers.copy()
+        if ledger != "All":
+            ldf = ldf[ldf["ledger_name"].astype(str) == ledger]
+        for _, r in ldf.iterrows():
+            op = num_value(r.get("opening_balance", 0))
+            bt = str(r.get("balance_type", "Dr")).strip().lower()
+            if bt.startswith("cr"):
+                opening_cr += abs(op)
+            else:
+                opening_dr += abs(op)
+
+    opening_net = opening_dr - opening_cr
+    rows.append({
+        "Date": "Opening",
+        "Voucher Type": "Opening Balance",
+        "Voucher No": "",
+        "Ledger Name": ledger,
+        "Particulars": "Opening Balance",
+        "Dr Amount": round(opening_dr, 2),
+        "Cr Amount": round(opening_cr, 2),
+        "Net Balance": round(abs(opening_net), 2),
+        "Balance Type": "Dr" if opening_net >= 0 else "Cr",
+        "Narration / Remarks": ""
+    })
+
+    entry_lookup = {}
+    if not entries.empty and "id" in entries.columns:
+        for _, e in entries.iterrows():
+            entry_lookup[str(e.get("id"))] = e
+
+    txns = []
+    if not lines.empty and "ledger_name" in lines.columns:
+        lns = lines.copy()
+        if ledger != "All":
+            lns = lns[lns["ledger_name"].astype(str) == ledger]
+        for _, l in lns.iterrows():
+            e = entry_lookup.get(str(l.get("entry_id")), {})
+            dt = e.get("entry_date", l.get("entry_date", "")) if hasattr(e, 'get') else l.get("entry_date", "")
+            if not _date_ok(dt):
+                continue
+            dc = str(l.get("dr_cr", "Dr")).lower()
+            amt = num_value(l.get("amount", 0))
+            txns.append({
+                "Date": dt,
+                "Voucher Type": e.get("voucher_type", l.get("voucher_type", "")) if hasattr(e, 'get') else l.get("voucher_type", ""),
+                "Voucher No": e.get("voucher_no", l.get("voucher_no", "")) if hasattr(e, 'get') else l.get("voucher_no", ""),
+                "Ledger Name": l.get("ledger_name", ""),
+                "Particulars": "Dr Entry" if dc.startswith("dr") else "Cr Entry",
+                "Dr Amount": amt if dc.startswith("dr") else 0.0,
+                "Cr Amount": amt if dc.startswith("cr") else 0.0,
+                "Narration / Remarks": l.get("remarks", e.get("narration", "") if hasattr(e, 'get') else "")
+            })
+
+    # Fallback for old/simple accounting_entries rows without line table
+    if not entries.empty:
+        for _, e in entries.iterrows():
+            dt = e.get("entry_date", "")
+            if not _date_ok(dt):
+                continue
+            amt = num_value(e.get("amount", e.get("total_amount", 0)))
+            debit_acc = str(e.get("debit_account", ""))
+            credit_acc = str(e.get("credit_account", ""))
+            if debit_acc and debit_acc != "Multiple" and (ledger == "All" or debit_acc == ledger):
+                txns.append({"Date": dt, "Voucher Type": e.get("voucher_type", ""), "Voucher No": e.get("voucher_no", ""), "Ledger Name": debit_acc, "Particulars": "Debit", "Dr Amount": amt, "Cr Amount": 0.0, "Narration / Remarks": e.get("narration", "")})
+            if credit_acc and credit_acc != "Multiple" and (ledger == "All" or credit_acc == ledger):
+                txns.append({"Date": dt, "Voucher Type": e.get("voucher_type", ""), "Voucher No": e.get("voucher_no", ""), "Ledger Name": credit_acc, "Particulars": "Credit", "Dr Amount": 0.0, "Cr Amount": amt, "Narration / Remarks": e.get("narration", "")})
+
+    # Sales/Purchase/Expense party impact rows where available
+    extra_sources = [
+        ("sales", "Sales Invoice", ["invoice_date", "date"], ["invoice_no", "voucher_no"], ["customer_name", "party_name", "ledger_name"], "Dr", ["total_value", "total_amount", "gross_value", "amount"]),
+        ("purchase", "Purchase Invoice", ["invoice_date", "date"], ["invoice_no", "voucher_no", "bill_no"], ["vendor_name", "supplier_name", "party_name", "ledger_name"], "Cr", ["total_value", "total_amount", "gross_value", "amount"]),
+        ("expenses", "Expense Voucher", ["expense_date", "voucher_date", "date"], ["voucher_no", "invoice_no"], ["vendor_name", "supplier_name", "party_name", "expense_head"], "Cr", ["total_value", "total_amount", "amount", "net_value"]),
+        ("service_vouchers", "Service Voucher", ["voucher_date", "date"], ["voucher_no"], ["customer_name", "party_name", "ledger_name"], "Dr", ["total_value", "total_amount", "amount"]),
+    ]
+    for table, vtype, date_cols, doc_cols, party_cols, side, amt_cols in extra_sources:
+        try:
+            df = load_table(table, 50000)
+            if df.empty:
+                continue
+            for _, r in df.iterrows():
+                party = next((str(r.get(c, "")) for c in party_cols if c in df.columns and str(r.get(c, "")).strip()), "")
+                if ledger != "All" and party != ledger:
+                    continue
+                dt = next((r.get(c, "") for c in date_cols if c in df.columns), "")
+                if not _date_ok(dt):
+                    continue
+                doc = next((r.get(c, "") for c in doc_cols if c in df.columns), "")
+                amt = next((num_value(r.get(c, 0)) for c in amt_cols if c in df.columns), 0.0)
+                txns.append({"Date": dt, "Voucher Type": vtype, "Voucher No": doc, "Ledger Name": party, "Particulars": vtype, "Dr Amount": amt if side == "Dr" else 0.0, "Cr Amount": amt if side == "Cr" else 0.0, "Narration / Remarks": r.get("remarks", "")})
+        except Exception:
+            pass
+
+    # Sort transactions by date where possible
+    def _sort_key(r):
+        d = pd.to_datetime(r.get("Date", ""), dayfirst=True, errors="coerce")
+        return d if not pd.isna(d) else pd.Timestamp.max
+    txns = sorted(txns, key=_sort_key)
+
+    running = opening_net
+    for r in txns:
+        running += num_value(r.get("Dr Amount", 0)) - num_value(r.get("Cr Amount", 0))
+        r["Dr Amount"] = round(num_value(r.get("Dr Amount", 0)), 2)
+        r["Cr Amount"] = round(num_value(r.get("Cr Amount", 0)), 2)
+        r["Net Balance"] = round(abs(running), 2)
+        r["Balance Type"] = "Dr" if running >= 0 else "Cr"
+        rows.append(r)
+
+    total_dr = sum(num_value(r.get("Dr Amount", 0)) for r in rows)
+    total_cr = sum(num_value(r.get("Cr Amount", 0)) for r in rows)
+    net = total_dr - total_cr
+    rows.append({
+        "Date": "Total",
+        "Voucher Type": "",
+        "Voucher No": "",
+        "Ledger Name": ledger,
+        "Particulars": "Net Closing Balance",
+        "Dr Amount": round(total_dr, 2),
+        "Cr Amount": round(total_cr, 2),
+        "Net Balance": round(abs(net), 2),
+        "Balance Type": "Dr" if net >= 0 else "Cr",
+        "Narration / Remarks": ""
+    })
+    return pd.DataFrame(rows)
+
 def report_module_screen(report_title):
     """Tally-style individual report page so Trial Balance, P&L, B/S, receivable, payable and stock do not show same clients table."""
     show_header(f"{module_prefix(report_title)} {report_title}", "section-rep")
@@ -5119,7 +5270,21 @@ def report_module_screen(report_title):
     if report_title in ["Profit Loss", "Balance Sheet"]:
         fmt = st.selectbox("P&L / B.S. Format", ["Standard", "Overheads"], key=f"rep_fmt_{report_title}")
     tb = build_trial_balance_df()
-    if report_title == "Trial Balance":
+    if report_title == "Ledger Statement":
+        ledger_options = ["All"]
+        try:
+            ldf = load_table("ledgers", 50000)
+            if not ldf.empty and "ledger_name" in ldf.columns:
+                ledger_options += sorted([x for x in ldf["ledger_name"].dropna().astype(str).unique().tolist() if x.strip()])
+        except Exception:
+            pass
+        selected_ledger = st.selectbox("Select Ledger Name", ledger_options, key="ledger_statement_ledger")
+        df = build_ledger_statement_df(selected_ledger, from_dt, to_dt)
+        total_dr = round(df["Dr Amount"].apply(num_value).sum(), 2) if not df.empty and "Dr Amount" in df.columns else 0.0
+        total_cr = round(df["Cr Amount"].apply(num_value).sum(), 2) if not df.empty and "Cr Amount" in df.columns else 0.0
+        net = round(total_dr - total_cr, 2)
+        st.info(f"Ledger: {selected_ledger} | Total Dr: ₹ {total_dr:,.2f} | Total Cr: ₹ {total_cr:,.2f} | Net Balance: ₹ {abs(net):,.2f} {'Dr' if net >= 0 else 'Cr'}")
+    elif report_title == "Trial Balance":
         df = tb[[c for c in ["ledger_group","ledger_name","opening_dr","opening_cr","debit","credit","closing_dr","closing_cr"] if c in tb.columns]].copy() if not tb.empty else pd.DataFrame(columns=["Group","Particulars","Dr Amount","Cr Amount","Report Type"])
     elif report_title == "Profit Loss":
         df = build_profit_loss_df(tb) if not tb.empty else pd.DataFrame({"Debit Particulars":["To Opening Stock","To Purchases","To Direct Expenses","To Gross Profit c/d","Total","To Salaries","To Rent","To Electricity","To Office Expenses","To Depreciation","To Interest Paid","To Net Profit transferred to Capital A/c"],"Debit Amount (₹)":[0]*12,"Credit Particulars":["By Sales","By Closing Stock","By Other Operating Income","","Total","By Gross Profit b/d","By Commission Received","By Interest Received","","","",""] ,"Credit Amount (₹)":[0]*12,"Format":[fmt]*12})
@@ -5340,6 +5505,7 @@ def get_module_mapping():
         "Registers / Reports": _page("reports", "Registers / Reports"),
         "Import Center": _page("import_center", "Import Center"),
         "Trial Balance": lambda: report_module_screen("Trial Balance"),
+        "Ledger Statement": lambda: report_module_screen("Ledger Statement"),
         "Profit Loss": lambda: report_module_screen("Profit Loss"),
         "Balance Sheet": lambda: report_module_screen("Balance Sheet"),
         "Sundry Receivable": lambda: report_module_screen("Sundry Receivable"),
@@ -6213,6 +6379,157 @@ def _offline_tb_df():
         "Cr Amount": [0.0]*10,
         "Report Type": ["Tally Group-Wise Trial Balance"]*10
     })
+
+
+
+def build_ledger_statement_df(selected_ledger, from_dt=None, to_dt=None):
+    """Ledger statement: opening + Dr/Cr transactions + running/net balance."""
+    ledger = str(selected_ledger or "All").strip()
+    ledgers = load_table("ledgers", 50000)
+    entries = load_table("accounting_entries", 50000)
+    lines = load_table("accounting_entry_lines", 50000)
+
+    def _date_ok(v):
+        if from_dt is None and to_dt is None:
+            return True
+        try:
+            d = pd.to_datetime(v, dayfirst=True, errors="coerce").date()
+            if pd.isna(pd.to_datetime(v, dayfirst=True, errors="coerce")):
+                return True
+            if from_dt is not None and d < from_dt:
+                return False
+            if to_dt is not None and d > to_dt:
+                return False
+            return True
+        except Exception:
+            return True
+
+    rows = []
+    opening_dr = opening_cr = 0.0
+    if not ledgers.empty and "ledger_name" in ledgers.columns:
+        ldf = ledgers.copy()
+        if ledger != "All":
+            ldf = ldf[ldf["ledger_name"].astype(str) == ledger]
+        for _, r in ldf.iterrows():
+            op = num_value(r.get("opening_balance", 0))
+            bt = str(r.get("balance_type", "Dr")).strip().lower()
+            if bt.startswith("cr"):
+                opening_cr += abs(op)
+            else:
+                opening_dr += abs(op)
+
+    opening_net = opening_dr - opening_cr
+    rows.append({
+        "Date": "Opening",
+        "Voucher Type": "Opening Balance",
+        "Voucher No": "",
+        "Ledger Name": ledger,
+        "Particulars": "Opening Balance",
+        "Dr Amount": round(opening_dr, 2),
+        "Cr Amount": round(opening_cr, 2),
+        "Net Balance": round(abs(opening_net), 2),
+        "Balance Type": "Dr" if opening_net >= 0 else "Cr",
+        "Narration / Remarks": ""
+    })
+
+    entry_lookup = {}
+    if not entries.empty and "id" in entries.columns:
+        for _, e in entries.iterrows():
+            entry_lookup[str(e.get("id"))] = e
+
+    txns = []
+    if not lines.empty and "ledger_name" in lines.columns:
+        lns = lines.copy()
+        if ledger != "All":
+            lns = lns[lns["ledger_name"].astype(str) == ledger]
+        for _, l in lns.iterrows():
+            e = entry_lookup.get(str(l.get("entry_id")), {})
+            dt = e.get("entry_date", l.get("entry_date", "")) if hasattr(e, 'get') else l.get("entry_date", "")
+            if not _date_ok(dt):
+                continue
+            dc = str(l.get("dr_cr", "Dr")).lower()
+            amt = num_value(l.get("amount", 0))
+            txns.append({
+                "Date": dt,
+                "Voucher Type": e.get("voucher_type", l.get("voucher_type", "")) if hasattr(e, 'get') else l.get("voucher_type", ""),
+                "Voucher No": e.get("voucher_no", l.get("voucher_no", "")) if hasattr(e, 'get') else l.get("voucher_no", ""),
+                "Ledger Name": l.get("ledger_name", ""),
+                "Particulars": "Dr Entry" if dc.startswith("dr") else "Cr Entry",
+                "Dr Amount": amt if dc.startswith("dr") else 0.0,
+                "Cr Amount": amt if dc.startswith("cr") else 0.0,
+                "Narration / Remarks": l.get("remarks", e.get("narration", "") if hasattr(e, 'get') else "")
+            })
+
+    # Fallback for old/simple accounting_entries rows without line table
+    if not entries.empty:
+        for _, e in entries.iterrows():
+            dt = e.get("entry_date", "")
+            if not _date_ok(dt):
+                continue
+            amt = num_value(e.get("amount", e.get("total_amount", 0)))
+            debit_acc = str(e.get("debit_account", ""))
+            credit_acc = str(e.get("credit_account", ""))
+            if debit_acc and debit_acc != "Multiple" and (ledger == "All" or debit_acc == ledger):
+                txns.append({"Date": dt, "Voucher Type": e.get("voucher_type", ""), "Voucher No": e.get("voucher_no", ""), "Ledger Name": debit_acc, "Particulars": "Debit", "Dr Amount": amt, "Cr Amount": 0.0, "Narration / Remarks": e.get("narration", "")})
+            if credit_acc and credit_acc != "Multiple" and (ledger == "All" or credit_acc == ledger):
+                txns.append({"Date": dt, "Voucher Type": e.get("voucher_type", ""), "Voucher No": e.get("voucher_no", ""), "Ledger Name": credit_acc, "Particulars": "Credit", "Dr Amount": 0.0, "Cr Amount": amt, "Narration / Remarks": e.get("narration", "")})
+
+    # Sales/Purchase/Expense party impact rows where available
+    extra_sources = [
+        ("sales", "Sales Invoice", ["invoice_date", "date"], ["invoice_no", "voucher_no"], ["customer_name", "party_name", "ledger_name"], "Dr", ["total_value", "total_amount", "gross_value", "amount"]),
+        ("purchase", "Purchase Invoice", ["invoice_date", "date"], ["invoice_no", "voucher_no", "bill_no"], ["vendor_name", "supplier_name", "party_name", "ledger_name"], "Cr", ["total_value", "total_amount", "gross_value", "amount"]),
+        ("expenses", "Expense Voucher", ["expense_date", "voucher_date", "date"], ["voucher_no", "invoice_no"], ["vendor_name", "supplier_name", "party_name", "expense_head"], "Cr", ["total_value", "total_amount", "amount", "net_value"]),
+        ("service_vouchers", "Service Voucher", ["voucher_date", "date"], ["voucher_no"], ["customer_name", "party_name", "ledger_name"], "Dr", ["total_value", "total_amount", "amount"]),
+    ]
+    for table, vtype, date_cols, doc_cols, party_cols, side, amt_cols in extra_sources:
+        try:
+            df = load_table(table, 50000)
+            if df.empty:
+                continue
+            for _, r in df.iterrows():
+                party = next((str(r.get(c, "")) for c in party_cols if c in df.columns and str(r.get(c, "")).strip()), "")
+                if ledger != "All" and party != ledger:
+                    continue
+                dt = next((r.get(c, "") for c in date_cols if c in df.columns), "")
+                if not _date_ok(dt):
+                    continue
+                doc = next((r.get(c, "") for c in doc_cols if c in df.columns), "")
+                amt = next((num_value(r.get(c, 0)) for c in amt_cols if c in df.columns), 0.0)
+                txns.append({"Date": dt, "Voucher Type": vtype, "Voucher No": doc, "Ledger Name": party, "Particulars": vtype, "Dr Amount": amt if side == "Dr" else 0.0, "Cr Amount": amt if side == "Cr" else 0.0, "Narration / Remarks": r.get("remarks", "")})
+        except Exception:
+            pass
+
+    # Sort transactions by date where possible
+    def _sort_key(r):
+        d = pd.to_datetime(r.get("Date", ""), dayfirst=True, errors="coerce")
+        return d if not pd.isna(d) else pd.Timestamp.max
+    txns = sorted(txns, key=_sort_key)
+
+    running = opening_net
+    for r in txns:
+        running += num_value(r.get("Dr Amount", 0)) - num_value(r.get("Cr Amount", 0))
+        r["Dr Amount"] = round(num_value(r.get("Dr Amount", 0)), 2)
+        r["Cr Amount"] = round(num_value(r.get("Cr Amount", 0)), 2)
+        r["Net Balance"] = round(abs(running), 2)
+        r["Balance Type"] = "Dr" if running >= 0 else "Cr"
+        rows.append(r)
+
+    total_dr = sum(num_value(r.get("Dr Amount", 0)) for r in rows)
+    total_cr = sum(num_value(r.get("Cr Amount", 0)) for r in rows)
+    net = total_dr - total_cr
+    rows.append({
+        "Date": "Total",
+        "Voucher Type": "",
+        "Voucher No": "",
+        "Ledger Name": ledger,
+        "Particulars": "Net Closing Balance",
+        "Dr Amount": round(total_dr, 2),
+        "Cr Amount": round(total_cr, 2),
+        "Net Balance": round(abs(net), 2),
+        "Balance Type": "Dr" if net >= 0 else "Cr",
+        "Narration / Remarks": ""
+    })
+    return pd.DataFrame(rows)
 
 def report_module_screen(report_title):
     show_header(f"{module_prefix(report_title)} {report_title}", "section-rep")
