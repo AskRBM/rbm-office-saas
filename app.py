@@ -5,7 +5,6 @@ import base64
 import json
 import string
 import smtplib
-import inspect
 from email.message import EmailMessage
 from urllib.parse import quote
 from datetime import datetime, date
@@ -14,40 +13,7 @@ from zoneinfo import ZoneInfo
 from supabase import create_client, Client
 from streamlit_geolocation import streamlit_geolocation
 
-
 st.set_page_config(page_title="RBM ERP SaaS", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
-
-# ---------- RBM ERP GLOBAL DROPDOWN PATCH ----------
-# Requirement: every dropdown must show an "All" option.
-# This wrapper adds "All" automatically in every Streamlit selectbox without changing your old code.
-# It also preserves the old default selection by shifting the index by +1.
-_RBM_ORIGINAL_SELECTBOX = st.selectbox
-
-def _rbm_options_with_all(options):
-    try:
-        opts = list(options)
-    except TypeError:
-        opts = [options]
-    # Do not duplicate All if already available.
-    if "All" not in opts:
-        opts = ["All"] + opts
-    return opts
-
-def rbm_selectbox_with_all(label, options, index=0, *args, **kwargs):
-    opts = _rbm_options_with_all(options)
-    # Preserve old selected default. If old index=0, new index=1 so old first item remains selected.
-    if opts and opts[0] == "All":
-        try:
-            old_opts = list(options)
-            if "All" not in old_opts:
-                index = min(max(int(index) + 1, 0), len(opts) - 1)
-            else:
-                index = min(max(int(index), 0), len(opts) - 1)
-        except Exception:
-            index = 0
-    return _RBM_ORIGINAL_SELECTBOX(label, opts, index=index, *args, **kwargs)
-
-st.selectbox = rbm_selectbox_with_all
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 MAX_FILE_SIZE_MB = 2
@@ -90,7 +56,6 @@ TABLES = {
     "support_tickets": "support_tickets",
     "license_manager": "license_manager",
     "role_permissions": "role_permissions",
-    "user_permissions": "user_permissions",
 }
 
 DISPLAY_COLUMNS = {
@@ -144,7 +109,6 @@ DISPLAY_COLUMNS = {
     "support_tickets": ["id","client_code","ticket_no","ticket_date","raised_by","subject","priority","status","assigned_to","remarks","created_by","created_at"],
     "license_manager": ["id","client_code","license_key","client_name","machine_id","start_date","expiry_date","status","remarks","created_by","created_at"],
     "role_permissions": ["id","client_code","role_name","module_name","can_view","can_add","can_edit","can_delete","can_reverse","can_approve","can_print","can_export","created_by","created_at"],
-    "user_permissions": ["id","client_code","username","module_name","can_view","can_add","can_edit","can_delete","can_reverse","can_approve","can_print","can_export","created_by","created_at"],
 }
 
 DEFAULT_LEDGER_GROUPS = ["Sundry Debtors", "Sundry Creditors", "Sales Accounts", "Purchase Accounts", "Direct Expenses", "Indirect Expenses", "Bank Accounts", "Cash-in-Hand", "Duties & Taxes", "Fixed Assets", "Loans & Advances", "Capital Account"]
@@ -323,7 +287,6 @@ ONLINE_MODULE_GROUPS = {
 }
 
 GROUP_ACCESS_KEYS = {
-    "Admin": ["__client_admin_group__"],
     "Master": ["allow_master_group"],
     "CRM": ["allow_support", "allow_quotation", "allow_sales"],
     "HR": ["allow_attendance", "allow_inout", "allow_visitor", "allow_task", "allow_appointment"],
@@ -371,35 +334,12 @@ def strip_module_label(label):
         s = s[1:].strip()
     return s
 
-
-
-def all_online_module_names():
-    names = []
-    try:
-        for _g, _mods in ONLINE_MODULE_GROUPS.items():
-            names.extend(list(_mods))
-    except Exception:
-        pass
-    return list(dict.fromkeys([x for x in names if str(x).strip()]))
-
-def modules_for_selected_group(module_title=None):
-    try:
-        if module_title == "Client Module Permission":
-            g = st.session_state.get(f"gen_{module_title}_group_name", "Admin")
-            return list(ONLINE_MODULE_GROUPS.get(g, [])) or all_online_module_names()
-        return all_online_module_names()
-    except Exception:
-        return ["Dashboard", "User Management", "Company Profile"]
-
 def role_can_see_module(module_name):
     role = st.session_state.get("role", "")
     client_code = str(st.session_state.get("client_code", "")).upper().strip()
 
-    # Client Master and all red developer modules must be hidden from client-side roles.
-    # Client Super Admin can create Admin/User from User Management, but cannot open Client Master.
-
     # RBM internal Super Admin must see Client Master / License / Developer-control modules.
-    # Client Super Admin / Admin / User must NOT see other developer-control modules.
+    # Client Super Admin / Admin / User must NOT see these developer-control modules.
     if module_name in DEVELOPER_ONLY_MODULES:
         return role == "Developer" or (role == "Super Admin" and client_code == "RBM")
 
@@ -412,16 +352,10 @@ def group_enabled_for_client(group_name):
         return True
     if is_developer_or_super_admin():
         return True
-
-    # Client Super Admin / Admin must see Admin group to create users and assign user permissions.
-    # Developer-only red modules are still hidden by role_can_see_module().
-    if group_name == "Admin":
-        return st.session_state.get("role") in ["Client Super Admin", "Admin"]
-
     keys = GROUP_ACCESS_KEYS.get(group_name, [])
     if not keys:
         return False
-    return any(bool(st.session_state.get(k, False)) for k in keys if k != "__client_admin_group__")
+    return any(bool(st.session_state.get(k, False)) for k in keys)
 
 
 COMMON_CONTROL_COLUMNS = ["parking_status", "approval_status", "cost_center", "approved_by", "approval_remarks"]
@@ -500,9 +434,6 @@ def india_now(): return datetime.now(INDIA_TZ)
 def safe_df(data): return pd.DataFrame(data or [])
 def get_client_code(): return st.session_state.get("client_code", "RBM")
 def is_super_admin(): return st.session_state.get("role") in ["Developer", "Super Admin"]
-def is_platform_admin(): return st.session_state.get("role") in ["Developer", "Super Admin"]
-def is_client_super_admin_role(): return st.session_state.get("role") == "Client Super Admin"
-def can_manage_client_users(): return st.session_state.get("role") in ["Developer", "Super Admin", "Client Super Admin", "Admin"]
 def current_user(): return st.session_state.get("username", "system")
 
 def get_cost_center_options():
@@ -1507,46 +1438,30 @@ def dashboard():
 
 def client_master():
     show_header("Client Master", "section-admin")
-    current_role = st.session_state.get("role", "")
-    if current_role not in ["Developer", "Super Admin"]:
-        st.warning("Client Master is Developer / RBM Super Admin only. Client Super Admin can create Admin/User from User Management.")
+    if not is_super_admin():
+        st.warning("Only RBM Super Admin / Developer can access Client Master.")
         return
 
     st.info("Same as Offline Desktop ERP: Group name + all module names are shown. Tick group to tick all modules; untick any module manually.")
 
     clients_df_existing = load_table("clients", 2000)
-
-    # Client Super Admin can view/update only own company access panel, not create or see other clients.
-    if current_role == "Client Super Admin":
-        own_code = str(get_client_code()).upper().strip()
-        if not clients_df_existing.empty and "client_code" in clients_df_existing.columns:
-            clients_df_existing = clients_df_existing[clients_df_existing["client_code"].astype(str).str.upper().str.strip() == own_code]
-        existing_codes = [own_code]
-    else:
-        existing_codes = clients_df_existing["client_code"].dropna().astype(str).tolist() if (not clients_df_existing.empty and "client_code" in clients_df_existing.columns) else []
+    existing_codes = clients_df_existing["client_code"].dropna().astype(str).tolist() if (not clients_df_existing.empty and "client_code" in clients_df_existing.columns) else []
 
     c1, c2, c3 = st.columns(3)
-    existing_codes = sorted(list(dict.fromkeys([str(x).strip().upper() for x in existing_codes if str(x).strip()])))
-    if current_role == "Client Super Admin":
-        selected_existing = c1.selectbox("Company Code", existing_codes or [str(get_client_code()).upper()], key="cm_existing_code_client")
-    else:
-        selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
+    selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
 
     default_code = "" if selected_existing == "New Client" else selected_existing
     default_name = ""
     default_status = "Active"
     if selected_existing != "New Client" and not clients_df_existing.empty:
-        row_df = clients_df_existing[clients_df_existing["client_code"].astype(str).str.upper() == selected_existing]
+        row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
         if not row_df.empty:
             default_name = str(row_df.iloc[0].get("client_name", row_df.iloc[0].get("name", "")) or "")
             default_status = str(row_df.iloc[0].get("status", "Active") or "Active")
 
-    if selected_existing == "New Client":
-        company_code = c1.text_input("New Company Code", value="", placeholder="Example: BWR01 / SJM01", key="cm_new_company_code").upper().strip()
-    else:
-        company_code = c1.text_input("Company Code", value=default_code, key=f"cm_existing_company_code_{selected_existing}", disabled=True).upper().strip()
-    client_name = c2.text_input("Client Name", value=default_name, placeholder="Example: Siyaram Silk Mills Limited", key=f"cm_client_name_{selected_existing}")
-    status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if default_status != "Inactive" else 1, key=f"cm_status_{selected_existing}")
+    company_code = c1.text_input("Company Code", value=default_code, placeholder="Example: SJM01", key="cm_company_code").upper().strip()
+    client_name = c2.text_input("Client Name", value=default_name, placeholder="Example: Siyaram Silk Mills Limited", key="cm_client_name")
+    status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if default_status != "Inactive" else 1, key="cm_status")
 
     st.markdown("### Client Group + Module Permission")
     st.caption("Offline Desktop ERP style: every group is shown with its modules. First tick group name; all modules tick automatically. Then untick any module manually if required.")
@@ -1594,49 +1509,18 @@ def client_master():
                 row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
                 if not row_df.empty:
                     default_group_value = bool(row_df.iloc[0].get(old_flag, False))
-        # RBM RULE: Developer-only modules (red) must stay unticked by default.
-        # All other color modules must be ticked by default, same as offline desktop ERP.
-        non_developer_modules = [m for m in modules if module_tag(m) != "Developer"]
-        developer_modules = [m for m in modules if module_tag(m) == "Developer"]
-        if selected_existing == "New Client" or not existing_perm:
-            default_group_value = bool(non_developer_modules)
-        elif any(existing_perm.values()):
-            default_group_value = all(existing_perm.get(m, False) for m in non_developer_modules)
+        if any(existing_perm.values()):
+            default_group_value = all(existing_perm.get(m, False) for m in modules)
 
-        group_key = f"cm_group_{group_name}_{selected_existing}"
-        prev_group_key = f"cm_group_prev_{group_name}_{selected_existing}"
-
-        tick_group = st.checkbox(
-            f"Tick Full Group: {group_name}",
-            value=default_group_value,
-            key=group_key,
-        )
-
-        # IMPORTANT FIX: if full group tick is changed, immediately tick/untick all child modules.
-        # Red Developer-only modules always remain unticked for client permission.
-        previous_tick = st.session_state.get(prev_group_key, None)
-        if previous_tick is None:
-            st.session_state[prev_group_key] = tick_group
-        elif bool(previous_tick) != bool(tick_group):
-            for child_module in modules:
-                child_key = f"cm_mod_{selected_existing}_{group_name}_{child_module}"
-                st.session_state[child_key] = False if module_tag(child_module) == "Developer" else bool(tick_group)
-            st.session_state[prev_group_key] = tick_group
-
+        tick_group = st.checkbox(f"Tick Full Group: {group_name}", value=default_group_value, key=f"cm_group_{group_name}_{selected_existing}")
         selected_groups[group_name] = tick_group
         cols = st.columns(4)
         for i, module in enumerate(modules):
-            tag = module_tag(module)
+            tag = module_source_tag(module)
             prefix = color_map.get(tag, "🟣")
-            mod_key = f"cm_mod_{selected_existing}_{group_name}_{module}"
-            if tag == "Developer":
-                # Red modules are Developer-only, so never auto-tick them for a client.
-                default_module = False
-            else:
-                # Non-red modules are active/ticked by default. Existing permissions are respected while editing.
-                default_module = existing_perm.get(module, True if selected_existing == "New Client" or not existing_perm else tick_group)
+            default_module = existing_perm.get(module, tick_group)
             with cols[i % 4]:
-                selected_modules[module] = st.checkbox(f"{prefix} {module}", value=default_module, key=mod_key)
+                selected_modules[module] = st.checkbox(f"{prefix} {module}", value=default_module, key=f"cm_mod_{selected_existing}_{group_name}_{module}")
 
     st.markdown("---")
     submitted = st.button("Save Client with Offline Style Group + Module Permissions", use_container_width=True, type="primary")
@@ -1669,36 +1553,14 @@ def client_master():
             if selected_groups.get("Tools"):
                 row.update({"allow_excel_upload": True, "allow_google_sheet_import": True})
 
-            # Supabase clients table may be old/new schema.
-            # Save only safe columns so client creation never crashes because of an extra column.
-            safe_client_columns = [
-                "client_code", "client_name", "status",
-                "allow_master_group", "allow_attendance", "allow_inout", "allow_visitor", "allow_task", "allow_appointment",
-                "allow_stock_raw", "allow_stock_fg", "allow_stock_wip", "allow_sales", "allow_purchase", "allow_expense",
-                "allow_service_voucher", "allow_fixed_assets", "allow_accounting", "allow_excel_upload", "allow_google_sheet_import",
-                "allow_quotation", "allow_manufacturing", "allow_project_accounting", "allow_subscription", "allow_support", "allow_license_manager"
-            ]
-            client_row = {k: v for k, v in row.items() if k in safe_client_columns}
-
             try:
                 exists = safe_df(supabase.table("clients").select("id,client_code").eq("client_code", company_code).limit(1).execute().data)
-                if not exists.empty:
-                    supabase.table("clients").update(client_row).eq("client_code", company_code).execute()
+                if not exists.empty and "id" in exists.columns:
+                    supabase.table("clients").update(row).eq("client_code", company_code).execute()
                 else:
-                    supabase.table("clients").insert(client_row).execute()
-            except Exception as e:
-                # Last fallback for very old clients table: save only the minimum columns.
-                try:
-                    minimal_client_row = {"client_code": company_code, "client_name": client_name, "status": status}
-                    exists = safe_df(supabase.table("clients").select("id,client_code").eq("client_code", company_code).limit(1).execute().data)
-                    if not exists.empty:
-                        supabase.table("clients").update(minimal_client_row).eq("client_code", company_code).execute()
-                    else:
-                        supabase.table("clients").insert(minimal_client_row).execute()
-                except Exception as e2:
-                    st.error("Client save failed. Please check Supabase clients table columns: client_code, client_name, status.")
-                    st.exception(e2)
-                    return
+                    insert_row("clients", row)
+            except Exception:
+                insert_row("clients", row)
 
             try:
                 supabase.table("client_module_permissions").delete().eq("client_code", company_code).execute()
@@ -1712,7 +1574,7 @@ def client_master():
                             "group_name": group_name,
                             "module_name": module,
                             "is_enabled": bool(selected_modules.get(module, False)),
-                            "source_tag": module_tag(module),
+                            "source_tag": module_source_tag(module),
                             "created_by": created_by,
                         })
                 if perm_rows:
@@ -1723,32 +1585,26 @@ def client_master():
             st.success("Client saved with Offline Desktop style group/module permissions.")
             st.rerun()
 
-    client_list_df = load_table("clients", 500)
-    if st.session_state.get("role") == "Client Super Admin" and not client_list_df.empty and "client_code" in client_list_df.columns:
-        client_list_df = client_list_df[client_list_df["client_code"].astype(str).str.upper().str.strip() == str(get_client_code()).upper().strip()]
-    show_table_with_edit_delete("clients", client_list_df, "Client List")
+    show_table_with_edit_delete("clients", load_table("clients", 500), "Client List")
 
 def user_management():
     show_header("User Management", "section-admin")
 
-    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
-        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access User Management.")
+    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
+        st.warning("Only Admin can access User Management.")
         return
 
     if is_super_admin():
-        clients_df = load_table("clients", 2000)
-        client_codes = clients_df["client_code"].dropna().astype(str).str.upper().tolist() if (not clients_df.empty and "client_code" in clients_df.columns) else []
-        client_codes = sorted(list(dict.fromkeys([c for c in client_codes if c])))
+        clients_df = load_table("clients", 1000)
+        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
         if "RBM" not in client_codes:
             client_codes = ["RBM"] + client_codes
-        else:
-            client_codes = ["RBM"] + [c for c in client_codes if c != "RBM"]
         selected_client_code = st.selectbox("Client Code", client_codes, key="um_client_code")
-        users_df = load_table("users", 2000)
+        users_df = load_table("users", 1000)
     else:
         selected_client_code = get_client_code()
         st.info(f"You are creating users only for your business: {selected_client_code}")
-        users_df = load_table("users", 2000)
+        users_df = load_table("users", 1000)
 
     with st.form("user_form"):
         c1, c2 = st.columns(2)
@@ -1762,20 +1618,10 @@ def user_management():
         email = c1.text_input("Email ID")
         mobile = c2.text_input("Mobile No.")
 
-        current_role = st.session_state.get("role", "")
-        if current_role == "Developer":
-            role_options = ["Developer", "Super Admin", "Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
-        elif current_role == "Super Admin":
-            role_options = ["Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
-        elif current_role == "Client Super Admin":
-            # Client Super Admin can create Admin and normal users only inside own company.
-            # Developer and platform Super Admin roles are hidden from client users.
-            role_options = ["Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
+        if is_super_admin():
+            role = c1.selectbox("Role", ["Developer", "Super Admin", "Client Super Admin", "Admin", "User", "Quotation User"])
         else:
-            # Admin can create limited users only.
-            role_options = ["User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
-
-        role = c1.selectbox("Role", role_options)
+            role = c1.selectbox("Role", ["Admin", "User", "Quotation User"])
 
         status = c2.selectbox("Status", ["Active", "Inactive"])
 
@@ -4046,7 +3892,7 @@ MODULE_FEATURE_FLAGS = {
     "Dashboard": None,
 
     # Admin/internal
-    "Client Master": "__client_super_admin__",
+    "Client Master": "__super_admin__",
     "User Management": "__client_admin_normal__",
     "Role Permission Control": "__client_admin_normal__",
     "Employee Master": "allow_master_group",
@@ -4195,11 +4041,8 @@ def module_enabled_for_current_client(module_name):
     if flag == "__super_admin__":
         return False
 
-    if flag == "__client_super_admin__":
-        return st.session_state.get("role") == "Client Super Admin" and _normal_feature_enabled_from_session()
-
     if flag == "__client_admin_normal__":
-        return st.session_state.get("role") in ["Client Super Admin", "Admin"] and _normal_feature_enabled_from_session()
+        return st.session_state.get("role") == "Admin" and _normal_feature_enabled_from_session()
 
     if flag == "__stock_any__":
         return any([st.session_state.get("allow_stock_raw", False), st.session_state.get("allow_stock_fg", False), st.session_state.get("allow_stock_wip", False)])
@@ -4293,9 +4136,6 @@ def module_enabled_for_client_code(module_name, client_code):
     if flag == "__super_admin__":
         return False
 
-    if flag == "__client_super_admin__":
-        return _normal_feature_enabled_from_row(row)
-
     if flag == "__client_admin_normal__":
         return _normal_feature_enabled_from_row(row)
 
@@ -4315,23 +4155,14 @@ PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "pr
 
 def default_permission(module_name, action):
     role = st.session_state.get("role", "")
-    if role in ["Developer", "Super Admin"]:
+    if role == "Super Admin":
         return True
-    if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
+    if module_name in SUPER_ADMIN_ONLY_MODULES:
         return False
-    # Client Super Admin gets full authority for every module enabled for his own client/company.
-    if role == "Client Super Admin":
-        return True
     if role == "Admin":
         return True
-    if role == "Accounts User":
-        return module_name in GROUP_MODULES.get("Accounts", []) and action in ["view", "add", "edit", "print", "export"]
-    if role == "HR User":
-        return module_name in GROUP_MODULES.get("HR", []) and action in ["view", "add", "edit", "print", "export"]
-    if role == "Inventory User":
-        return module_name in GROUP_MODULES.get("Inventory", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "Quotation User":
-        return module_name in GROUP_MODULES.get("Quotation", []) and action in ["view", "add", "print", "export"]
+        return module_name == "Quotation" and action in ["view", "add", "print", "export"]
     if role == "User":
         return action in ["view", "print", "export"]
     return action == "view"
@@ -4340,33 +4171,18 @@ def has_permission(module_name, action="view"):
     try:
         if is_super_admin():
             return True
-        if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
+        if module_name in SUPER_ADMIN_ONLY_MODULES:
             return False
-        # Client Super Admin must always get full access to all modules enabled for his company.
-        if st.session_state.get("role") == "Client Super Admin":
-            return module_enabled_for_current_client(module_name)
         action = str(action).lower().strip()
         if action not in PERMISSION_ACTIONS:
             return False
         role_name = str(st.session_state.get("role", "User"))
-        username = str(st.session_state.get("username", ""))
         client_code = get_client_code()
-        col = f"can_{action}"
-
-        # First priority: Role Based Security means USERNAME wise security.
-        # If a permission row exists for the logged-in username, it overrides role permission.
-        try:
-            udata = supabase.table("user_permissions").select("*").eq("client_code", client_code).eq("username", username).eq("module_name", module_name).limit(1).execute().data
-            udf = safe_df(udata)
-            if not udf.empty and col in udf.columns:
-                return bool(udf.iloc[0].get(col, default_permission(module_name, action)))
-        except Exception:
-            pass
-
         data = supabase.table("role_permissions").select("*").eq("client_code", client_code).eq("role_name", role_name).eq("module_name", module_name).limit(1).execute().data
         dfp = safe_df(data)
         if dfp.empty:
             return default_permission(module_name, action)
+        col = f"can_{action}"
         return bool(dfp.iloc[0].get(col, default_permission(module_name, action))) if col in dfp.columns else default_permission(module_name, action)
     except Exception:
         return default_permission(module_name, action)
@@ -4381,123 +4197,16 @@ def filter_modules_by_permission(modules):
     for m in modules:
         if m == "No module available":
             continue
-        if m in SUPER_ADMIN_ONLY_MODULES or m in DEVELOPER_ONLY_MODULES:
+        if m in SUPER_ADMIN_ONLY_MODULES:
             continue
         if module_enabled_for_current_client(m) and has_permission(m, "view"):
             allowed.append(m)
     return allowed or ["No module available"]
 
-
-def role_based_security_control():
-    """Role Based Security screen: same as Role Permission Control, but Select Role dropdown shows USERNAMES."""
-    show_header("Role Based Security", "section-admin")
-    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
-        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Based Security.")
-        return
-
-    st.info("Role Based Security = username/login wise permission. Screen same as Role Permission Control, but Select Role dropdown shows username created in User Management.")
-
-    # Select client exactly like Role Permission Control
-    if is_super_admin():
-        clients_df = load_table("clients", 1000)
-        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty and "client_code" in clients_df.columns else ["RBM"]
-        if "RBM" not in client_codes:
-            client_codes = ["RBM"] + client_codes
-        selected_client = st.selectbox("Select Client", client_codes, key="rbs_client")
-    else:
-        selected_client = get_client_code()
-        st.selectbox("Select Client", [selected_client], key="rbs_client_fixed", disabled=True)
-
-    # Select Role label remains same, but options are USERNAME only
-    users_df = load_table("users", 5000)
-    users_df = safe_df(users_df)
-    if not users_df.empty and "client_code" in users_df.columns:
-        users_df = users_df[users_df["client_code"].astype(str) == str(selected_client)]
-    if not is_super_admin() and not users_df.empty and "role" in users_df.columns:
-        users_df = users_df[~users_df["role"].astype(str).isin(["Developer", "Super Admin"])]
-    if users_df.empty or "username" not in users_df.columns:
-        st.warning("No username found for this client. First create username in User Management.")
-        return
-
-    usernames = users_df["username"].dropna().astype(str).unique().tolist()
-    if not usernames:
-        st.warning("No username found for this client. First create username in User Management.")
-        return
-    selected_username = st.selectbox("Select Role", usernames, key="rbs_username_select")
-
-    user_role = ""
-    if "role" in users_df.columns:
-        rr = users_df[users_df["username"].astype(str) == str(selected_username)]
-        if not rr.empty:
-            user_role = str(rr.iloc[0].get("role", ""))
-    if user_role:
-        st.caption(f"Selected Username: {selected_username} | Actual Role: {user_role}")
-
-    try:
-        existing = safe_df(
-            supabase.table("user_permissions")
-            .select("*")
-            .eq("client_code", selected_client)
-            .eq("username", selected_username)
-            .execute().data
-        )
-    except Exception:
-        st.error("Supabase table user_permissions missing. Run supabase_required_patch.sql once in Supabase SQL Editor.")
-        existing = pd.DataFrame()
-
-    perm_rows = []
-    with st.form("role_based_security_username_form"):
-        st.markdown("### Module Permissions")
-        header = st.columns([2.5,1,1,1,1,1,1,1,1])
-        header[0].markdown("**Module**")
-        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
-            header[i].markdown(f"**{act.title()}**")
-
-        for module in ERP_MODULES:
-            if module == "No module available":
-                continue
-            if not module_enabled_for_client_code(module, selected_client):
-                continue
-            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
-                continue
-            current = existing[existing["module_name"].astype(str) == str(module)] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
-            cols = st.columns([2.5,1,1,1,1,1,1,1,1])
-            cols[0].write(module)
-            row = {"module_name": module}
-            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
-                colname = f"can_{act}"
-                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if (not current.empty and colname in current.columns) else default_permission(module, act)
-                row[colname] = cols[i].checkbox("", value=default_val, key=f"rbs_{selected_client}_{selected_username}_{module}_{act}")
-            perm_rows.append(row)
-
-        save_btn = st.form_submit_button("Save Role Based Security", use_container_width=True)
-
-    if save_btn:
-        try:
-            supabase.table("user_permissions").delete().eq("client_code", selected_client).eq("username", selected_username).execute()
-            rows = []
-            for r in perm_rows:
-                rec = {"client_code": selected_client, "username": selected_username, "created_by": current_user()}
-                rec.update(r)
-                rows.append(rec)
-            if rows:
-                supabase.table("user_permissions").insert(rows).execute()
-            write_audit_log("Role Based Security", "UPDATE", "", f"Saved username wise permission for {selected_client} / {selected_username}")
-            st.success("Role Based Security saved successfully for selected username.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Unable to save Role Based Security. Run updated SQL patch if needed. Error: {e}")
-
-    st.divider()
-    try:
-        show_table_with_edit_delete("user_permissions", load_table("user_permissions", 2000), "Saved Role Based Security")
-    except Exception:
-        st.info("Saved Role Based Security list will show after user_permissions table is created.")
-
 def role_permission_control():
     show_header("Role-wise Permission Control", "section-admin")
-    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
-        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Permission Control.")
+    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
+        st.warning("Only Admin can access Role Permission Control.")
         return
     if is_super_admin():
         clients_df = load_table("clients", 1000)
@@ -4508,14 +4217,7 @@ def role_permission_control():
     else:
         selected_client = get_client_code()
         st.info(f"Permission setting for your own business only: {selected_client}")
-    current_role = st.session_state.get("role", "")
-    if current_role in ["Developer", "Super Admin"]:
-        assignable_roles = ["Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Manager", "Approver", "Viewer"]
-    elif current_role == "Client Super Admin":
-        assignable_roles = ["Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Manager", "Approver", "Viewer"]
-    else:
-        assignable_roles = ["User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Viewer"]
-    role_name = st.selectbox("Select Role", assignable_roles, key="perm_role")
+    role_name = st.selectbox("Select Role", ["Admin", "User", "Quotation User", "Manager", "Approver", "Viewer"], key="perm_role")
     existing = safe_df(supabase.table("role_permissions").select("*").eq("client_code", selected_client).eq("role_name", role_name).execute().data)
     perm_rows = []
     with st.form("role_permission_form"):
@@ -4530,7 +4232,7 @@ def role_permission_control():
             if not module_enabled_for_client_code(module, selected_client):
                 continue
             # Do not let client admins assign RBM internal/super-admin-only modules.
-            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES and module != "Client Master":
+            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
                 continue
             current = existing[existing["module_name"].astype(str) == module] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
             cols = st.columns([2.5,1,1,1,1,1,1,1,1])
@@ -4652,254 +4354,38 @@ def render_custom_menu():
     return group, choice
 
 
-
-def _generic_options(label):
-    base = {
-        "status": ["Active", "Inactive", "Pending", "Completed", "Closed", "Cancelled"],
-        "priority": ["High", "Medium", "Low"],
-        "parking_status": ["Parked", "Posted"],
-        "approval_status": ["Pending", "Approved", "Rejected"],
-        "reminder_type": ["Payment Follow-up", "Receivable Follow-up", "Payable Follow-up", "GST Due Date", "TDS Due Date", "Salary Reminder", "License Expiry", "Task Reminder", "Meeting Reminder"],
-        "repeat_type": ["One Time", "Daily", "Weekly", "Monthly", "Quarterly", "Yearly"],
-        "check_type": ["Blank Records", "Duplicate Records", "Invalid Date", "Invalid Amount", "Missing Company Code", "Missing GST No", "Opening Balance Mismatch", "Stock Negative", "Voucher Number Gap", "All Checks"],
-        "backup_type": ["Full Backup", "Data Backup", "Report Backup", "Client Backup", "Before Update Backup", "Restore Backup"],
-        "export_type": ["CSV", "Excel", "PDF", "Full Data ZIP", "Module Wise Export"],
-        "import_type": ["CSV", "Excel", "Opening Balance", "Stock Import", "Ledger Import", "Employee Import"],
-        "voucher_type": ["Contra", "Payment", "Receipt", "Journal", "Sales", "Purchase", "Credit Note", "Debit Note", "Purchase Order", "Sales Order", "Receipt Note", "Delivery Note", "Stock Journal", "Physical Stock", "Material In", "Material Out"],
-        "payment_mode": ["Cash", "Bank", "Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Card", "Online"],
-        "shift": ["General", "Morning", "Evening", "Night", "Rotational"],
-        "module_name": list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Master","Sales","Purchase","Inventory","Accounts"],
-    }
-    return base.get(label.lower())
-
-_GENERIC_MODULE_FIELDS = {
-    "User Password Change": [("company_code","Company Code","company"),("username","Username","user"),("old_password","Old Password","password"),("new_password","New Password","password"),("confirm_password","Confirm Password","password"),("remarks","Remarks","text")],
-    "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("module_name","Module Name","module_name"),("from_date","From Date","date"),("to_date","To Date","date"),("records_to_purge","Records To Purge","number"),("purge_status","Purge Status","status"),("requested_by","Requested By","text"),("approved_by","Approved By","text"),("remarks","Remarks","text")],
-    "Data Locking Period": [("company_code","Company Code","company"),("module_name","Module Name","module_name"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status","status"),("reason","Reason","text")],
-    "Mandatory Field Settings": [("company_code","Company Code","company"),("module_name","Module Name","module_name"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status","status"),("remarks","Remarks","text")],
-    "Client Group Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("allowed","Allowed","bool"),("status","Status","status"),("remarks","Remarks","text")],
-    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name"),("allowed","Allowed","bool"),("status","Status","status"),("remarks","Remarks","text")],
-    "CRM Leads": [("company_code","Company Code","company"),("lead_date","Lead Date","date"),("lead_name","Lead Name","text"),("company_name","Company Name","text"),("mobile","Mobile","text"),("email","Email","text"),("source","Source","text"),("status","Status","status"),("next_followup_date","Next Follow-up Date","date"),("remarks","Remarks","text")],
-    "CRM Followups": [("company_code","Company Code","company"),("followup_date","Follow-up Date","date"),("lead_name","Lead / Customer Name","text"),("followup_type","Follow-up Type","text"),("next_date","Next Date","date"),("assigned_to","Assigned To","user"),("status","Status","status"),("remarks","Remarks","text")],
-    "CRM Customers": [("company_code","Company Code","company"),("customer_code","Customer Code","text"),("customer_name","Customer Name","text"),("mobile","Mobile","text"),("email","Email","text"),("gst_no","GST No","text"),("city","City","text"),("status","Status","status"),("remarks","Remarks","text")],
-    "CRM Opportunities": [("company_code","Company Code","company"),("opportunity_no","Opportunity No","text"),("customer_name","Customer Name","text"),("opportunity_value","Opportunity Value","number"),("stage","Stage","text"),("expected_closing_date","Expected Closing Date","date"),("assigned_to","Assigned To","user"),("status","Status","status"),("remarks","Remarks","text")],
-    "Customer Portal Access": [("company_code","Company Code","company"),("customer_name","Customer Name","text"),("username","Username","text"),("password","Password","password"),("mobile","Mobile","text"),("email","Email","text"),("access_status","Access Status","status"),("remarks","Remarks","text")],
-    "Payroll Salary Structure": [("company_code","Company Code","company"),("employee_name","Employee Name","employee"),("basic_salary","Basic Salary","number"),("hra","HRA","number"),("allowance","Allowance","number"),("pf","PF","number"),("esi","ESI","number"),("gross_salary","Gross Salary","number"),("net_salary","Net Salary","number"),("status","Status","status")],
-    "Payroll Processing": [("company_code","Company Code","company"),("salary_month","Salary Month","text"),("employee_name","Employee Name","employee"),("working_days","Working Days","number"),("paid_days","Paid Days","number"),("gross_salary","Gross Salary","number"),("deduction","Deduction","number"),("net_salary","Net Salary","number"),("payment_mode","Payment Mode","payment_mode"),("status","Status","status")],
-    "Payroll Payslip": [("company_code","Company Code","company"),("payslip_no","Payslip No","text"),("salary_month","Salary Month","text"),("employee_name","Employee Name","employee"),("gross_salary","Gross Salary","number"),("deduction","Deduction","number"),("net_salary","Net Salary","number"),("payment_date","Payment Date","date"),("status","Status","status")],
-    "Barcode Master": [("company_code","Company Code","company"),("barcode_no","Barcode No","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("batch_no","Batch No","text"),("mfg_date","MFG Date","date"),("expiry_date","Expiry Date","date"),("mrp","MRP","number"),("selling_rate","Selling Rate","number"),("qty","Qty","number"),("status","Status","status")],
-    "Barcode Print Log": [("company_code","Company Code","company"),("print_date","Print Date","date"),("barcode_no","Barcode No","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("qty_printed","Qty Printed","number"),("printed_by","Printed By","user"),("remarks","Remarks","text")],
-    "Warehouse Stock": [("company_code","Company Code","company"),("warehouse_code","Warehouse Code","text"),("warehouse_name","Warehouse Name","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("opening_qty","Opening Qty","number"),("inward_qty","Inward Qty","number"),("outward_qty","Outward Qty","number"),("closing_qty","Closing Qty","number"),("rate","Rate","number"),("value","Value","number")],
-    "Production Planning": [("company_code","Company Code","company"),("plan_no","Plan No","text"),("plan_date","Plan Date","date"),("finished_item","Finished Item","stock_item"),("planned_qty","Planned Qty","number"),("bom_no","BOM No","bom"),("start_date","Start Date","date"),("end_date","End Date","date"),("machine_name","Machine Name","text"),("supervisor","Supervisor","employee"),("plan_status","Plan Status","status")],
-    "Production Schedule": [("company_code","Company Code","company"),("schedule_no","Schedule No","text"),("schedule_date","Schedule Date","date"),("plan_no","Plan No","plan"),("shift","Shift","shift"),("machine_name","Machine Name","text"),("operator_name","Operator Name","employee"),("qty_scheduled","Qty Scheduled","number"),("status","Status","status")],
-    "Capacity Planning": [("company_code","Company Code","company"),("machine_name","Machine Name","text"),("shift","Shift","shift"),("available_hours","Available Hours","number"),("planned_hours","Planned Hours","number"),("free_capacity","Free Capacity","number"),("plan_date","Plan Date","date"),("remarks","Remarks","text")],
-    "Payment Receipt Voucher": [("company_code","Company Code","company"),("receipt_no","Receipt No","text"),("receipt_date","Receipt Date","date"),("customer_code","Customer Code","text"),("customer_name","Customer Name","text"),("ledger_name","Ledger Name","text"),("amount_received","Amount Received","number"),("tds_percent","TDS %","number"),("tds_deducted","TDS Deducted","number"),("net_amount","Net Amount","number"),("payment_mode","Payment Mode","payment_mode"),("remarks","Remarks","text")],
-    "Bank Payment Voucher": [("company_code","Company Code","company"),("payment_no","Payment No","text"),("payment_date","Payment Date","date"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("ledger_name","Ledger Name","text"),("amount_paid","Amount Paid","number"),("tds_percent","TDS %","number"),("tds_deducted","TDS Deducted","number"),("net_amount","Net Amount","number"),("payment_mode","Payment Mode","payment_mode"),("remarks","Remarks","text")],
-    "Purchase Order": [("company_code","Company Code","company"),("po_no","PO No","text"),("po_date","PO Date","date"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("item_name","Item Name","stock_item"),("qty","Qty","number"),("rate","Rate","number"),("value","Value","number"),("status","Status","status"),("remarks","Remarks","text")],
-    "Receipt Note": [("company_code","Company Code","company"),("grn_no","GRN / Receipt No","text"),("grn_date","GRN Date","date"),("po_no","PO No","text"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("item_name","Item Name","stock_item"),("received_qty","Received Qty","number"),("status","Status","status"),("remarks","Remarks","text")],
-    "Debit Note": [("company_code","Company Code","company"),("debit_note_no","Debit Note No","text"),("debit_note_date","Debit Note Date","date"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("reason","Reason","text"),("taxable_value","Taxable Value","number"),("cgst","CGST","number"),("sgst","SGST","number"),("igst","IGST","number"),("total_value","Total Value","number"),("remarks","Remarks","text")],
-}
-
-
-_SPECIAL_STORAGE_KEY = "online_generic_records"
-
-def _company_codes():
-    codes = []
-    try:
-        df = load_table("clients", 500)
-        if not df.empty:
-            for col in ["client_code", "company_code"]:
-                if col in df.columns:
-                    codes += [str(x) for x in df[col].dropna().unique().tolist() if str(x).strip()]
-    except Exception:
-        pass
-    cur = get_client_code() if 'get_client_code' in globals() else st.session_state.get('client_code','RBM')
-    codes = list(dict.fromkeys([cur] + codes + ["RBM", "SJM01", "CST01"]))
-    return codes
-
-def _generic_lookup(kind):
-    try:
-        if kind == "company": return _company_codes()
-        if kind == "user":
-            df = load_table("users", 500); return [str(x) for x in df.get("username", pd.Series(dtype=str)).dropna().unique().tolist()] or [current_user()]
-        if kind == "employee":
-            df = load_table("employees", 500); return [str(x) for x in df.get("employee_name", pd.Series(dtype=str)).dropna().unique().tolist()] or ["Sample Employee"]
-        if kind == "stock_item":
-            return get_stock_items() or ["Sample Item"]
-        if kind == "bom":
-            df = load_table("bom_headers", 500); return [str(x) for x in df.get("bom_no", pd.Series(dtype=str)).dropna().unique().tolist()] or ["BOM001"]
-        if kind == "plan":
-            recs = st.session_state.get(_SPECIAL_STORAGE_KEY, [])
-            vals=[r.get("plan_no") for r in recs if r.get("module_name")=="Production Planning" and r.get("plan_no")]
-            return vals or ["PLAN001"]
-        if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
-        if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
-    except Exception:
-        pass
-    return []
-
-def _generic_save(module_title, row):
-    row = dict(row)
-    row["module_name"] = module_title
-    row["created_by"] = current_user() if 'current_user' in globals() else st.session_state.get('username','')
-    row["created_at"] = india_now().isoformat() if 'india_now' in globals() else datetime.now().isoformat()
-    st.session_state.setdefault(_SPECIAL_STORAGE_KEY, []).append(row)
-    # Optional Supabase persistence if generic_erp_records table exists. No crash if not created.
-    try:
-        supabase.table("generic_erp_records").insert({
-            "client_code": row.get("company_code") or row.get("client_code") or get_client_code(),
-            "module_name": module_title,
-            "data_json": row,
-            "created_by": row.get("created_by"),
-        }).execute()
-    except Exception:
-        pass
-
-def _generic_records_df(module_title):
-    rows = [r for r in st.session_state.get(_SPECIAL_STORAGE_KEY, []) if r.get("module_name") == module_title]
-    try:
-        q = supabase.table("generic_erp_records").select("*").eq("module_name", module_title).limit(500).execute().data or []
-        for rec in q:
-            data = rec.get("data_json") if isinstance(rec.get("data_json"), dict) else {}
-            if data: rows.append(data)
-    except Exception:
-        pass
-    return pd.DataFrame(rows)
-
-def _render_generic_input(col, label, field, typ, module_title):
-    opts = _generic_options(typ) if isinstance(typ, str) else None
-    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY"))
-    if typ == "time": return str(col.time_input(label, value=india_now().time()))
-    if typ == "number": return col.number_input(label, value=0.0, key=f"gen_{module_title}_{field}")
-    if typ == "bool": return col.checkbox(label, value=True, key=f"gen_{module_title}_{field}")
-    if typ == "password": return col.text_input(label, type="password", key=f"gen_{module_title}_{field}")
-    if typ in ["company","user","employee","stock_item","bom","plan","group","module_name"]:
-        values = modules_for_selected_group(module_title) if typ == "module_name" else _generic_lookup(typ)
-        if not values:
-            values = ["Add New..."]
-        else:
-            values = list(dict.fromkeys([str(v) for v in values if str(v).strip()])) + ["Add New..."]
-        return col.selectbox(label, values, key=f"gen_{module_title}_{field}")
-    if opts: return col.selectbox(label, opts + ["Add New..."], key=f"gen_{module_title}_{field}")
-    return col.text_input(label, key=f"gen_{module_title}_{field}")
-
 def online_generic_module(module_title):
-    """Integrated online working module screen for modules copied from offline desktop ERP.
-    It gives real data-entry, import/export, records list, help and safe optional persistence.
+    """Safe placeholder/working starter page for modules that are available in offline version
+    but whose full online transaction logic is still pending. It prevents online ERP from crashing
+    and gives client a usable screen with help, filters and next-action note.
     """
     tag = module_tag(module_title)
-    cls = {"SAP":"section-master", "QuickBooks":"section-hr", "Tally":"section-rep", "Developer":"section-admin", "RBM":"section-admin"}.get(tag, "section-admin")
+    cls = {
+        "SAP": "section-master",
+        "QuickBooks": "section-hr",
+        "Tally": "section-rep",
+        "Developer": "section-admin",
+        "RBM": "section-admin",
+    }.get(tag, "section-admin")
     show_header(f"{module_prefix(module_title)} {module_title}", cls)
-    st.info(f"{module_title} is now integrated with data entry, save, list, CSV export, import/help screen and permission menu.")
-
-    fields = _GENERIC_MODULE_FIELDS.get(module_title, [("company_code","Company Code","company"),("entry_date","Entry Date","date"),("document_no","Document No","text"),("party_name","Party / Employee / Item Name","text"),("amount","Amount","number"),("status","Status","status"),("remarks","Remarks","text")])
-
+    st.info(f"{module_title} is added in online RBM ERP menu as per offline desktop version.")
+    st.markdown("""
+    **Use / Integration Plan**
+    - This module is available in the online menu and permission structure.
+    - Existing working online modules continue as-is.
+    - Full save/edit/delete workflow can be connected to a Supabase table for this module.
+    - Developer-only modules are hidden from client users.
+    """)
     with st.expander("Module Information / Help", expanded=False):
-        st.write(f"**{module_title}** is used to capture and control related ERP records online. Saved records can be exported and later connected with reports, approvals and audit trails.")
-        st.write("Dropdowns use already available master data wherever possible. Remarks remain free text. Company code is selected from client master list.")
-
-    with st.form(f"form_{module_title}"):
-        cols = st.columns(3)
-        row = {}
-        for i, (field, label, typ) in enumerate(fields):
-            row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
-        c1, c2, c3 = st.columns(3)
-        submitted = c1.form_submit_button(f"Save {module_title}", use_container_width=True)
-        calc = c2.form_submit_button("Calculate", use_container_width=True)
-        clear = c3.form_submit_button("Clear", use_container_width=True)
-    if submitted or calc:
-        # automatic calculations for common qty/rate/tax/payroll/capacity fields
-        for qty_name in ["qty","opening_qty","inward_qty","outward_qty","planned_qty","qty_scheduled","produced_qty"]:
-            if qty_name in row and "rate" in row and "value" in row:
-                row["value"] = float(row.get(qty_name) or 0) * float(row.get("rate") or 0)
-        if {"basic_salary","hra","allowance","pf","esi"}.issubset(row):
-            row["gross_salary"] = float(row.get("basic_salary") or 0)+float(row.get("hra") or 0)+float(row.get("allowance") or 0)
-            row["net_salary"] = row["gross_salary"]-float(row.get("pf") or 0)-float(row.get("esi") or 0)
-        if {"gross_salary","deduction","net_salary"}.issubset(row):
-            row["net_salary"] = float(row.get("gross_salary") or 0)-float(row.get("deduction") or 0)
-        if {"available_hours","planned_hours","free_capacity"}.issubset(row):
-            row["free_capacity"] = float(row.get("available_hours") or 0)-float(row.get("planned_hours") or 0)
-        _generic_save(module_title, row)
-        st.success(f"{module_title} record saved.")
-        st.rerun()
-
-    if module_title in ["Data Import"]:
-        up = st.file_uploader("Upload CSV/Excel file", type=["csv","xlsx","xls"])
-        if up is not None:
-            try:
-                df = pd.read_csv(up) if up.name.lower().endswith('.csv') else pd.read_excel(up)
-                st.success(f"File loaded: {len(df)} rows")
-                st.dataframe(df.head(50), use_container_width=True)
-            except Exception as e:
-                st.error(f"Import failed: {e}")
-
-    df = _generic_records_df(module_title)
-    st.subheader(f"Saved Records - {module_title}")
-    if df.empty:
-        sample = {label: f"Sample {label}" for _, label, typ in fields[:6]}
-        st.dataframe(pd.DataFrame([sample]), use_container_width=True)
-    else:
-        st.dataframe(df, use_container_width=True)
-        st.download_button("Export CSV", df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True)
+        st.write(f"This help page explains how **{module_title}** will be used and how it connects with other RBM ERP modules.")
+        st.write("For production use, create the matching Supabase table and then connect this page to `insert_row`, `update_row`, `delete_row`, reports and permissions.")
+    st.warning("This is a safe online starter screen. It will not disturb your existing working online ERP code.")
 
 def _page(function_name, title):
     fn = globals().get(function_name)
-    # IMPORTANT FIX:
-    # online_generic_module needs one argument (module title).
-    # Any other page function that requires an argument is also wrapped safely.
-    if function_name == "online_generic_module":
-        return lambda title=title: online_generic_module(title)
     if callable(fn):
-        try:
-            sig = inspect.signature(fn)
-            required = [p for p in sig.parameters.values() if p.default is inspect._empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
-            if required:
-                return lambda title=title, fn=fn: fn(title)
-            return fn
-        except Exception:
-            return lambda title=title: online_generic_module(title)
+        return fn
     return lambda title=title: online_generic_module(title)
-
-
-def report_module_screen(report_title):
-    """Tally-style individual report page so Trial Balance, P&L, B/S, receivable, payable and stock do not show same clients table."""
-    show_header(f"{module_prefix(report_title)} {report_title}", "section-rep")
-    c1, c2, c3 = st.columns(3)
-    from_dt = c1.date_input("From Date", value=india_now().date().replace(day=1), format="DD-MM-YYYY", key=f"rep_from_{report_title}")
-    to_dt = c2.date_input("To Date", value=india_now().date(), format="DD-MM-YYYY", key=f"rep_to_{report_title}")
-    search = c3.text_input("Search / Ledger / Party / Item", key=f"rep_search_{report_title}")
-    fmt = "Standard"
-    if report_title in ["Profit Loss", "Balance Sheet"]:
-        fmt = st.selectbox("P&L / B.S. Format", ["Standard", "Overheads"], key=f"rep_fmt_{report_title}")
-    tb = build_trial_balance_df()
-    if report_title == "Trial Balance":
-        df = tb[[c for c in ["ledger_group","ledger_name","opening_dr","opening_cr","debit","credit","closing_dr","closing_cr"] if c in tb.columns]].copy() if not tb.empty else pd.DataFrame(columns=["Group","Particulars","Dr Amount","Cr Amount","Report Type"])
-    elif report_title == "Profit Loss":
-        df = build_profit_loss_df(tb) if not tb.empty else pd.DataFrame({"Debit Particulars":["To Opening Stock","To Purchases","To Direct Expenses","To Gross Profit c/d","Total","To Salaries","To Rent","To Electricity","To Office Expenses","To Depreciation","To Interest Paid","To Net Profit transferred to Capital A/c"],"Debit Amount (₹)":[0]*12,"Credit Particulars":["By Sales","By Closing Stock","By Other Operating Income","","Total","By Gross Profit b/d","By Commission Received","By Interest Received","","","",""] ,"Credit Amount (₹)":[0]*12,"Format":[fmt]*12})
-    elif report_title == "Balance Sheet":
-        df = build_balance_sheet_df(tb) if not tb.empty else pd.DataFrame({"Liabilities":["Capital Account","Add: Net Profit","Less: Drawings","Secured Loans","Unsecured Loans","Sundry Creditors","Outstanding Expenses","Duties & Taxes Payable","Total"],"Amount (₹)":[0]*9,"Assets":["Fixed Assets","Less: Depreciation","Net Fixed Assets","Investments","Closing Stock","Sundry Debtors","Cash in Hand","Cash at Bank","Total"],"Asset Amount (₹)":[0]*9,"Format":[fmt]*9})
-    elif report_title in ["Sundry Receivable", "Customer Outstanding Ageing"]:
-        df = tb[tb.get("ledger_group", pd.Series(dtype=str)).astype(str).isin(["Sundry Debtors","Trade Receivables"])] if not tb.empty else pd.DataFrame(columns=["customer_name","invoice_no","invoice_date","due_date","amount","received","balance","ageing_days"])
-    elif report_title in ["Sundry Payable", "Supplier Outstanding Ageing"]:
-        df = tb[tb.get("ledger_group", pd.Series(dtype=str)).astype(str).isin(["Sundry Creditors","Trade Payables"])] if not tb.empty else pd.DataFrame(columns=["supplier_name","bill_no","bill_date","due_date","amount","paid","balance","ageing_days"])
-    elif report_title in ["Stock Report", "Stock Ageing / Slow Moving Stock"]:
-        df = build_stock_summary_df()
-        if df.empty: df = pd.DataFrame(columns=["Stock Group","Item Code","Item Name","Opening Qty","Purchase Qty","Sales/Consumption Qty","Closing Qty","Rate","Value","Ageing Days"])
-    elif report_title in ["Gst Report", "GST Return Summary", "GST Reconciliation"]:
-        df = pd.DataFrame(columns=["GSTIN","Invoice No","Invoice Date","Party Name","Taxable Value","CGST","SGST","IGST","Total GST","Mismatch Status"])
-    elif report_title == "Tds Report":
-        df = pd.DataFrame(columns=["Date","Party Name","Section","TDS %","Gross Amount","TDS Amount","Paid/Payable","Challan No"])
-    else:
-        df = pd.DataFrame(columns=["Date","Document No","Party / Item","Debit","Credit","Amount","Status","Remarks"])
-    if search and not df.empty:
-        df = filter_dataframe(df, search)
-    st.caption(f"Report: {report_title} | Format: {fmt} | Rows: {len(df)}")
-    st.dataframe(df, use_container_width=True)
-    c1, c2 = st.columns(2)
-    c1.download_button("Export CSV", df.to_csv(index=False).encode('utf-8'), f"{report_title.replace(' ','_')}.csv", "text/csv", use_container_width=True, key=f"csv_{report_title}")
-    c2.download_button("Export Excel", to_excel_bytes(df), f"{report_title.replace(' ','_')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"xlsx_{report_title}")
-    with st.expander("Drill-down details"):
-        st.info("Click/select the relevant ledger/party/item row above, then use search filter to see supporting records. Detailed row-click voucher drill-down can be connected once Streamlit AgGrid/table selection is added.")
 
 def get_module_mapping():
     """Map latest offline desktop module names to online pages. Existing online pages are reused."""
@@ -4910,7 +4396,7 @@ def get_module_mapping():
         "Client Master": _page("client_master", "Client Master"),
         "User Management": _page("user_management", "User Management"),
         "Role Permission Control": _page("role_permission_control", "Role Permission Control"),
-        "Role Based Security": _page("role_based_security_control", "Role Based Security"),
+        "Role Based Security": _page("role_permission_control", "Role Based Security"),
         "Client License Dashboard": _page("license_manager_module", "Client License Dashboard"),
         "User Password Change": _page("online_generic_module", "User Password Change"),
         "License Status Screen": _page("license_manager_module", "License Status Screen"),
@@ -4961,8 +4447,8 @@ def get_module_mapping():
         "Finished Goods Stock": _page("stock_fg", "Finished Goods Stock"),
         "WIP Stock": _page("stock_wip", "WIP Stock"),
         "Stock Voucher": _page("stock_voucher", "Stock Voucher"),
-        "Stock Report": lambda: report_module_screen("Stock Report"),
-        "Stock Ageing / Slow Moving Stock": lambda: report_module_screen("Stock Ageing / Slow Moving Stock"),
+        "Stock Report": _page("reports", "Stock Report"),
+        "Stock Ageing / Slow Moving Stock": _page("reports", "Stock Ageing / Slow Moving Stock"),
 
         # Manufacturing
         "BOM Header": _page("bill_of_material_module", "BOM Header"),
@@ -4995,29 +4481,29 @@ def get_module_mapping():
         "Bank Reconciliation": _page("bank_reconciliation", "Bank Reconciliation"),
         "Year Closing / Opening Balance Transfer": _page("online_generic_module", "Year Closing / Opening Balance Transfer"),
         "Budget vs Actual": _page("budget_vs_actual", "Budget vs Actual"),
-        "Cash Flow Statement": lambda: report_module_screen("Cash Flow Statement"),
+        "Cash Flow Statement": _page("reports", "Cash Flow Statement"),
 
         # Sales/Purchase/Expense
         "Sales GST Invoice": _page("sales_invoice", "Sales GST Invoice"),
         "Sales Order": _page("sales_cycle", "Sales Order"),
         "Delivery Note": _page("sales_cycle", "Delivery Note"),
         "Credit Note": _page("sales_cycle", "Credit Note"),
-        "Customer Outstanding Ageing": lambda: report_module_screen("Customer Outstanding Ageing"),
+        "Customer Outstanding Ageing": _page("reports", "Customer Outstanding Ageing"),
         "Sales Cycle": _page("sales_cycle", "Sales Cycle"),
         "Recurring Invoices": _page("online_generic_module", "Recurring Invoices"),
         "Purchase GST Invoice": _page("purchase_invoice", "Purchase GST Invoice"),
         "Purchase Order": _page("purchase_cycle", "Purchase Order"),
         "Receipt Note": _page("purchase_cycle", "Receipt Note"),
         "Debit Note": _page("purchase_cycle", "Debit Note"),
-        "Supplier Outstanding Ageing": lambda: report_module_screen("Supplier Outstanding Ageing"),
+        "Supplier Outstanding Ageing": _page("reports", "Supplier Outstanding Ageing"),
         "Purchase Cycle": _page("purchase_cycle", "Purchase Cycle"),
-        "GST Reconciliation": lambda: report_module_screen("GST Reconciliation"),
+        "GST Reconciliation": _page("reports", "GST Reconciliation"),
         "Expense GST": _page("expense_gst", "Expense GST"),
         "Service Voucher": _page("service_voucher", "Service Voucher"),
         "Expense Approval": _page("online_generic_module", "Expense Approval"),
         "Recurring Expenses": _page("online_generic_module", "Recurring Expenses"),
         "TDS Report": _page("reports", "TDS Report"),
-        "Gst Report": lambda: report_module_screen("Gst Report"),
+        "Gst Report": _page("reports", "Gst Report"),
 
         # Projects/Quotation
         "Project Accounting": _page("project_accounting_module", "Project Accounting"),
@@ -5046,7 +4532,7 @@ def get_module_mapping():
         "Multi Currency": _page("online_generic_module", "Multi Currency"),
         "Customer Portal": _page("online_generic_module", "Customer Portal"),
         "Vendor Portal": _page("online_generic_module", "Vendor Portal"),
-        "Profitability Analysis - Customer Product Branch": lambda: report_module_screen("Profitability Analysis - Customer Product Branch"),
+        "Profitability Analysis - Customer Product Branch": _page("reports", "Profitability Analysis - Customer Product Branch"),
 
         # Support/Audit/Tools
         "Support Desk": _page("support_ticket_module", "Support Desk"),
@@ -5092,11 +4578,11 @@ def get_module_mapping():
         # Reports
         "Registers / Reports": _page("reports", "Registers / Reports"),
         "Import Center": _page("import_center", "Import Center"),
-        "Trial Balance": lambda: report_module_screen("Trial Balance"),
-        "Profit Loss": lambda: report_module_screen("Profit Loss"),
-        "Balance Sheet": lambda: report_module_screen("Balance Sheet"),
-        "Sundry Receivable": lambda: report_module_screen("Sundry Receivable"),
-        "Sundry Payable": lambda: report_module_screen("Sundry Payable"),
+        "Trial Balance": _page("reports", "Trial Balance"),
+        "Profit Loss": _page("reports", "Profit Loss"),
+        "Balance Sheet": _page("reports", "Balance Sheet"),
+        "Sundry Receivable": _page("reports", "Sundry Receivable"),
+        "Sundry Payable": _page("reports", "Sundry Payable"),
         "Calculation Book": _page("calculation_book", "Calculation Book"),
         "Import Logs": _page("reports", "Import Logs"),
         "Dashboard Analytics": _page("dashboard_analytics", "Dashboard Analytics"),
@@ -5105,23 +4591,6 @@ def get_module_mapping():
         "Pending Work Dashboard": _page("reports", "Pending Work Dashboard"),
         "GST Return Summary": _page("reports", "GST Return Summary"),
     }
-
-
-
-def render_current_page(mapping, choice):
-    page_fn = mapping.get(choice)
-    if not callable(page_fn):
-        online_generic_module(choice)
-        return
-    try:
-        page_fn()
-    except TypeError:
-        # If an older page function signature does not match Streamlit menu call, open integrated generic module instead.
-        online_generic_module(choice)
-    except Exception as e:
-        st.error(f"Module error in {choice}: {e}")
-        st.info("This module is protected by safe fallback so the full ERP will not stop. Please check related Supabase table/columns if save is required.")
-        online_generic_module(choice)
 
 
 def main_app():
@@ -5143,7 +4612,7 @@ def main_app():
             group, choice = render_custom_menu()
         with content_col:
             rbm_header()
-            render_current_page(mapping, choice)
+            mapping.get(choice, placeholder_denied)()
     else:
         # When hidden, show the unhide button, but keep the same current module open.
         if st.button("☰ Show Menu", key="show_menu_when_hidden"):
@@ -5152,794 +4621,8 @@ def main_app():
         rbm_header()
         st.info("Menu is hidden. Click ☰ Show Menu to show it again.")
         choice = st.session_state.get("active_choice", "Dashboard")
-        render_current_page(mapping, choice)
+        mapping.get(choice, placeholder_denied)()
 
-
-
-# ================= RBM ONLINE FINAL INTEGRATION PATCH 3 =================
-# Purpose: make online modules closer to offline desktop ERP: proper module dropdowns,
-# production order flow, printable preview, employee photo upload UI, and safer reports.
-
-def _rbm_safe_df(table, limit=1000):
-    try:
-        return load_table(table, limit)
-    except Exception:
-        return pd.DataFrame()
-
-
-def _production_order_no_list():
-    try:
-        df = _rbm_safe_df("production_orders", 2000)
-        vals = []
-        if not df.empty and "order_no" in df.columns:
-            vals = [str(x) for x in df["order_no"].dropna().unique().tolist() if str(x).strip()]
-        return vals or ["No Production Order Found"]
-    except Exception:
-        return ["No Production Order Found"]
-
-
-def _consumption_entry_no_list():
-    try:
-        df = _rbm_safe_df("consumption_entries", 2000)
-        vals = []
-        if not df.empty and "entry_no" in df.columns:
-            vals = [str(x) for x in df["entry_no"].dropna().unique().tolist() if str(x).strip()]
-        return vals or ["No Consumption Entry Found"]
-    except Exception:
-        return ["No Consumption Entry Found"]
-
-
-def _module_names_for_group(group_name):
-    try:
-        return list(ONLINE_MODULE_GROUPS.get(str(group_name), [])) or ["No Module Found"]
-    except Exception:
-        return ["No Module Found"]
-
-
-def _render_print_preview_from_row(title, row):
-    html = f"""
-    <html><head><meta charset='utf-8'><title>{title}</title>
-    <style>
-      body{{font-family:Arial, sans-serif; padding:24px;}}
-      h2{{border-bottom:2px solid #111; padding-bottom:8px;}}
-      table{{border-collapse:collapse; width:100%;}}
-      td,th{{border:1px solid #777; padding:7px; font-size:13px;}}
-      th{{background:#f2f2f2; text-align:left;}}
-      .no-print{{margin-bottom:15px;}}
-      @media print{{.no-print{{display:none;}}}}
-    </style></head><body>
-    <div class='no-print'><button onclick='window.print()'>Print / Save PDF</button></div>
-    <h2>RBM ERP - {title}</h2>
-    <table><tbody>
-    """
-    for k,v in dict(row).items():
-        html += f"<tr><th>{str(k).replace('_',' ').title()}</th><td>{'' if v is None else v}</td></tr>"
-    html += "</tbody></table></body></html>"
-    st.components.v1.html(html, height=520, scrolling=True)
-
-
-def _generic_print_preview_ui(module_title, df):
-    if df is None or df.empty:
-        st.warning("Print Preview: first save or load at least one record.")
-        return
-    st.subheader(f"Print Preview - {module_title}")
-    rec_no = st.selectbox("Select record for print preview", list(range(len(df))), format_func=lambda i: f"Record {i+1}", key=f"pp_select_{module_title}")
-    row = df.iloc[int(rec_no)].to_dict()
-    _render_print_preview_from_row(module_title, row)
-
-
-# Override generic lookup with correct module list support.
-def _generic_lookup(kind):
-    try:
-        if kind == "company": return _company_codes()
-        if kind == "user":
-            df = load_table("users", 500); return [str(x) for x in df.get("username", pd.Series(dtype=str)).dropna().unique().tolist()] or [current_user()]
-        if kind == "employee":
-            df = load_table("employees", 500); return [str(x) for x in df.get("employee_name", pd.Series(dtype=str)).dropna().unique().tolist()] or ["Sample Employee"]
-        if kind == "stock_item": return get_stock_items() or ["Sample Item"]
-        if kind == "bom":
-            df = load_table("bom_headers", 500); return [str(x) for x in df.get("bom_no", pd.Series(dtype=str)).dropna().unique().tolist()] or ["BOM001"]
-        if kind == "production_order": return _production_order_no_list()
-        if kind == "consumption_entry": return _consumption_entry_no_list()
-        if kind == "plan":
-            recs = st.session_state.get(_SPECIAL_STORAGE_KEY, [])
-            vals=[r.get("plan_no") for r in recs if r.get("module_name")=="Production Planning" and r.get("plan_no")]
-            return vals or ["PLAN001"]
-        if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
-        if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
-    except Exception:
-        pass
-    return []
-
-# Improve field definitions for online generic modules where the old screen was too common.
-_GENERIC_MODULE_FIELDS.update({
-    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Status","status"),("remarks","Remarks","text")],
-    "Mandatory Field Settings": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status","status"),("remarks","Remarks","text")],
-    "Data Locking Period": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status",["Locked","Unlocked","Pending"]),("reason","Reason","text")],
-    "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("from_date","From Date","date"),("to_date","To Date","date"),("purge_status","Purge Status",["Requested","Approved","Rejected","Completed"]),("requested_by","Requested By","user"),("remarks","Remarks","text")],
-    "BOM Lines": [("company_code","Company Code","company"),("bom_no","BOM No","bom"),("rm_item","Raw Material Item","stock_item"),("unit","Unit","text"),("rm_qty","RM Qty","number"),("rm_rate","RM Rate","number"),("rm_amount","RM Amount","number"),("remarks","Remarks","text")],
-    "Production Planning": [("company_code","Company Code","company"),("plan_no","Plan No","text"),("plan_date","Plan Date","date"),("finished_item","Finished Item","stock_item"),("planned_qty","Planned Qty","number"),("bom_no","BOM No","bom"),("start_date","Start Date","date"),("end_date","End Date","date"),("machine_name","Machine Name","text"),("supervisor","Supervisor","employee"),("plan_status","Plan Status","status")],
-    "Production Schedule": [("company_code","Company Code","company"),("schedule_no","Schedule No","text"),("schedule_date","Schedule Date","date"),("production_order_no","Production Order No","production_order"),("finished_item","Finished Item","stock_item"),("qty_scheduled","Qty Scheduled","number"),("machine_name","Machine Name","text"),("shift_name","Shift Name",["Shift A","Shift B","Shift C","General"]),("schedule_status","Schedule Status","status")],
-    "Capacity Planning": [("company_code","Company Code","company"),("plan_date","Plan Date","date"),("machine_name","Machine Name","text"),("production_order_no","Production Order No","production_order"),("available_hours","Available Hours","number"),("planned_hours","Planned Hours","number"),("free_capacity","Free Capacity","number"),("status","Status","status"),("remarks","Remarks","text")],
-    "Payment Receipt Voucher": [("company_code","Company Code","company"),("voucher_no","Voucher No","text"),("voucher_date","Voucher Date","date"),("party_type","Party Type",["Customer","Vendor","Employee","Item","Other"]),("party_code","Customer/Vendor/Employee/Item Code","text"),("party_name","Customer/Vendor/Employee/Item Name","text"),("qty","Qty if Item","number"),("amount","Amount","number"),("payment_mode","Payment Mode","payment_mode"),("status","Status","status"),("remarks","Remarks","text")],
-    "Bank Payment Voucher": [("company_code","Company Code","company"),("voucher_no","Voucher No","text"),("voucher_date","Voucher Date","date"),("party_type","Party Type",["Vendor","Employee","Customer","Item","Other"]),("party_code","Customer/Vendor/Employee/Item Code","text"),("party_name","Customer/Vendor/Employee/Item Name","text"),("qty","Qty if Item","number"),("amount","Amount","number"),("payment_mode","Payment Mode","payment_mode"),("status","Status","status"),("remarks","Remarks","text")],
-    "Payroll Payslip": [("company_code","Company Code","company"),("payslip_no","Payslip No","text"),("salary_month","Salary Month","text"),("employee_name","Employee Name","employee"),("gross_salary","Gross Salary","number"),("deduction","Deduction","number"),("net_salary","Net Salary","number"),("payment_date","Payment Date","date"),("status","Status","status"),("remarks","Remarks","text")],
-    "Numbering Series Audit": [("company_code","Company Code","company"),("audit_date","Audit Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("series_name","Series Name","text"),("expected_next_no","Expected Next No","text"),("actual_next_no","Actual Next No","text"),("missing_numbers","Missing Numbers","text"),("duplicate_numbers","Duplicate Numbers","text"),("audit_status","Audit Status",["OK","Mismatch","Missing","Duplicate"]),("remarks","Remarks","text")],
-})
-
-
-def _render_generic_input(col, label, field, typ, module_title):
-    opts = _generic_options(typ) if isinstance(typ, str) else None
-    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY", key=f"gen_{module_title}_{field}"))
-    if typ == "time": return str(col.time_input(label, value=india_now().time(), key=f"gen_{module_title}_{field}"))
-    if typ == "number": return col.number_input(label, value=0.0, key=f"gen_{module_title}_{field}")
-    if typ == "bool": return col.checkbox(label, value=True, key=f"gen_{module_title}_{field}")
-    if typ == "password": return col.text_input(label, type="password", key=f"gen_{module_title}_{field}")
-    if typ == "module_name_by_group":
-        g = st.session_state.get(f"gen_{module_title}_group_name", "Dashboard")
-        values = _module_names_for_group(g)
-        return col.selectbox(label, values + ["Add New..."], key=f"gen_{module_title}_{field}")
-    if typ in ["company","user","employee","stock_item","bom","plan","production_order","consumption_entry","group","module_name"]:
-        values = _generic_lookup(typ)
-        if not values:
-            values = ["Add New..."]
-        else:
-            values = list(dict.fromkeys([str(v) for v in values if str(v).strip()])) + ["Add New..."]
-        return col.selectbox(label, values, key=f"gen_{module_title}_{field}")
-    if opts: return col.selectbox(label, opts + ["Add New..."], key=f"gen_{module_title}_{field}")
-    return col.text_input(label, key=f"gen_{module_title}_{field}")
-
-
-def online_generic_module(module_title):
-    tag = module_tag(module_title)
-    cls = {"SAP":"section-master", "QuickBooks":"section-hr", "Tally":"section-rep", "Developer":"section-admin", "RBM":"section-admin"}.get(tag, "section-admin")
-    show_header(f"{module_prefix(module_title)} {module_title}", cls)
-    st.info(f"{module_title} is now integrated with data entry, save, list, CSV export, import/help screen, permission menu and Print Preview.")
-    fields = _GENERIC_MODULE_FIELDS.get(module_title, [("company_code","Company Code","company"),("entry_date","Entry Date","date"),("document_no","Document No","text"),("party_name","Party / Employee / Item Name","text"),("amount","Amount","number"),("status","Status","status"),("remarks","Remarks","text")])
-    with st.expander("Module Information / Help", expanded=False):
-        st.write(f"**{module_title}** is used to capture and control related ERP records online. Dropdowns use master values; remarks remain free text; saved record can be printed or exported.")
-    with st.form(f"form_{module_title}"):
-        cols = st.columns(3)
-        row = {}
-        for i, (field, label, typ) in enumerate(fields):
-            row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
-        c1, c2, c3 = st.columns(3)
-        submitted = c1.form_submit_button(f"Save {module_title}", use_container_width=True)
-        calc = c2.form_submit_button("Calculate", use_container_width=True)
-        clear = c3.form_submit_button("Clear", use_container_width=True)
-    if submitted or calc:
-        for qty_name in ["qty","opening_qty","inward_qty","outward_qty","planned_qty","qty_scheduled","produced_qty","rm_qty"]:
-            for amt_name in ["value","amount","rm_amount"]:
-                if qty_name in row and "rate" in row and amt_name in row:
-                    row[amt_name] = float(row.get(qty_name) or 0) * float(row.get("rate") or row.get("rm_rate") or 0)
-        if {"gross_salary","deduction","net_salary"}.issubset(row):
-            row["net_salary"] = float(row.get("gross_salary") or 0)-float(row.get("deduction") or 0)
-        if {"available_hours","planned_hours","free_capacity"}.issubset(row):
-            row["free_capacity"] = float(row.get("available_hours") or 0)-float(row.get("planned_hours") or 0)
-        _generic_save(module_title, row)
-        st.success(f"{module_title} record saved."); st.rerun()
-    if module_title in ["Data Import", "Excel Import Wizard"]:
-        up = st.file_uploader("Upload CSV/Excel file", type=["csv","xlsx","xls"])
-        if up is not None:
-            try:
-                dfup = pd.read_csv(up) if up.name.lower().endswith('.csv') else pd.read_excel(up)
-                st.success(f"File loaded: {len(dfup)} rows"); st.dataframe(dfup.head(50), use_container_width=True)
-            except Exception as e: st.error(f"Import failed: {e}")
-    df = _generic_records_df(module_title)
-    st.subheader(f"Saved Records - {module_title}")
-    if df.empty:
-        sample = {label: f"Sample {label}" for _, label, typ in fields[:6]}
-        st.dataframe(pd.DataFrame([sample]), use_container_width=True)
-    else:
-        st.dataframe(df, use_container_width=True)
-        c1,c2 = st.columns(2)
-        c1.download_button("Export CSV", df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True)
-        with c2:
-            show_pp = st.button("Print Preview / PDF", use_container_width=True, key=f"pp_btn_{module_title}")
-        if show_pp:
-            _generic_print_preview_ui(module_title, df)
-
-
-def production_entry_module():
-    simple_module_form("production_entries", "Production Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("order_no", "Production Order No", _production_order_no_list()), ("fg_item", "Finished Goods", get_stock_items()), ("produced_qty", "Produced Qty", "number"), ("warehouse", "Warehouse", "text"), ("status", "Status", ["Draft", "Posted", "Cancelled"]), ("remarks", "Remarks", "text")], "section-inv")
-
-def consumption_entry_module():
-    simple_module_form("consumption_entries", "Consumption Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("order_no", "Production Order No", _production_order_no_list()), ("rm_item", "Raw Material", get_stock_items()), ("consumed_qty", "Consumed Qty", "number"), ("rate", "Rate", "number"), ("amount", "Amount", "number"), ("warehouse", "Warehouse", "text"), ("remarks", "Remarks", "text")], "section-inv")
-
-def finished_goods_entry_module():
-    simple_module_form("fg_entries", "Finished Goods Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("production_order_no", "Production Order No", _production_order_no_list()), ("consumption_entry_no", "Consumption Entry No", _consumption_entry_no_list()), ("fg_item", "Finished Goods", get_stock_items()), ("qty", "Qty", "number"), ("rate", "Rate", "number"), ("amount", "Amount", "number"), ("warehouse", "Warehouse", "text"), ("remarks", "Remarks", "text")], "section-inv")
-
-
-def bill_of_material_module():
-    show_header("Bill of Material (BOM)", "section-inv")
-    st.info("Same online screen for BOM Header and BOM Lines: finished goods recipe + raw material lines + cost per unit + print preview.")
-    if "bom_line_count" not in st.session_state: st.session_state["bom_line_count"] = 1
-    cadd, crem, creset = st.columns(3)
-    if cadd.button("➕ Add Raw Material Line", use_container_width=True, key="bom_add_line_final"):
-        st.session_state["bom_line_count"] += 1; st.rerun()
-    if crem.button("➖ Remove Last Line", use_container_width=True, key="bom_remove_line_final"):
-        if st.session_state["bom_line_count"] > 1: st.session_state["bom_line_count"] -= 1; st.rerun()
-    if creset.button("🔄 Reset BOM Lines", use_container_width=True, key="bom_reset_line_final"):
-        st.session_state["bom_line_count"] = 1; st.rerun()
-    stock_items = get_stock_items()
-    with st.form("bom_form_final"):
-        c1,c2,c3=st.columns(3)
-        bom_no=c1.text_input("BOM No")
-        bom_date=c2.date_input("BOM Date", value=india_now().date(), format="DD-MM-YYYY")
-        fg_item=c3.selectbox("Finished Goods Item", stock_items, key="bom_fg_item_final")
-        fg_qty=c1.number_input("FG Qty", min_value=0.0, value=1.0, step=1.0)
-        status=c2.selectbox("Status", ["Draft","Active","Inactive"])
-        remarks=c3.text_input("Remarks")
-        st.subheader("BOM Lines / Raw Material Consumption")
-        line_rows=[]; material_cost=0.0
-        for i in range(st.session_state["bom_line_count"]):
-            st.markdown(f"**Raw Material Line {i+1}**")
-            a,b,c,d,e=st.columns(5)
-            rm_item=a.selectbox("RM Item", stock_items, key=f"bom_rm_item_final_{i}")
-            unit=b.text_input("Unit", key=f"bom_unit_final_{i}")
-            rm_qty=c.number_input("Qty", min_value=0.0, value=0.0, step=1.0, key=f"bom_qty_final_{i}")
-            rm_rate=d.number_input("Rate", min_value=0.0, value=0.0, step=1.0, key=f"bom_rate_final_{i}")
-            rm_amount=rm_qty*rm_rate; e.metric("Amount", f"{rm_amount:,.2f}")
-            line_rows.append({"rm_item":rm_item,"unit":unit,"rm_qty":rm_qty,"rm_rate":rm_rate,"rm_amount":rm_amount}); material_cost += rm_amount
-        st.subheader("Costing")
-        d1,d2,d3,d4=st.columns(4)
-        labour_cost=d1.number_input("Labour Cost", min_value=0.0, value=0.0, step=100.0)
-        power_cost=d2.number_input("Power Cost", min_value=0.0, value=0.0, step=100.0)
-        packing_cost=d3.number_input("Packing Cost", min_value=0.0, value=0.0, step=100.0)
-        other_cost=d4.number_input("Other Cost", min_value=0.0, value=0.0, step=100.0)
-        total_cost=material_cost+labour_cost+power_cost+packing_cost+other_cost
-        cost_per_unit=total_cost/fg_qty if fg_qty else 0
-        st.info(f"Material Cost: {material_cost:,.2f} | Total Cost: {total_cost:,.2f} | Cost Per Unit: {cost_per_unit:,.2f}")
-        save=st.form_submit_button("Save BOM Header + Lines", use_container_width=True)
-    if save:
-        if not bom_no.strip(): st.error("BOM No is required.")
-        else:
-            res=insert_row("bom_headers", {"bom_no":bom_no.strip(),"bom_date":str(bom_date),"fg_item":fg_item,"fg_qty":fg_qty,"labour_cost":labour_cost,"power_cost":power_cost,"packing_cost":packing_cost,"other_cost":other_cost,"material_cost":material_cost,"total_cost":total_cost,"cost_per_unit":cost_per_unit,"status":status,"remarks":remarks,"created_by":current_user()})
-            header_id=""
-            try: header_id=res.data[0].get("id","") if res.data else ""
-            except Exception: header_id=""
-            for line in line_rows:
-                if float(line.get("rm_qty") or 0)>0:
-                    insert_row("bom_lines", {"bom_header_id":header_id,"bom_no":bom_no.strip(),"rm_item":line["rm_item"],"unit":line["unit"],"rm_qty":line["rm_qty"],"rm_rate":line["rm_rate"],"rm_amount":line["rm_amount"],"created_by":current_user()})
-            st.success("BOM saved successfully."); st.rerun()
-    tab1,tab2,tab3=st.tabs(["BOM Header Register","BOM Lines Register","Print Preview"])
-    with tab1: show_table_with_edit_delete("bom_headers", load_table("bom_headers",1000), "BOM Header Register")
-    with tab2: show_table_with_edit_delete("bom_lines", load_table("bom_lines",2000), "BOM Lines Register")
-    with tab3:
-        df=load_table("bom_headers",1000)
-        _generic_print_preview_ui("BOM", df)
-
-
-def employee_master():
-    show_header("Employee Master", "section-admin")
-    df = load_table("employees", 500)
-    next_id = "EMP001" if df.empty else f"EMP{len(df)+1:03d}"
-    with st.form("employee_form_photo_final"):
-        c1,c2 = st.columns(2)
-        employee_id = c1.text_input("Employee ID", value=next_id)
-        employee_name = c2.text_input("Employee Name")
-        mobile = c1.text_input("Mobile"); email = c2.text_input("Email")
-        department = c1.text_input("Department"); designation = c2.text_input("Designation")
-        branch_division = c1.text_input("Branch / Division"); status = c2.selectbox("Status", ["Active","Inactive"])
-        photo = st.file_uploader("Employee Photo (preview only unless photo columns are added in Supabase)", type=["png","jpg","jpeg"])
-        if st.form_submit_button("Save Employee", use_container_width=True):
-            if not employee_name: st.error("Employee Name required")
-            else:
-                insert_row("employees", {"employee_id":employee_id,"employee_name":employee_name,"mobile":mobile,"email":email,"department":department,"designation":designation,"branch_division":branch_division,"status":status,"created_by":current_user()})
-                st.success("Employee saved. Photo upload field is available; add photo columns in DB if permanent storage is required."); st.rerun()
-    if 'photo' in locals() and photo is not None:
-        st.image(photo, caption="Employee Photo Preview", width=160)
-    show_table_with_edit_delete("employees", df, "Employee List")
-
-# Rebuild mapping after patch so overridden functions are used.
-def render_current_page(mapping, choice):
-    try:
-        mapping = get_module_mapping()
-    except Exception:
-        pass
-    page_fn = mapping.get(choice)
-    if not callable(page_fn):
-        online_generic_module(choice); return
-    try:
-        page_fn()
-    except TypeError:
-        online_generic_module(choice)
-    except Exception as e:
-        st.error(f"Module error in {choice}: {e}")
-        st.info("Safe fallback opened. Please check Supabase table/columns if this module requires permanent save.")
-        online_generic_module(choice)
-# ================= END RBM ONLINE FINAL INTEGRATION PATCH 3 =================
-
-
-_PATCH5_OLD_GET_MODULE_MAPPING = get_module_mapping
-
-
-# ================= RBM ONLINE FINAL PATCH 5: OFFLINE-LIKE MASTER LINKING / PATH / WHATSAPP =================
-
-def _clean_opts(vals, fallback=None):
-    out=[]
-    for v in (vals or []):
-        sv=str(v).strip()
-        if sv and sv.lower() not in ["nan", "none"] and sv not in out:
-            out.append(sv)
-    if not out and fallback:
-        out=list(fallback)
-    return out or ["All"]
-
-def _table_values(table_key, column, fallback=None):
-    try:
-        df=load_table(table_key, 2000)
-        if not df.empty and column in df.columns:
-            return _clean_opts(df[column].dropna().astype(str).tolist(), fallback)
-    except Exception:
-        pass
-    return _clean_opts([], fallback)
-
-DEFAULT_UNITS = ["PCS","MTR","KG","GMS","LTR","BOX","BAG","ROLL","SET","NOS"]
-DEFAULT_PAYMENT_MODES = ["Cash","Bank","UPI","Cheque","NEFT","RTGS","IMPS","Credit Card","Debit Card","Wallet"]
-STOCK_VOUCHER_TYPES = ["Contra","Payment","Receipt","Journal","Sales","Purchase","Credit Note","Debit Note","Purchase Order","Sales Order","Receipt Note","Delivery Note","Stock Journal","Physical Stock","Rejections In","Rejections Out","Payroll","Attendance","Memorandum","Reversing Journal","Optional Voucher","Material In","Material Out"]
-DEFAULT_SHIFTS = ["General","Shift A","Shift B","Shift C","Night Shift"]
-
-def _stock_details_by_item(item_name):
-    try:
-        if not item_name or str(item_name) in ["All", "Add New...", "No Item Found"]:
-            return {}
-        df=load_table("stock_ledgers", 2000)
-        if df.empty or "item_name" not in df.columns:
-            return {}
-        m=df[df["item_name"].astype(str)==str(item_name)]
-        if m.empty:
-            return {}
-        r=m.iloc[0].to_dict()
-        return {"item_code":r.get("item_code",""),"unit":r.get("unit",""),"hsn_code":r.get("hsn_code",""),"gst_rate":r.get("gst_rate",0),"rate":r.get("opening_rate",0),"available_qty":r.get("opening_qty",0)}
-    except Exception:
-        return {}
-
-def _ledger_details_by_name(name):
-    try:
-        if not name or str(name) in ["All", "Add New..."]:
-            return {}
-        df=load_table("ledgers", 2000)
-        if df.empty or "ledger_name" not in df.columns:
-            return {}
-        m=df[df["ledger_name"].astype(str)==str(name)]
-        if m.empty:
-            return {}
-        r=m.iloc[0].to_dict()
-        return {"party_code":r.get("ledger_code", r.get("id","")),"gst_no":r.get("gst_no",""),"pan_no":r.get("pan_no",""),"address":r.get("address",""),"mobile":r.get("contact_no","")}
-    except Exception:
-        return {}
-
-def _all_module_names_for_group(group_name):
-    try:
-        if str(group_name) in ["All", "", "None"]:
-            return all_online_module_names()
-        mods = ONLINE_MODULE_GROUPS.get(str(group_name), []) if 'ONLINE_MODULE_GROUPS' in globals() else []
-        return _clean_opts(mods, ["Dashboard"])
-    except Exception:
-        return ["Dashboard"]
-
-def _generic_lookup(kind):
-    try:
-        if kind == "company": return _company_codes()
-        if kind == "user": return _table_values("users", "username", [current_user()])
-        if kind == "employee": return _table_values("employees", "employee_name", ["Sample Employee"])
-        if kind in ["stock_item", "finished_item", "raw_material"]: return get_stock_items()
-        if kind == "unit": return _table_values("stock_ledgers", "unit", DEFAULT_UNITS)
-        if kind == "bom": return _table_values("bom_headers", "bom_no", ["BOM001"])
-        if kind == "production_order": return _table_values("production_orders", "order_no", ["PO-001"])
-        if kind == "consumption_entry": return _table_values("consumption_entries", "entry_no", ["CE-001"])
-        if kind == "fg_entry": return _table_values("fg_entries", "entry_no", ["FG-001"])
-        if kind == "plan": return _table_values("mrp", "plan_no", ["PLAN001"])
-        if kind == "schedule": return _table_values("generic_erp_records", "schedule_no", ["SCH001"])
-        if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
-        if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
-        if kind == "ledger": return get_ledger_names(None)
-        if kind == "customer": return get_ledger_names("Sundry Debtors")
-        if kind == "supplier": return get_ledger_names("Sundry Creditors")
-        if kind == "payment_mode": return DEFAULT_PAYMENT_MODES
-        if kind == "shift": return DEFAULT_SHIFTS
-    except Exception:
-        pass
-    return []
-
-def _selected_value(module_title, field):
-    return st.session_state.get(f"gen_{module_title}_{field}")
-
-def _render_generic_input(col, label, field, typ, module_title):
-    opts = _generic_options(typ) if isinstance(typ, str) else None
-    k=f"gen_{module_title}_{field}"
-    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY", key=k))
-    if typ == "time": return str(col.time_input(label, value=india_now().time(), key=k))
-    if typ == "number": return col.number_input(label, value=0.0, key=k)
-    if typ == "bool": return col.checkbox(label, value=True, key=k)
-    if typ == "password": return col.text_input(label, type="password", key=k)
-    if typ == "module_name_by_group":
-        g = _selected_value(module_title, "group_name") or "Dashboard"
-        return col.selectbox(label, _all_module_names_for_group(g)+["Add New..."], key=k)
-    if typ in ["company","user","employee","stock_item","finished_item","raw_material","unit","bom","plan","schedule","production_order","consumption_entry","fg_entry","group","module_name","ledger","customer","supplier","payment_mode","shift"]:
-        values=_generic_lookup(typ)
-        values=list(dict.fromkeys([str(v) for v in values if str(v).strip()]))+["Add New..."]
-        return col.selectbox(label, values, key=k)
-    # Auto-fill linked fields from selected stock item / party
-    if field in ["item_code","hsn_code","unit","gst_rate","rate","available_qty"]:
-        item = _selected_value(module_title,"item_name") or _selected_value(module_title,"finished_item") or _selected_value(module_title,"rm_item") or _selected_value(module_title,"raw_material")
-        det=_stock_details_by_item(item)
-        val=det.get(field, "")
-        if field in ["gst_rate","rate","available_qty"]:
-            try: return col.number_input(label, value=float(val or 0), key=k)
-            except Exception: pass
-        return col.text_input(label, value=str(val or ""), key=k)
-    if field in ["customer_code","vendor_code","party_code","gst_no","pan_no"]:
-        party = _selected_value(module_title,"customer_name") or _selected_value(module_title,"supplier_name") or _selected_value(module_title,"party_name") or _selected_value(module_title,"ledger_name")
-        det=_ledger_details_by_name(party)
-        val=det.get("party_code" if field in ["customer_code","vendor_code","party_code"] else field, "")
-        return col.text_input(label, value=str(val or ""), key=k)
-    if opts: return col.selectbox(label, opts + ["Add New..."], key=k)
-    return col.text_input(label, key=k)
-
-# More offline-style fields for modules mentioned by user.
-_GENERIC_MODULE_FIELDS.update({
-    "OneDrive Backup": [("company_code","Company Code","company"),("backup_date","Backup Date","date"),("backup_type","Backup Type",["Manual","Auto","Daily","Weekly","Monthly","Before Data Purge","Before Sync"]),("onedrive_folder_path","OneDrive Folder Path","text"),("backup_file_name","Backup File Name","text"),("backup_status","Backup Status",["Pending","Completed","Failed"]),("remarks","Remarks","text")],
-    "OneDrive Backup Advanced": [("company_code","Company Code","company"),("backup_date","Backup Date","date"),("backup_type","Backup Type",["Full Backup","Database Backup","Reports Backup","Invoice Backup","Master Backup"]),("local_folder_path","Local Folder Path","text"),("onedrive_folder_path","OneDrive Folder Path","text"),("sync_direction","Sync Direction",["Local to OneDrive","OneDrive to Local","Two Way"]),("backup_status","Backup Status",["Pending","Completed","Failed"]),("remarks","Remarks","text")],
-    "Data Export": [("company_code","Company Code","company"),("export_date","Export Date","date"),("module_name","Module Name","module_name"),("export_type","Export Type",["CSV","Excel","PDF","JSON","Full Backup"]),("export_folder_path","Export Folder Path","text"),("file_name","File Name","text"),("from_date","From Date","date"),("to_date","To Date","date"),("status","Status","status"),("remarks","Remarks","text")],
-    "Export All Data": [("company_code","Company Code","company"),("export_date","Export Date","date"),("export_type","Export Type",["All CSV","All Excel","All JSON","Full ERP Backup"]),("export_folder_path","Export Folder Path","text"),("file_name","File Name","text"),("status","Status","status"),("remarks","Remarks","text")],
-    "Data Import": [("company_code","Company Code","company"),("import_date","Import Date","date"),("module_name","Module Name","module_name"),("file_name","File Name","text"),("total_rows","Total Rows","number"),("success_rows","Success Rows","number"),("failed_rows","Failed Rows","number"),("status","Status","status"),("remarks","Remarks","text")],
-    "WhatsApp Integration": [("company_code","Company Code","company"),("provider","WhatsApp Provider",["WhatsApp Web","Meta WhatsApp Cloud API","Twilio WhatsApp","Manual Link"]),("mobile_no","Mobile No","text"),("template_name","Template Name","text"),("message","Message","text"),("send_status","Send Status",["Draft","Ready","Sent","Failed"]),("remarks","Remarks","text")],
-    "Email Integration": [("company_code","Company Code","company"),("email_provider","Email Provider",["Gmail SMTP","Office365 SMTP","Custom SMTP"]),("to_email","To Email","text"),("subject","Subject","text"),("message","Message","text"),("send_status","Send Status",["Draft","Ready","Sent","Failed"]),("remarks","Remarks","text")],
-    "Email Utility": [("company_code","Company Code","company"),("email_type","Email Type",["Invoice","Payment Reminder","Quotation","Report","General"]),("to_email","To Email","text"),("subject","Subject","text"),("message","Message","text"),("attachment_path","Attachment Path","text"),("send_status","Send Status",["Draft","Ready","Sent","Failed"]),("remarks","Remarks","text")],
-    "Stock Voucher": [("company_code","Company Code","company"),("voucher_no","Voucher No","text"),("voucher_date","Voucher Date","date"),("voucher_type","Voucher Type",STOCK_VOUCHER_TYPES),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("qty","Qty","number"),("rate","Rate","number"),("value","Value","number"),("status","Status","status"),("remarks","Remarks","text")],
-    "Barcode Master": [("company_code","Company Code","company"),("barcode_no","Barcode No","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("hsn_code","HSN Code","text"),("gst_rate","GST Rate %","number"),("batch_no","Batch No","text"),("mfg_date","MFG Date","date"),("expiry_date","Expiry Date","date"),("mrp","MRP","number"),("selling_rate","Selling Rate","number"),("qty","Qty","number"),("status","Status","status")],
-    "Warehouse Stock": [("company_code","Company Code","company"),("warehouse_name","Warehouse Name","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("available_qty","Available Qty","number"),("opening_qty","Opening Qty","number"),("inward_qty","Inward Qty","number"),("outward_qty","Outward Qty","number"),("closing_qty","Closing Qty","number"),("rate","Rate","number"),("value","Value","number")],
-    "BOM Lines": [("company_code","Company Code","company"),("bom_no","BOM No","bom"),("rm_item","Raw Material Item","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("available_qty","Available Qty","number"),("rm_qty","RM Qty","number"),("rm_rate","RM Rate","number"),("rm_amount","RM Amount","number"),("remarks","Remarks","text")],
-    "Production Schedule": [("company_code","Company Code","company"),("schedule_no","Schedule No","text"),("schedule_date","Schedule Date","date"),("production_order_no","Production Order No","production_order"),("finished_item","Finished Item","stock_item"),("item_code","Item Code","text"),("qty_scheduled","Qty Scheduled","number"),("machine_name","Machine Name","text"),("shift_name","Shift Name","shift"),("schedule_status","Schedule Status","status")],
-    "Capacity Planning": [("company_code","Company Code","company"),("plan_date","Plan Date","date"),("production_order_no","Production Order No","production_order"),("machine_name","Machine Name","text"),("shift","Shift","shift"),("available_hours","Available Hours","number"),("planned_hours","Planned Hours","number"),("free_capacity","Free Capacity","number"),("status","Status","status"),("remarks","Remarks","text")],
-})
-
-def whatsapp_integration_page():
-    show_header("✅✅ WhatsApp Integration", "section-tools")
-    st.info("WhatsApp setting email jaisa nahi hai. Yahan WhatsApp Web link / WhatsApp Business API provider configure hota hai.")
-    c1,c2=st.columns(2)
-    provider=c1.selectbox("Provider", ["WhatsApp Web", "Meta WhatsApp Cloud API", "Twilio WhatsApp", "Manual Only"])
-    mobile=c2.text_input("Test Mobile No with country code", placeholder="9198xxxxxxxx")
-    msg=st.text_area("Test Message", value="Namaste, this is test message from RBM ERP.")
-    if st.button("Open WhatsApp Test Message", use_container_width=True):
-        url=f"https://wa.me/{mobile}?text={quote(msg)}" if mobile else ""
-        if url: st.markdown(f"[Open WhatsApp]({url})")
-        else: st.warning("Mobile no required.")
-    online_generic_module("WhatsApp Integration")
-
-def email_integration_page():
-    email_sms_settings()
-    online_generic_module("Email Integration")
-
-def get_module_mapping():
-    m = globals().get('_ORIGINAL_GET_MODULE_MAPPING_FOR_PATCH5')
-    # Build from prior function saved below if available, otherwise use existing body through old reference.
-    base = _PATCH5_OLD_GET_MODULE_MAPPING()
-    base["WhatsApp Integration"] = whatsapp_integration_page
-    base["Email Integration"] = email_integration_page
-    base["Email Utility"] = email_integration_page
-    base["OneDrive Backup"] = lambda: online_generic_module("OneDrive Backup")
-    base["OneDrive Backup Advanced"] = lambda: online_generic_module("OneDrive Backup Advanced")
-    base["Data Export"] = lambda: online_generic_module("Data Export")
-    base["Export All Data"] = lambda: online_generic_module("Export All Data")
-    base["Stock Voucher"] = lambda: online_generic_module("Stock Voucher")
-    return base
-
-# ================= END PATCH 5 =================
-
-
-
-# ================= PATCH 6: ALL OPTION + GROUP-WISE MODULE DROPDOWN FIX =================
-# Fix requested screens: Data Purge Control, Data Locking Period, Mandatory Field Settings,
-# Client Module Permission. Group dropdown has All, and Module Name dropdown shows modules of
-# selected Group, not only Dashboard / not group names.
-
-def _with_all(options):
-    out = []
-    for x in (options or []):
-        sx = str(x).strip()
-        if sx and sx not in out:
-            out.append(sx)
-    if "All" not in out:
-        out.insert(0, "All")
-    return out
-
-
-def _all_module_names_for_group(group_name):
-    try:
-        group_name = str(group_name or "All").strip()
-        if group_name in ["All", "", "None"]:
-            return _with_all(all_online_module_names())
-        mods = ONLINE_MODULE_GROUPS.get(group_name, []) if 'ONLINE_MODULE_GROUPS' in globals() else []
-        return _with_all(mods)
-    except Exception:
-        return ["All", "Dashboard"]
-
-
-def _generic_lookup(kind):
-    try:
-        if kind == "company": return _with_all(_company_codes())
-        if kind == "user": return _with_all(_table_values("users", "username", [current_user()]))
-        if kind == "employee": return _with_all(_table_values("employees", "employee_name", ["Sample Employee"]))
-        if kind in ["stock_item", "finished_item", "raw_material"]: return _with_all(get_stock_items())
-        if kind == "unit": return _with_all(_table_values("stock_ledgers", "unit", DEFAULT_UNITS))
-        if kind == "bom": return _with_all(_table_values("bom_headers", "bom_no", ["BOM001"]))
-        if kind == "production_order": return _with_all(_table_values("production_orders", "order_no", ["PO-001"]))
-        if kind == "consumption_entry": return _with_all(_table_values("consumption_entries", "entry_no", ["CE-001"]))
-        if kind == "fg_entry": return _with_all(_table_values("fg_entries", "entry_no", ["FG-001"]))
-        if kind == "plan": return _with_all(_table_values("mrp", "plan_no", ["PLAN001"]))
-        if kind == "schedule": return _with_all(_table_values("generic_erp_records", "schedule_no", ["SCH001"]))
-        if kind == "group": return _with_all(list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"])
-        if kind == "module_name": return _with_all(all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"])
-        if kind == "ledger": return _with_all(get_ledger_names(None))
-        if kind == "customer": return _with_all(get_ledger_names("Sundry Debtors"))
-        if kind == "supplier": return _with_all(get_ledger_names("Sundry Creditors"))
-        if kind == "payment_mode": return _with_all(DEFAULT_PAYMENT_MODES)
-        if kind == "shift": return _with_all(DEFAULT_SHIFTS)
-    except Exception:
-        pass
-    return ["All"]
-
-
-def _render_generic_input(col, label, field, typ, module_title):
-    opts = _generic_options(typ) if isinstance(typ, str) else None
-    k=f"gen_{module_title}_{field}"
-    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY", key=k))
-    if typ == "time": return str(col.time_input(label, value=india_now().time(), key=k))
-    if typ == "number": return col.number_input(label, value=0.0, key=k)
-    if typ == "bool": return col.checkbox(label, value=True, key=k)
-    if typ == "password": return col.text_input(label, type="password", key=k)
-    if typ == "module_name_by_group":
-        # Read current Group Name selectbox value. If user changes group, Streamlit reruns and this
-        # list will automatically become that group's modules.
-        g = st.session_state.get(f"gen_{module_title}_group_name", "All")
-        values = _all_module_names_for_group(g)
-        values = values + (["Add New..."] if "Add New..." not in values else [])
-        return col.selectbox(label, values, key=k)
-    if typ in ["company","user","employee","stock_item","finished_item","raw_material","unit","bom","plan","schedule","production_order","consumption_entry","fg_entry","group","module_name","ledger","customer","supplier","payment_mode","shift"]:
-        values=_generic_lookup(typ)
-        values=list(dict.fromkeys([str(v) for v in values if str(v).strip()]))
-        if "Add New..." not in values:
-            values.append("Add New...")
-        return col.selectbox(label, values, key=k)
-    # Auto-fill linked fields from selected stock item / party
-    if field in ["item_code","hsn_code","unit","gst_rate","rate","available_qty"]:
-        item = _selected_value(module_title,"item_name") or _selected_value(module_title,"finished_item") or _selected_value(module_title,"rm_item") or _selected_value(module_title,"raw_material")
-        det=_stock_details_by_item(item)
-        val=det.get(field, "")
-        if field in ["gst_rate","rate","available_qty"]:
-            try: return col.number_input(label, value=float(val or 0), key=k)
-            except Exception: pass
-        return col.text_input(label, value=str(val or ""), key=k)
-    if field in ["customer_code","vendor_code","party_code","gst_no","pan_no"]:
-        party = _selected_value(module_title,"customer_name") or _selected_value(module_title,"supplier_name") or _selected_value(module_title,"party_name") or _selected_value(module_title,"ledger_name")
-        det=_ledger_details_by_name(party)
-        val=det.get("party_code" if field in ["customer_code","vendor_code","party_code"] else field, "")
-        return col.text_input(label, value=str(val or ""), key=k)
-    if opts:
-        values = _with_all(opts)
-        if "Add New..." not in values:
-            values.append("Add New...")
-        return col.selectbox(label, values, key=k)
-    return col.text_input(label, key=k)
-
-# Force these Admin screens to use group-wise module dropdown after all older patches.
-_GENERIC_MODULE_FIELDS.update({
-    "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("from_date","From Date","date"),("to_date","To Date","date"),("purge_status","Purge Status",["All","Requested","Approved","Rejected","Completed"]),("requested_by","Requested By","user"),("remarks","Remarks","text")],
-    "Data Locking Period": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status",["All","Locked","Not Locked","Pending"]),("reason","Reason","text")],
-    "Mandatory Field Settings": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
-    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
-})
-
-# ================= END PATCH 6 =================
-
-
-
-
-# ================= PATCH 15: MISSING CLIENT CODE OPTIONS FIX =================
-def _rbm_client_code_options_for_security():
-    """Return client/company code dropdown options for permission screens.
-    This fixes: name '_rbm_client_code_options_for_security' is not defined.
-    """
-    opts = []
-    try:
-        cc = str(get_client_code()).strip() if "get_client_code" in globals() else ""
-        if cc:
-            opts.append(cc)
-    except Exception:
-        pass
-    try:
-        cdata = load_table("clients", 10000)
-        cdf = safe_df(cdata)
-        for col in ["client_code", "company_code", "code"]:
-            if col in cdf.columns:
-                opts += cdf[col].dropna().astype(str).str.strip().tolist()
-    except Exception:
-        pass
-    try:
-        udata = load_table("users", 10000)
-        udf = safe_df(udata)
-        for col in ["client_code", "company_code", "code"]:
-            if col in udf.columns:
-                opts += udf[col].dropna().astype(str).str.strip().tolist()
-    except Exception:
-        pass
-    opts = [x for x in opts if x and x.lower() not in ["none", "nan"]]
-    final = []
-    for x in ["All", "RBM"] + opts:
-        if x not in final:
-            final.append(x)
-    return final or ["All", "RBM"]
-# ================= END PATCH 15 =================
-
-# ================= PATCH 12: ROLE BASED SECURITY EXACT SCREEN FIX =================
-# Requirement: Role Permission Control screen same. Role Based Security screen same also,
-# only Select Role dropdown must show USERNAME from User Management.
-
-def _rbm_username_list_for_client(selected_client):
-    """Username dropdown for Role Based Security.
-    RBM/developer company must show all usernames created in User Management.
-    Client login must show only that client's usernames and must hide Developer/Super Admin.
-    """
-    try:
-        df = safe_df(load_table("users", 10000))
-        if df.empty or "username" not in df.columns:
-            cu = str(current_user()).strip() if "current_user" in globals() else ""
-            return [cu] if cu else []
-
-        # normalize columns
-        df["username"] = df["username"].astype(str).str.strip()
-        df = df[df["username"] != ""]
-
-        selected = str(selected_client or "").strip()
-        login_role = str(st.session_state.get("role", "")).strip()
-
-        # Client-side users must not see developer platform logins.
-        if login_role not in ["Developer", "Super Admin"] and "role" in df.columns:
-            df = df[~df["role"].astype(str).isin(["Developer", "Super Admin"])]
-
-        # For RBM / All platform selection, show all usernames from User Management.
-        # This fixes issue where only current login 'admin' was appearing.
-        if selected and selected not in ["All", "RBM"]:
-            matched = pd.DataFrame()
-            for col in ["client_code", "company_code", "code"]:
-                if col in df.columns:
-                    tmp = df[df[col].astype(str).str.strip() == selected]
-                    if not tmp.empty:
-                        matched = tmp
-                        break
-            if not matched.empty:
-                df = matched
-            else:
-                # keep all usernames instead of blank/wrong only current user
-                pass
-
-        usernames = df["username"].dropna().astype(str).str.strip().unique().tolist()
-        usernames = [u for u in usernames if u]
-        return (["All"] + usernames) if usernames else []
-    except Exception:
-        try:
-            cu = str(current_user()).strip()
-            return ["All", cu] if cu else ["All"]
-        except Exception:
-            return ["All"]
-
-
-def _rbm_enabled_modules_for_permission(selected_client):
-    out = []
-    for module in ERP_MODULES:
-        if not module or module == "No module available":
-            continue
-        if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
-            continue
-        # Keep safe: if feature check fails, still show module to avoid blank/error screen.
-        try:
-            if not module_enabled_for_client_code(module, selected_client):
-                continue
-        except Exception:
-            pass
-        out.append(module)
-    return out or ["Dashboard"]
-
-
-def role_based_security_control():
-    show_header("Role Based Security", "section-admin")
-    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
-        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Based Security.")
-        return
-
-    st.info("Role Based Security = username/login wise permission. Same as Role Permission Control; only Select Role dropdown shows username created in User Management.")
-
-    selected_client = st.selectbox("Select Client", _rbm_client_code_options_for_security(), key="rbs_fixed_client")
-    usernames = _rbm_username_list_for_client(selected_client)
-    if not usernames:
-        st.warning("No username found in users table. Create username in User Management, or check users table columns.")
-        usernames = [str(current_user())]
-
-    selected_username = st.selectbox("Select Username", usernames, key="rbs_fixed_username")
-
-    try:
-        existing = safe_df(
-            supabase.table("user_permissions")
-            .select("*")
-            .eq("client_code", selected_client)
-            .eq("username", selected_username)
-            .execute().data
-        )
-    except Exception:
-        existing = pd.DataFrame()
-        st.warning("user_permissions table missing or not accessible. Run supabase_required_patch.sql once if save is required.")
-
-    modules = _rbm_enabled_modules_for_permission(selected_client)
-    perm_rows = []
-    with st.form("role_based_security_exact_username_form"):
-        st.markdown("### Module Permissions")
-        header = st.columns([2.5,1,1,1,1,1,1,1,1])
-        header[0].markdown("**Module**")
-        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
-            header[i].markdown(f"**{act.title()}**")
-
-        for module in modules:
-            current = pd.DataFrame()
-            if not existing.empty and "module_name" in existing.columns:
-                current = existing[existing["module_name"].astype(str) == str(module)]
-            cols = st.columns([2.5,1,1,1,1,1,1,1,1])
-            cols[0].write(module)
-            row = {"module_name": module}
-            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
-                colname = f"can_{act}"
-                if not current.empty and colname in current.columns:
-                    default_val = bool(current.iloc[0].get(colname, default_permission(module, act)))
-                else:
-                    default_val = default_permission(module, act)
-                row[colname] = cols[i].checkbox("", value=default_val, key=f"rbs_exact_{selected_client}_{selected_username}_{module}_{act}")
-            perm_rows.append(row)
-
-        save_btn = st.form_submit_button("Save Role Based Security", use_container_width=True)
-
-    if save_btn:
-        try:
-            supabase.table("user_permissions").delete().eq("client_code", selected_client).eq("username", selected_username).execute()
-            rows = []
-            for r in perm_rows:
-                rec = {"client_code": selected_client, "username": selected_username, "created_by": current_user()}
-                rec.update(r)
-                rows.append(rec)
-            if rows:
-                supabase.table("user_permissions").insert(rows).execute()
-            try:
-                write_audit_log("Role Based Security", "UPDATE", "", f"Saved username wise permission for {selected_client} / {selected_username}")
-            except Exception:
-                pass
-            st.success("Role Based Security saved successfully for selected username.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Unable to save Role Based Security. Run updated SQL patch if needed. Error: {e}")
-
-    st.divider()
-    try:
-        df = safe_df(load_table("user_permissions", 2000))
-        if not df.empty:
-            if "client_code" in df.columns:
-                df = df[df["client_code"].astype(str) == str(selected_client)]
-            if "username" in df.columns:
-                df = df[df["username"].astype(str) == str(selected_username)]
-            st.markdown("### Saved Role Based Security")
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("No saved username-wise permission found yet.")
-    except Exception:
-        st.info("Saved Role Based Security list will show after user_permissions table is created.")
-
-# Make sure mapping always uses the fixed function above.
-_OLD_GET_MODULE_MAPPING_PATCH12 = get_module_mapping
-def get_module_mapping():
-    base = _OLD_GET_MODULE_MAPPING_PATCH12()
-    base["Role Based Security"] = role_based_security_control
-    return base
-# ================= END PATCH 12 =================
 
 if "logged_in" not in st.session_state:
     login_page()
