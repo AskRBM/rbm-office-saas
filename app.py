@@ -5737,6 +5737,43 @@ _GENERIC_MODULE_FIELDS.update({
 
 
 
+
+# ================= PATCH 15: MISSING CLIENT CODE OPTIONS FIX =================
+def _rbm_client_code_options_for_security():
+    """Return client/company code dropdown options for permission screens.
+    This fixes: name '_rbm_client_code_options_for_security' is not defined.
+    """
+    opts = []
+    try:
+        cc = str(get_client_code()).strip() if "get_client_code" in globals() else ""
+        if cc:
+            opts.append(cc)
+    except Exception:
+        pass
+    try:
+        cdata = load_table("clients", 10000)
+        cdf = safe_df(cdata)
+        for col in ["client_code", "company_code", "code"]:
+            if col in cdf.columns:
+                opts += cdf[col].dropna().astype(str).str.strip().tolist()
+    except Exception:
+        pass
+    try:
+        udata = load_table("users", 10000)
+        udf = safe_df(udata)
+        for col in ["client_code", "company_code", "code"]:
+            if col in udf.columns:
+                opts += udf[col].dropna().astype(str).str.strip().tolist()
+    except Exception:
+        pass
+    opts = [x for x in opts if x and x.lower() not in ["none", "nan"]]
+    final = []
+    for x in ["All", "RBM"] + opts:
+        if x not in final:
+            final.append(x)
+    return final or ["All", "RBM"]
+# ================= END PATCH 15 =================
+
 # ================= PATCH 12: ROLE BASED SECURITY EXACT SCREEN FIX =================
 # Requirement: Role Permission Control screen same. Role Based Security screen same also,
 # only Select Role dropdown must show USERNAME from User Management.
