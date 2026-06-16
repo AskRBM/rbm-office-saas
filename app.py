@@ -6953,6 +6953,117 @@ def get_module_mapping():
     return base
 # ================= END PATCH 25 =================
 
+
+
+# ================= PATCH 28 ONLINE: DAILY TASK NOTE + LOGIN PROMPT =================
+# Requirement: Daily Task Note by username and reminder/prompt when user opens ERP.
+# Also keeps existing Ledger Statement report available in Reports group.
+try:
+    if "HR" in ONLINE_MODULE_GROUPS and "Daily Task Notes" not in ONLINE_MODULE_GROUPS["HR"]:
+        insert_after = "Task Delegation"
+        if insert_after in ONLINE_MODULE_GROUPS["HR"]:
+            idx = ONLINE_MODULE_GROUPS["HR"].index(insert_after) + 1
+            ONLINE_MODULE_GROUPS["HR"].insert(idx, "Daily Task Notes")
+        else:
+            ONLINE_MODULE_GROUPS["HR"].append("Daily Task Notes")
+except Exception:
+    pass
+
+try:
+    MODULE_TAGS["Daily Task Notes"] = "RBM"
+except Exception:
+    pass
+
+try:
+    _GENERIC_MODULE_FIELDS["Daily Task Notes"] = [
+        ("company_code", "Company Code", "company"),
+        ("task_date", "Task Date", "date"),
+        ("username", "Username", "user"),
+        ("daily_task_note", "Daily Task Note", "text"),
+        ("priority", "Priority", "priority"),
+        ("followup_date", "Follow-up Date", "date"),
+        ("status", "Status", "status"),
+        ("remarks", "Remarks", "text"),
+    ]
+except Exception:
+    pass
+
+
+def _rbm_daily_task_df_for_current_user():
+    """Return pending daily task notes for logged-in username/full name.
+    Uses generic_erp_records if table exists and session fallback if not.
+    """
+    try:
+        df = _generic_records_df("Daily Task Notes") if '_generic_records_df' in globals() else pd.DataFrame()
+    except Exception:
+        df = pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    try:
+        username = str(st.session_state.get("username", "")).strip().lower()
+        full_name = str(st.session_state.get("full_name", "")).strip().lower()
+        client_code = str(st.session_state.get("client_code", get_client_code() if 'get_client_code' in globals() else "")).strip().lower()
+        fdf = df.copy()
+        if "company_code" in fdf.columns and client_code:
+            fdf = fdf[(fdf["company_code"].astype(str).str.lower().isin([client_code, "all", ""])) | (fdf["company_code"].isna())]
+        if "username" in fdf.columns:
+            u = fdf["username"].astype(str).str.strip().str.lower()
+            fdf = fdf[u.isin([username, full_name, "all", "add new...", ""])]
+        if "status" in fdf.columns:
+            s = fdf["status"].astype(str).str.strip().str.lower()
+            fdf = fdf[~s.isin(["completed", "closed", "cancelled", "inactive", "rejected"])]
+        return fdf
+    except Exception:
+        return df
+
+
+def rbm_daily_task_prompt():
+    """Show prompt/reminder after login."""
+    try:
+        if not st.session_state.get("logged_in"):
+            return
+        df = _rbm_daily_task_df_for_current_user()
+        if df is None or df.empty:
+            st.info(f"🔔 Daily Task Note: No pending daily task notes for {st.session_state.get('username','user')}.")
+            return
+        st.warning(f"🔔 Daily Task Reminder for {st.session_state.get('full_name', st.session_state.get('username','User'))}: {len(df)} pending note(s).")
+        with st.expander("Open today's Daily Task Notes", expanded=True):
+            cols_to_show = [c for c in ["task_date", "username", "daily_task_note", "priority", "followup_date", "status", "remarks"] if c in df.columns]
+            st.dataframe(df[cols_to_show] if cols_to_show else df, use_container_width=True)
+            if st.button("Open Daily Task Notes Module", use_container_width=True, key="open_daily_task_notes_from_prompt"):
+                st.session_state["active_group"] = "HR"
+                st.session_state["active_choice"] = "Daily Task Notes"
+                st.rerun()
+    except Exception as e:
+        st.info(f"Daily Task Note prompt unavailable: {e}")
+
+
+# Show the reminder on dashboard/opening screen without disturbing other modules.
+try:
+    _OLD_DASHBOARD_PATCH28_ONLINE = dashboard
+    def dashboard():
+        rbm_daily_task_prompt()
+        _OLD_DASHBOARD_PATCH28_ONLINE()
+except Exception:
+    pass
+
+# Add Daily Task Notes into module routing while keeping all previous mapping unchanged.
+try:
+    _OLD_GET_MODULE_MAPPING_PATCH28_ONLINE = get_module_mapping
+    def get_module_mapping():
+        base = _OLD_GET_MODULE_MAPPING_PATCH28_ONLINE()
+        base["Daily Task Notes"] = (lambda: online_generic_module("Daily Task Notes"))
+        # Ensure Ledger Statement remains available in Reports.
+        try:
+            base["Ledger Statement"] = (lambda: report_module_screen("Ledger Statement"))
+        except Exception:
+            pass
+        return base
+except Exception:
+    pass
+# ================= END PATCH 28 ONLINE =================
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
