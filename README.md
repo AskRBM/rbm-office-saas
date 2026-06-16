@@ -1,35 +1,24 @@
-RBM Swadeshi ERP AI Enterprise - 100 Final Build
+RBM ERP Online Update
 
-Use order:
-1. Run SQL file in Supabase SQL Editor.
-2. Paste Python file into GitHub app.py.
-3. Commit changes.
-4. Reboot Streamlit app.
+This package updates your Streamlit online RBM ERP script with the offline desktop version group/module structure.
 
-Covered in this build:
-- Super Admin protected/internal modules
-- Client-wise feature control
-- Role-wise permission control
-- User-based authorization
-- Compact no-top-blank layout
-- Working hide/unhide menu
-- Masters: Client, Users, Ledger Groups, Ledgers, Stock Groups, Stock Items, Company/FY/Branch/Department/Cost Center/GST/TDS/HSN/Unit/Warehouse/Document Numbering
-- Accounts: Sales, Purchase, Expense, Service Voucher, Receipt, Payment, Journal, Contra, Debit Note, Credit Note, Fixed Assets
-- Multiple item invoice, GST, CGST/SGST/IGST, discount, freight, other charges, TDS, auto calculations
-- Professional invoice preview, saved invoice preview, print/download
-- Quotation/RFQ portal with vendor login and private vendor visibility
-- Inventory: Raw Material, FG, WIP, Stock Vouchers, Stock Reports
-- Manufacturing: BOM, Production Order, Production Entry, Consumption, FG Entry, Costing, MRP
-- HR/Office: Employees, Attendance, IN/OUT, Visitors, Tasks, Appointments
-- Reports: Trial Balance, P&L, Balance Sheet, Sundry Receivable/Payable, GST/TDS, Stock Report, Ledger Reports, Audit Log
-- Workflow/Approvals: Draft, Submitted, Pending, Approved, Rejected, Posted, Reversed
-- Audit log: Create, Update, Delete, Reverse, Approve, Reject, Print, Download, Login, Logout
-- Utilities: Excel import/export, backup/restore, email/WhatsApp sharing, login history
-- Digital Audit, AI Assistant placeholder, Dashboard Analytics, Notification Center
-- Offline/Desktop sync planning structure
-- Swadeshi branding
+Files:
+- app.py : updated Streamlit code
+- requirements.txt : Streamlit Cloud requirements
 
-Recommended next step before client deployment:
-- Test each module with one sample client and one sample user.
-- Change all demo passwords.
-- Enable Supabase RLS/security rules before commercial launch.
+Main updates:
+- Added all major offline ERP groups and modules to online menu
+- Added colored tick prefixes:
+  Red = Developer only
+  Blue = SAP style
+  Green = QuickBooks style
+  Orange = Tally style
+  Purple = RBM native
+- Developer role support
+- Developer-only modules hidden from client users
+- Existing working pages reused wherever they already exist
+- Missing/new modules open as safe starter/help pages instead of crashing
+
+Important:
+Some newly added modules are menu/starter screens until their Supabase tables and full forms are connected.
+Existing working online modules remain unchanged.
