@@ -287,6 +287,7 @@ ONLINE_MODULE_GROUPS = {
 }
 
 GROUP_ACCESS_KEYS = {
+    "Admin": ["__client_admin_group__"],
     "Master": ["allow_master_group"],
     "CRM": ["allow_support", "allow_quotation", "allow_sales"],
     "HR": ["allow_attendance", "allow_inout", "allow_visitor", "allow_task", "allow_appointment"],
@@ -338,8 +339,13 @@ def role_can_see_module(module_name):
     role = st.session_state.get("role", "")
     client_code = str(st.session_state.get("client_code", "")).upper().strip()
 
+    # Client Super Admin must see Client Master for own company permission/control screen.
+    # Other red developer modules remain hidden from clients.
+    if module_name == "Client Master" and role == "Client Super Admin":
+        return True
+
     # RBM internal Super Admin must see Client Master / License / Developer-control modules.
-    # Client Super Admin / Admin / User must NOT see these developer-control modules.
+    # Client Super Admin / Admin / User must NOT see other developer-control modules.
     if module_name in DEVELOPER_ONLY_MODULES:
         return role == "Developer" or (role == "Super Admin" and client_code == "RBM")
 
@@ -352,10 +358,15 @@ def group_enabled_for_client(group_name):
         return True
     if is_developer_or_super_admin():
         return True
+
+    # Client Super Admin / Admin must see Admin group to create users and assign user permissions.
+    if group_name == "Admin":
+        return st.session_state.get("role") in ["Client Super Admin", "Admin"] and _normal_feature_enabled_from_session()
+
     keys = GROUP_ACCESS_KEYS.get(group_name, [])
     if not keys:
         return False
-    return any(bool(st.session_state.get(k, False)) for k in keys)
+    return any(bool(st.session_state.get(k, False)) for k in keys if k != "__client_admin_group__")
 
 
 COMMON_CONTROL_COLUMNS = ["parking_status", "approval_status", "cost_center", "approved_by", "approval_remarks"]
@@ -1441,18 +1452,30 @@ def dashboard():
 
 def client_master():
     show_header("Client Master", "section-admin")
-    if not is_super_admin():
-        st.warning("Only RBM Super Admin / Developer can access Client Master.")
+    current_role = st.session_state.get("role", "")
+    if current_role not in ["Developer", "Super Admin", "Client Super Admin"]:
+        st.warning("Only Developer, RBM Super Admin or Client Super Admin can access Client Master.")
         return
 
     st.info("Same as Offline Desktop ERP: Group name + all module names are shown. Tick group to tick all modules; untick any module manually.")
 
     clients_df_existing = load_table("clients", 2000)
-    existing_codes = clients_df_existing["client_code"].dropna().astype(str).tolist() if (not clients_df_existing.empty and "client_code" in clients_df_existing.columns) else []
+
+    # Client Super Admin can view/update only own company access panel, not create or see other clients.
+    if current_role == "Client Super Admin":
+        own_code = str(get_client_code()).upper().strip()
+        if not clients_df_existing.empty and "client_code" in clients_df_existing.columns:
+            clients_df_existing = clients_df_existing[clients_df_existing["client_code"].astype(str).str.upper().str.strip() == own_code]
+        existing_codes = [own_code]
+    else:
+        existing_codes = clients_df_existing["client_code"].dropna().astype(str).tolist() if (not clients_df_existing.empty and "client_code" in clients_df_existing.columns) else []
 
     c1, c2, c3 = st.columns(3)
     existing_codes = sorted(list(dict.fromkeys([str(x).strip().upper() for x in existing_codes if str(x).strip()])))
-    selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
+    if current_role == "Client Super Admin":
+        selected_existing = c1.selectbox("Company Code", existing_codes or [str(get_client_code()).upper()], key="cm_existing_code_client")
+    else:
+        selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
 
     default_code = "" if selected_existing == "New Client" else selected_existing
     default_name = ""
@@ -1644,7 +1667,10 @@ def client_master():
             st.success("Client saved with Offline Desktop style group/module permissions.")
             st.rerun()
 
-    show_table_with_edit_delete("clients", load_table("clients", 500), "Client List")
+    client_list_df = load_table("clients", 500)
+    if st.session_state.get("role") == "Client Super Admin" and not client_list_df.empty and "client_code" in client_list_df.columns:
+        client_list_df = client_list_df[client_list_df["client_code"].astype(str).str.upper().str.strip() == str(get_client_code()).upper().strip()]
+    show_table_with_edit_delete("clients", client_list_df, "Client List")
 
 def user_management():
     show_header("User Management", "section-admin")
@@ -3962,7 +3988,7 @@ MODULE_FEATURE_FLAGS = {
     "Dashboard": None,
 
     # Admin/internal
-    "Client Master": "__super_admin__",
+    "Client Master": "__client_super_admin__",
     "User Management": "__client_admin_normal__",
     "Role Permission Control": "__client_admin_normal__",
     "Employee Master": "allow_master_group",
@@ -4111,8 +4137,11 @@ def module_enabled_for_current_client(module_name):
     if flag == "__super_admin__":
         return False
 
+    if flag == "__client_super_admin__":
+        return st.session_state.get("role") == "Client Super Admin" and _normal_feature_enabled_from_session()
+
     if flag == "__client_admin_normal__":
-        return st.session_state.get("role") == "Admin" and _normal_feature_enabled_from_session()
+        return st.session_state.get("role") in ["Client Super Admin", "Admin"] and _normal_feature_enabled_from_session()
 
     if flag == "__stock_any__":
         return any([st.session_state.get("allow_stock_raw", False), st.session_state.get("allow_stock_fg", False), st.session_state.get("allow_stock_wip", False)])
@@ -4206,6 +4235,9 @@ def module_enabled_for_client_code(module_name, client_code):
     if flag == "__super_admin__":
         return False
 
+    if flag == "__client_super_admin__":
+        return _normal_feature_enabled_from_row(row)
+
     if flag == "__client_admin_normal__":
         return _normal_feature_enabled_from_row(row)
 
@@ -4227,6 +4259,8 @@ def default_permission(module_name, action):
     role = st.session_state.get("role", "")
     if role in ["Developer", "Super Admin"]:
         return True
+    if module_name == "Client Master" and role == "Client Super Admin":
+        return action in ["view", "edit", "print", "export"]
     if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
         return False
     # Client Super Admin gets full authority for every module enabled for his own client/company.
@@ -4250,6 +4284,8 @@ def has_permission(module_name, action="view"):
     try:
         if is_super_admin():
             return True
+        if module_name == "Client Master" and st.session_state.get("role") == "Client Super Admin":
+            return action in ["view", "edit", "print", "export"]
         if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
             return False
         # Client Super Admin must always get full access to all modules enabled for his company.
@@ -4279,7 +4315,7 @@ def filter_modules_by_permission(modules):
     for m in modules:
         if m == "No module available":
             continue
-        if m in SUPER_ADMIN_ONLY_MODULES:
+        if m in SUPER_ADMIN_ONLY_MODULES and not (m == "Client Master" and st.session_state.get("role") == "Client Super Admin"):
             continue
         if module_enabled_for_current_client(m) and has_permission(m, "view"):
             allowed.append(m)
@@ -4321,7 +4357,7 @@ def role_permission_control():
             if not module_enabled_for_client_code(module, selected_client):
                 continue
             # Do not let client admins assign RBM internal/super-admin-only modules.
-            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES:
+            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES and module != "Client Master":
                 continue
             current = existing[existing["module_name"].astype(str) == module] if not existing.empty and "module_name" in existing.columns else pd.DataFrame()
             cols = st.columns([2.5,1,1,1,1,1,1,1,1])
