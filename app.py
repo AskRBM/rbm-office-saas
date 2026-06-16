@@ -5716,4 +5716,12 @@ _GENERIC_MODULE_FIELDS.update({
     "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("from_date","From Date","date"),("to_date","To Date","date"),("purge_status","Purge Status",["All","Requested","Approved","Rejected","Completed"]),("requested_by","Requested By","user"),("remarks","Remarks","text")],
     "Data Locking Period": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status",["All","Locked","Not Locked","Pending"]),("reason","Reason","text")],
     "Mandatory Field Settings": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
-    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Stat
+    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
+})
+
+# ================= END PATCH 6 =================
+
+if "logged_in" not in st.session_state:
+    login_page()
+else:
+    main_app()
