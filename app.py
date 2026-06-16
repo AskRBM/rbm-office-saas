@@ -434,6 +434,9 @@ def india_now(): return datetime.now(INDIA_TZ)
 def safe_df(data): return pd.DataFrame(data or [])
 def get_client_code(): return st.session_state.get("client_code", "RBM")
 def is_super_admin(): return st.session_state.get("role") in ["Developer", "Super Admin"]
+def is_platform_admin(): return st.session_state.get("role") in ["Developer", "Super Admin"]
+def is_client_super_admin_role(): return st.session_state.get("role") == "Client Super Admin"
+def can_manage_client_users(): return st.session_state.get("role") in ["Developer", "Super Admin", "Client Super Admin", "Admin"]
 def current_user(): return st.session_state.get("username", "system")
 
 def get_cost_center_options():
@@ -1677,10 +1680,18 @@ def user_management():
         email = c1.text_input("Email ID")
         mobile = c2.text_input("Mobile No.")
 
-        if is_super_admin():
-            role = c1.selectbox("Role", ["Developer", "Super Admin", "Client Super Admin", "Admin", "User", "Quotation User"])
+        current_role = st.session_state.get("role", "")
+        if current_role in ["Developer", "Super Admin"]:
+            role_options = ["Developer", "Super Admin", "Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
+        elif current_role == "Client Super Admin":
+            # Client Super Admin can create Admin and normal users only inside own company.
+            # Developer and platform Super Admin roles are hidden from client users.
+            role_options = ["Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
         else:
-            role = c1.selectbox("Role", ["Admin", "User", "Quotation User"])
+            # Admin can create limited users only.
+            role_options = ["User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
+
+        role = c1.selectbox("Role", role_options)
 
         status = c2.selectbox("Status", ["Active", "Inactive"])
 
@@ -4214,14 +4225,23 @@ PERMISSION_ACTIONS = ["view", "add", "edit", "delete", "reverse", "approve", "pr
 
 def default_permission(module_name, action):
     role = st.session_state.get("role", "")
-    if role == "Super Admin":
+    if role in ["Developer", "Super Admin"]:
         return True
-    if module_name in SUPER_ADMIN_ONLY_MODULES:
+    if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
         return False
+    # Client Super Admin gets full authority for every module enabled for his own client/company.
+    if role == "Client Super Admin":
+        return True
     if role == "Admin":
         return True
+    if role == "Accounts User":
+        return module_name in GROUP_MODULES.get("Accounts", []) and action in ["view", "add", "edit", "print", "export"]
+    if role == "HR User":
+        return module_name in GROUP_MODULES.get("HR", []) and action in ["view", "add", "edit", "print", "export"]
+    if role == "Inventory User":
+        return module_name in GROUP_MODULES.get("Inventory", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "Quotation User":
-        return module_name == "Quotation" and action in ["view", "add", "print", "export"]
+        return module_name in GROUP_MODULES.get("Quotation", []) and action in ["view", "add", "print", "export"]
     if role == "User":
         return action in ["view", "print", "export"]
     return action == "view"
@@ -4230,8 +4250,11 @@ def has_permission(module_name, action="view"):
     try:
         if is_super_admin():
             return True
-        if module_name in SUPER_ADMIN_ONLY_MODULES:
+        if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
             return False
+        # Client Super Admin must always get full access to all modules enabled for his company.
+        if st.session_state.get("role") == "Client Super Admin":
+            return module_enabled_for_current_client(module_name)
         action = str(action).lower().strip()
         if action not in PERMISSION_ACTIONS:
             return False
@@ -4264,8 +4287,8 @@ def filter_modules_by_permission(modules):
 
 def role_permission_control():
     show_header("Role-wise Permission Control", "section-admin")
-    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
-        st.warning("Only Admin can access Role Permission Control.")
+    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
+        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Permission Control.")
         return
     if is_super_admin():
         clients_df = load_table("clients", 1000)
@@ -4276,7 +4299,14 @@ def role_permission_control():
     else:
         selected_client = get_client_code()
         st.info(f"Permission setting for your own business only: {selected_client}")
-    role_name = st.selectbox("Select Role", ["Admin", "User", "Quotation User", "Manager", "Approver", "Viewer"], key="perm_role")
+    current_role = st.session_state.get("role", "")
+    if current_role in ["Developer", "Super Admin"]:
+        assignable_roles = ["Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Manager", "Approver", "Viewer"]
+    elif current_role == "Client Super Admin":
+        assignable_roles = ["Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Manager", "Approver", "Viewer"]
+    else:
+        assignable_roles = ["User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Viewer"]
+    role_name = st.selectbox("Select Role", assignable_roles, key="perm_role")
     existing = safe_df(supabase.table("role_permissions").select("*").eq("client_code", selected_client).eq("role_name", role_name).execute().data)
     perm_rows = []
     with st.form("role_permission_form"):
