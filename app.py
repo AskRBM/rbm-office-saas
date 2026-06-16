@@ -336,6 +336,26 @@ def strip_module_label(label):
         s = s[1:].strip()
     return s
 
+
+
+def all_online_module_names():
+    names = []
+    try:
+        for _g, _mods in ONLINE_MODULE_GROUPS.items():
+            names.extend(list(_mods))
+    except Exception:
+        pass
+    return list(dict.fromkeys([x for x in names if str(x).strip()]))
+
+def modules_for_selected_group(module_title=None):
+    try:
+        if module_title == "Client Module Permission":
+            g = st.session_state.get(f"gen_{module_title}_group_name", "Admin")
+            return list(ONLINE_MODULE_GROUPS.get(g, [])) or all_online_module_names()
+        return all_online_module_names()
+    except Exception:
+        return ["Dashboard", "User Management", "Company Profile"]
+
 def role_can_see_module(module_name):
     role = st.session_state.get("role", "")
     client_code = str(st.session_state.get("client_code", "")).upper().strip()
@@ -1708,8 +1728,10 @@ def user_management():
         mobile = c2.text_input("Mobile No.")
 
         current_role = st.session_state.get("role", "")
-        if current_role in ["Developer", "Super Admin"]:
+        if current_role == "Developer":
             role_options = ["Developer", "Super Admin", "Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
+        elif current_role == "Super Admin":
+            role_options = ["Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User"]
         elif current_role == "Client Super Admin":
             # Client Super Admin can create Admin and normal users only inside own company.
             # Developer and platform Super Admin roles are hidden from client users.
@@ -4517,7 +4539,13 @@ _GENERIC_MODULE_FIELDS = {
     "Production Planning": [("company_code","Company Code","company"),("plan_no","Plan No","text"),("plan_date","Plan Date","date"),("finished_item","Finished Item","stock_item"),("planned_qty","Planned Qty","number"),("bom_no","BOM No","bom"),("start_date","Start Date","date"),("end_date","End Date","date"),("machine_name","Machine Name","text"),("supervisor","Supervisor","employee"),("plan_status","Plan Status","status")],
     "Production Schedule": [("company_code","Company Code","company"),("schedule_no","Schedule No","text"),("schedule_date","Schedule Date","date"),("plan_no","Plan No","plan"),("shift","Shift","shift"),("machine_name","Machine Name","text"),("operator_name","Operator Name","employee"),("qty_scheduled","Qty Scheduled","number"),("status","Status","status")],
     "Capacity Planning": [("company_code","Company Code","company"),("machine_name","Machine Name","text"),("shift","Shift","shift"),("available_hours","Available Hours","number"),("planned_hours","Planned Hours","number"),("free_capacity","Free Capacity","number"),("plan_date","Plan Date","date"),("remarks","Remarks","text")],
+    "Payment Receipt Voucher": [("company_code","Company Code","company"),("receipt_no","Receipt No","text"),("receipt_date","Receipt Date","date"),("customer_code","Customer Code","text"),("customer_name","Customer Name","text"),("ledger_name","Ledger Name","text"),("amount_received","Amount Received","number"),("tds_percent","TDS %","number"),("tds_deducted","TDS Deducted","number"),("net_amount","Net Amount","number"),("payment_mode","Payment Mode","payment_mode"),("remarks","Remarks","text")],
+    "Bank Payment Voucher": [("company_code","Company Code","company"),("payment_no","Payment No","text"),("payment_date","Payment Date","date"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("ledger_name","Ledger Name","text"),("amount_paid","Amount Paid","number"),("tds_percent","TDS %","number"),("tds_deducted","TDS Deducted","number"),("net_amount","Net Amount","number"),("payment_mode","Payment Mode","payment_mode"),("remarks","Remarks","text")],
+    "Purchase Order": [("company_code","Company Code","company"),("po_no","PO No","text"),("po_date","PO Date","date"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("item_name","Item Name","stock_item"),("qty","Qty","number"),("rate","Rate","number"),("value","Value","number"),("status","Status","status"),("remarks","Remarks","text")],
+    "Receipt Note": [("company_code","Company Code","company"),("grn_no","GRN / Receipt No","text"),("grn_date","GRN Date","date"),("po_no","PO No","text"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("item_name","Item Name","stock_item"),("received_qty","Received Qty","number"),("status","Status","status"),("remarks","Remarks","text")],
+    "Debit Note": [("company_code","Company Code","company"),("debit_note_no","Debit Note No","text"),("debit_note_date","Debit Note Date","date"),("vendor_code","Vendor Code","text"),("supplier_name","Supplier Name","text"),("reason","Reason","text"),("taxable_value","Taxable Value","number"),("cgst","CGST","number"),("sgst","SGST","number"),("igst","IGST","number"),("total_value","Total Value","number"),("remarks","Remarks","text")],
 }
+
 
 _SPECIAL_STORAGE_KEY = "online_generic_records"
 
@@ -4551,6 +4579,7 @@ def _generic_lookup(kind):
             vals=[r.get("plan_no") for r in recs if r.get("module_name")=="Production Planning" and r.get("plan_no")]
             return vals or ["PLAN001"]
         if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
+        if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
     except Exception:
         pass
     return []
@@ -4590,9 +4619,13 @@ def _render_generic_input(col, label, field, typ, module_title):
     if typ == "number": return col.number_input(label, value=0.0, key=f"gen_{module_title}_{field}")
     if typ == "bool": return col.checkbox(label, value=True, key=f"gen_{module_title}_{field}")
     if typ == "password": return col.text_input(label, type="password", key=f"gen_{module_title}_{field}")
-    if typ in ["company","user","employee","stock_item","bom","plan","group"]:
-        values = _generic_lookup(typ)
-        return col.selectbox(label, values + ["Add New..."], key=f"gen_{module_title}_{field}")
+    if typ in ["company","user","employee","stock_item","bom","plan","group","module_name"]:
+        values = modules_for_selected_group(module_title) if typ == "module_name" else _generic_lookup(typ)
+        if not values:
+            values = ["Add New..."]
+        else:
+            values = list(dict.fromkeys([str(v) for v in values if str(v).strip()])) + ["Add New..."]
+        return col.selectbox(label, values, key=f"gen_{module_title}_{field}")
     if opts: return col.selectbox(label, opts + ["Add New..."], key=f"gen_{module_title}_{field}")
     return col.text_input(label, key=f"gen_{module_title}_{field}")
 
@@ -4673,6 +4706,47 @@ def _page(function_name, title):
             return lambda title=title: online_generic_module(title)
     return lambda title=title: online_generic_module(title)
 
+
+def report_module_screen(report_title):
+    """Tally-style individual report page so Trial Balance, P&L, B/S, receivable, payable and stock do not show same clients table."""
+    show_header(f"{module_prefix(report_title)} {report_title}", "section-rep")
+    c1, c2, c3 = st.columns(3)
+    from_dt = c1.date_input("From Date", value=india_now().date().replace(day=1), format="DD-MM-YYYY", key=f"rep_from_{report_title}")
+    to_dt = c2.date_input("To Date", value=india_now().date(), format="DD-MM-YYYY", key=f"rep_to_{report_title}")
+    search = c3.text_input("Search / Ledger / Party / Item", key=f"rep_search_{report_title}")
+    fmt = "Standard"
+    if report_title in ["Profit Loss", "Balance Sheet"]:
+        fmt = st.selectbox("P&L / B.S. Format", ["Standard", "Overheads"], key=f"rep_fmt_{report_title}")
+    tb = build_trial_balance_df()
+    if report_title == "Trial Balance":
+        df = tb[[c for c in ["ledger_group","ledger_name","opening_dr","opening_cr","debit","credit","closing_dr","closing_cr"] if c in tb.columns]].copy() if not tb.empty else pd.DataFrame(columns=["Group","Particulars","Dr Amount","Cr Amount","Report Type"])
+    elif report_title == "Profit Loss":
+        df = build_profit_loss_df(tb) if not tb.empty else pd.DataFrame({"Debit Particulars":["To Opening Stock","To Purchases","To Direct Expenses","To Gross Profit c/d","Total","To Salaries","To Rent","To Electricity","To Office Expenses","To Depreciation","To Interest Paid","To Net Profit transferred to Capital A/c"],"Debit Amount (₹)":[0]*12,"Credit Particulars":["By Sales","By Closing Stock","By Other Operating Income","","Total","By Gross Profit b/d","By Commission Received","By Interest Received","","","",""] ,"Credit Amount (₹)":[0]*12,"Format":[fmt]*12})
+    elif report_title == "Balance Sheet":
+        df = build_balance_sheet_df(tb) if not tb.empty else pd.DataFrame({"Liabilities":["Capital Account","Add: Net Profit","Less: Drawings","Secured Loans","Unsecured Loans","Sundry Creditors","Outstanding Expenses","Duties & Taxes Payable","Total"],"Amount (₹)":[0]*9,"Assets":["Fixed Assets","Less: Depreciation","Net Fixed Assets","Investments","Closing Stock","Sundry Debtors","Cash in Hand","Cash at Bank","Total"],"Asset Amount (₹)":[0]*9,"Format":[fmt]*9})
+    elif report_title in ["Sundry Receivable", "Customer Outstanding Ageing"]:
+        df = tb[tb.get("ledger_group", pd.Series(dtype=str)).astype(str).isin(["Sundry Debtors","Trade Receivables"])] if not tb.empty else pd.DataFrame(columns=["customer_name","invoice_no","invoice_date","due_date","amount","received","balance","ageing_days"])
+    elif report_title in ["Sundry Payable", "Supplier Outstanding Ageing"]:
+        df = tb[tb.get("ledger_group", pd.Series(dtype=str)).astype(str).isin(["Sundry Creditors","Trade Payables"])] if not tb.empty else pd.DataFrame(columns=["supplier_name","bill_no","bill_date","due_date","amount","paid","balance","ageing_days"])
+    elif report_title in ["Stock Report", "Stock Ageing / Slow Moving Stock"]:
+        df = build_stock_summary_df()
+        if df.empty: df = pd.DataFrame(columns=["Stock Group","Item Code","Item Name","Opening Qty","Purchase Qty","Sales/Consumption Qty","Closing Qty","Rate","Value","Ageing Days"])
+    elif report_title in ["Gst Report", "GST Return Summary", "GST Reconciliation"]:
+        df = pd.DataFrame(columns=["GSTIN","Invoice No","Invoice Date","Party Name","Taxable Value","CGST","SGST","IGST","Total GST","Mismatch Status"])
+    elif report_title == "Tds Report":
+        df = pd.DataFrame(columns=["Date","Party Name","Section","TDS %","Gross Amount","TDS Amount","Paid/Payable","Challan No"])
+    else:
+        df = pd.DataFrame(columns=["Date","Document No","Party / Item","Debit","Credit","Amount","Status","Remarks"])
+    if search and not df.empty:
+        df = filter_dataframe(df, search)
+    st.caption(f"Report: {report_title} | Format: {fmt} | Rows: {len(df)}")
+    st.dataframe(df, use_container_width=True)
+    c1, c2 = st.columns(2)
+    c1.download_button("Export CSV", df.to_csv(index=False).encode('utf-8'), f"{report_title.replace(' ','_')}.csv", "text/csv", use_container_width=True, key=f"csv_{report_title}")
+    c2.download_button("Export Excel", to_excel_bytes(df), f"{report_title.replace(' ','_')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key=f"xlsx_{report_title}")
+    with st.expander("Drill-down details"):
+        st.info("Click/select the relevant ledger/party/item row above, then use search filter to see supporting records. Detailed row-click voucher drill-down can be connected once Streamlit AgGrid/table selection is added.")
+
 def get_module_mapping():
     """Map latest offline desktop module names to online pages. Existing online pages are reused."""
     return {
@@ -4733,8 +4807,8 @@ def get_module_mapping():
         "Finished Goods Stock": _page("stock_fg", "Finished Goods Stock"),
         "WIP Stock": _page("stock_wip", "WIP Stock"),
         "Stock Voucher": _page("stock_voucher", "Stock Voucher"),
-        "Stock Report": _page("reports", "Stock Report"),
-        "Stock Ageing / Slow Moving Stock": _page("reports", "Stock Ageing / Slow Moving Stock"),
+        "Stock Report": lambda: report_module_screen("Stock Report"),
+        "Stock Ageing / Slow Moving Stock": lambda: report_module_screen("Stock Ageing / Slow Moving Stock"),
 
         # Manufacturing
         "BOM Header": _page("bill_of_material_module", "BOM Header"),
@@ -4767,29 +4841,29 @@ def get_module_mapping():
         "Bank Reconciliation": _page("bank_reconciliation", "Bank Reconciliation"),
         "Year Closing / Opening Balance Transfer": _page("online_generic_module", "Year Closing / Opening Balance Transfer"),
         "Budget vs Actual": _page("budget_vs_actual", "Budget vs Actual"),
-        "Cash Flow Statement": _page("reports", "Cash Flow Statement"),
+        "Cash Flow Statement": lambda: report_module_screen("Cash Flow Statement"),
 
         # Sales/Purchase/Expense
         "Sales GST Invoice": _page("sales_invoice", "Sales GST Invoice"),
         "Sales Order": _page("sales_cycle", "Sales Order"),
         "Delivery Note": _page("sales_cycle", "Delivery Note"),
         "Credit Note": _page("sales_cycle", "Credit Note"),
-        "Customer Outstanding Ageing": _page("reports", "Customer Outstanding Ageing"),
+        "Customer Outstanding Ageing": lambda: report_module_screen("Customer Outstanding Ageing"),
         "Sales Cycle": _page("sales_cycle", "Sales Cycle"),
         "Recurring Invoices": _page("online_generic_module", "Recurring Invoices"),
         "Purchase GST Invoice": _page("purchase_invoice", "Purchase GST Invoice"),
         "Purchase Order": _page("purchase_cycle", "Purchase Order"),
         "Receipt Note": _page("purchase_cycle", "Receipt Note"),
         "Debit Note": _page("purchase_cycle", "Debit Note"),
-        "Supplier Outstanding Ageing": _page("reports", "Supplier Outstanding Ageing"),
+        "Supplier Outstanding Ageing": lambda: report_module_screen("Supplier Outstanding Ageing"),
         "Purchase Cycle": _page("purchase_cycle", "Purchase Cycle"),
-        "GST Reconciliation": _page("reports", "GST Reconciliation"),
+        "GST Reconciliation": lambda: report_module_screen("GST Reconciliation"),
         "Expense GST": _page("expense_gst", "Expense GST"),
         "Service Voucher": _page("service_voucher", "Service Voucher"),
         "Expense Approval": _page("online_generic_module", "Expense Approval"),
         "Recurring Expenses": _page("online_generic_module", "Recurring Expenses"),
         "TDS Report": _page("reports", "TDS Report"),
-        "Gst Report": _page("reports", "Gst Report"),
+        "Gst Report": lambda: report_module_screen("Gst Report"),
 
         # Projects/Quotation
         "Project Accounting": _page("project_accounting_module", "Project Accounting"),
@@ -4818,7 +4892,7 @@ def get_module_mapping():
         "Multi Currency": _page("online_generic_module", "Multi Currency"),
         "Customer Portal": _page("online_generic_module", "Customer Portal"),
         "Vendor Portal": _page("online_generic_module", "Vendor Portal"),
-        "Profitability Analysis - Customer Product Branch": _page("reports", "Profitability Analysis - Customer Product Branch"),
+        "Profitability Analysis - Customer Product Branch": lambda: report_module_screen("Profitability Analysis - Customer Product Branch"),
 
         # Support/Audit/Tools
         "Support Desk": _page("support_ticket_module", "Support Desk"),
@@ -4864,11 +4938,11 @@ def get_module_mapping():
         # Reports
         "Registers / Reports": _page("reports", "Registers / Reports"),
         "Import Center": _page("import_center", "Import Center"),
-        "Trial Balance": _page("reports", "Trial Balance"),
-        "Profit Loss": _page("reports", "Profit Loss"),
-        "Balance Sheet": _page("reports", "Balance Sheet"),
-        "Sundry Receivable": _page("reports", "Sundry Receivable"),
-        "Sundry Payable": _page("reports", "Sundry Payable"),
+        "Trial Balance": lambda: report_module_screen("Trial Balance"),
+        "Profit Loss": lambda: report_module_screen("Profit Loss"),
+        "Balance Sheet": lambda: report_module_screen("Balance Sheet"),
+        "Sundry Receivable": lambda: report_module_screen("Sundry Receivable"),
+        "Sundry Payable": lambda: report_module_screen("Sundry Payable"),
         "Calculation Book": _page("calculation_book", "Calculation Book"),
         "Import Logs": _page("reports", "Import Logs"),
         "Dashboard Analytics": _page("dashboard_analytics", "Dashboard Analytics"),
