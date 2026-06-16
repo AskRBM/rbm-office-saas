@@ -336,8 +336,13 @@ def strip_module_label(label):
 
 def role_can_see_module(module_name):
     role = st.session_state.get("role", "")
+    client_code = str(st.session_state.get("client_code", "")).upper().strip()
+
+    # RBM internal Super Admin must see Client Master / License / Developer-control modules.
+    # Client Super Admin / Admin / User must NOT see these developer-control modules.
     if module_name in DEVELOPER_ONLY_MODULES:
-        return role == "Developer"
+        return role == "Developer" or (role == "Super Admin" and client_code == "RBM")
+
     if role in ["Developer", "Super Admin"]:
         return True
     return True
