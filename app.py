@@ -339,10 +339,8 @@ def role_can_see_module(module_name):
     role = st.session_state.get("role", "")
     client_code = str(st.session_state.get("client_code", "")).upper().strip()
 
-    # Client Super Admin must see Client Master for own company permission/control screen.
-    # Other red developer modules remain hidden from clients.
-    if module_name == "Client Master" and role == "Client Super Admin":
-        return True
+    # Client Master and all red developer modules must be hidden from client-side roles.
+    # Client Super Admin can create Admin/User from User Management, but cannot open Client Master.
 
     # RBM internal Super Admin must see Client Master / License / Developer-control modules.
     # Client Super Admin / Admin / User must NOT see other developer-control modules.
@@ -1453,8 +1451,8 @@ def dashboard():
 def client_master():
     show_header("Client Master", "section-admin")
     current_role = st.session_state.get("role", "")
-    if current_role not in ["Developer", "Super Admin", "Client Super Admin"]:
-        st.warning("Only Developer, RBM Super Admin or Client Super Admin can access Client Master.")
+    if current_role not in ["Developer", "Super Admin"]:
+        st.warning("Client Master is Developer / RBM Super Admin only. Client Super Admin can create Admin/User from User Management.")
         return
 
     st.info("Same as Offline Desktop ERP: Group name + all module names are shown. Tick group to tick all modules; untick any module manually.")
@@ -4259,8 +4257,6 @@ def default_permission(module_name, action):
     role = st.session_state.get("role", "")
     if role in ["Developer", "Super Admin"]:
         return True
-    if module_name == "Client Master" and role == "Client Super Admin":
-        return action in ["view", "edit", "print", "export"]
     if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
         return False
     # Client Super Admin gets full authority for every module enabled for his own client/company.
@@ -4284,8 +4280,6 @@ def has_permission(module_name, action="view"):
     try:
         if is_super_admin():
             return True
-        if module_name == "Client Master" and st.session_state.get("role") == "Client Super Admin":
-            return action in ["view", "edit", "print", "export"]
         if module_name in SUPER_ADMIN_ONLY_MODULES or module_name in DEVELOPER_ONLY_MODULES:
             return False
         # Client Super Admin must always get full access to all modules enabled for his company.
@@ -4315,7 +4309,7 @@ def filter_modules_by_permission(modules):
     for m in modules:
         if m == "No module available":
             continue
-        if m in SUPER_ADMIN_ONLY_MODULES and not (m == "Client Master" and st.session_state.get("role") == "Client Super Admin"):
+        if m in SUPER_ADMIN_ONLY_MODULES or m in DEVELOPER_ONLY_MODULES:
             continue
         if module_enabled_for_current_client(m) and has_permission(m, "view"):
             allowed.append(m)
