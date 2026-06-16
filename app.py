@@ -1516,7 +1516,7 @@ def client_master():
         selected_groups[group_name] = tick_group
         cols = st.columns(4)
         for i, module in enumerate(modules):
-            tag = module_source_tag(module)
+            tag = module_tag(module)
             prefix = color_map.get(tag, "🟣")
             default_module = existing_perm.get(module, tick_group)
             with cols[i % 4]:
@@ -1574,7 +1574,7 @@ def client_master():
                             "group_name": group_name,
                             "module_name": module,
                             "is_enabled": bool(selected_modules.get(module, False)),
-                            "source_tag": module_source_tag(module),
+                            "source_tag": module_tag(module),
                             "created_by": created_by,
                         })
                 if perm_rows:
