@@ -1442,135 +1442,148 @@ def client_master():
         st.warning("Only RBM Super Admin / Developer can access Client Master.")
         return
 
-    st.info("Client Master now shows the SAME Group + Module permission structure as Offline Desktop ERP. Tick a group to tick all its modules; untick any module manually if required.")
+    st.info("Same as Offline Desktop ERP: Group name + all module names are shown. Tick group to tick all modules; untick any module manually.")
 
-    # Existing company/client codes for dropdown/edit support
     clients_df_existing = load_table("clients", 2000)
     existing_codes = clients_df_existing["client_code"].dropna().astype(str).tolist() if (not clients_df_existing.empty and "client_code" in clients_df_existing.columns) else []
 
-    with st.form("client_form_full_offline_style"):
-        c1, c2, c3 = st.columns(3)
-        selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
+    c1, c2, c3 = st.columns(3)
+    selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
 
-        default_code = "" if selected_existing == "New Client" else selected_existing
-        default_name = ""
-        default_status = "Active"
+    default_code = "" if selected_existing == "New Client" else selected_existing
+    default_name = ""
+    default_status = "Active"
+    if selected_existing != "New Client" and not clients_df_existing.empty:
+        row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
+        if not row_df.empty:
+            default_name = str(row_df.iloc[0].get("client_name", row_df.iloc[0].get("name", "")) or "")
+            default_status = str(row_df.iloc[0].get("status", "Active") or "Active")
+
+    company_code = c1.text_input("Company Code", value=default_code, placeholder="Example: SJM01", key="cm_company_code").upper().strip()
+    client_name = c2.text_input("Client Name", value=default_name, placeholder="Example: Siyaram Silk Mills Limited", key="cm_client_name")
+    status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if default_status != "Inactive" else 1, key="cm_status")
+
+    st.markdown("### Client Group + Module Permission")
+    st.caption("Offline Desktop ERP style: every group is shown with its modules. First tick group name; all modules tick automatically. Then untick any module manually if required.")
+
+    selected_groups = {}
+    selected_modules = {}
+
+    group_to_old_flag = {
+        "Master": "allow_master_group",
+        "HR": "allow_attendance",
+        "Inventory": "allow_stock_raw",
+        "Manufacturing": "allow_manufacturing",
+        "Accounts": "allow_accounting",
+        "Sales": "allow_sales",
+        "Purchase": "allow_purchase",
+        "Expense": "allow_expense",
+        "Projects": "allow_project_accounting",
+        "Quotation": "allow_quotation",
+        "Support": "allow_support",
+        "Tools": "allow_excel_upload",
+        "Reports": "allow_master_group",
+    }
+
+    color_map = {"Developer":"🔴", "SAP":"🔵", "QuickBooks":"🟢", "Tally":"🟠", "RBM":"🟣"}
+
+    # Load existing detailed permissions if table exists, so edit screen remembers old ticks.
+    existing_perm = {}
+    if selected_existing != "New Client":
+        try:
+            pdf = safe_df(supabase.table("client_module_permissions").select("module_name,is_enabled").eq("client_code", selected_existing).execute().data)
+            if not pdf.empty and "module_name" in pdf.columns:
+                existing_perm = {str(r["module_name"]): bool(r.get("is_enabled", False)) for _, r in pdf.iterrows()}
+        except Exception:
+            existing_perm = {}
+
+    for group_name, modules in ONLINE_MODULE_GROUPS.items():
+        if group_name == "Dashboard":
+            continue
+        st.markdown(f"---\n#### {group_name}")
+        # Existing old flag fallback
+        default_group_value = False
         if selected_existing != "New Client" and not clients_df_existing.empty:
-            row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
-            if not row_df.empty:
-                default_name = str(row_df.iloc[0].get("client_name", row_df.iloc[0].get("name", "")) or "")
-                default_status = str(row_df.iloc[0].get("status", "Active") or "Active")
+            old_flag = group_to_old_flag.get(group_name)
+            if old_flag and old_flag in clients_df_existing.columns:
+                row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
+                if not row_df.empty:
+                    default_group_value = bool(row_df.iloc[0].get(old_flag, False))
+        if any(existing_perm.values()):
+            default_group_value = all(existing_perm.get(m, False) for m in modules)
 
-        company_code = c1.text_input("Company Code", value=default_code, placeholder="Example: SJM01").upper().strip()
-        client_name = c2.text_input("Client Name", value=default_name, placeholder="Example: Siyaram Silk Mills Limited")
-        status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if default_status != "Inactive" else 1)
+        tick_group = st.checkbox(f"Tick Full Group: {group_name}", value=default_group_value, key=f"cm_group_{group_name}_{selected_existing}")
+        selected_groups[group_name] = tick_group
+        cols = st.columns(4)
+        for i, module in enumerate(modules):
+            tag = module_source_tag(module)
+            prefix = color_map.get(tag, "🟣")
+            default_module = existing_perm.get(module, tick_group)
+            with cols[i % 4]:
+                selected_modules[module] = st.checkbox(f"{prefix} {module}", value=default_module, key=f"cm_mod_{selected_existing}_{group_name}_{module}")
 
-        st.markdown("### Client Group + Module Permission")
-        st.caption("Same as Offline Desktop ERP: first tick group name, then all module names will tick automatically. You can untick any module manually.")
+    st.markdown("---")
+    submitted = st.button("Save Client with Offline Style Group + Module Permissions", use_container_width=True, type="primary")
+    if submitted:
+        if not company_code or not client_name:
+            st.error("Company Code and Client Name required")
+        else:
+            created_by = current_user()
+            row = {"client_code": company_code, "client_name": client_name, "name": client_name, "status": status, "created_by": created_by}
+            for old_col in [
+                "allow_master_group","allow_attendance","allow_inout","allow_visitor","allow_task","allow_appointment",
+                "allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense",
+                "allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import",
+                "allow_quotation","allow_manufacturing","allow_project_accounting","allow_subscription","allow_support","allow_license_manager"
+            ]:
+                row[old_col] = False
+            for g, old_col in group_to_old_flag.items():
+                if selected_groups.get(g):
+                    row[old_col] = True
+            if selected_groups.get("HR"):
+                row.update({"allow_attendance": True, "allow_inout": True, "allow_visitor": True, "allow_task": True, "allow_appointment": True})
+            if selected_groups.get("Inventory"):
+                row.update({"allow_stock_raw": True, "allow_stock_fg": True, "allow_stock_wip": True})
+            if selected_groups.get("Expense"):
+                row.update({"allow_expense": True, "allow_service_voucher": True})
+            if selected_groups.get("Accounts"):
+                row.update({"allow_accounting": True, "allow_fixed_assets": True})
+            if selected_groups.get("Support"):
+                row.update({"allow_support": True, "allow_subscription": True})
+            if selected_groups.get("Tools"):
+                row.update({"allow_excel_upload": True, "allow_google_sheet_import": True})
 
-        selected_groups = {}
-        selected_modules = {}
-
-        # Old client master group flags mapped from module group names
-        group_to_old_flag = {
-            "Master": "allow_master_group",
-            "HR": "allow_attendance",
-            "Inventory": "allow_stock_raw",
-            "Manufacturing": "allow_manufacturing",
-            "Accounts": "allow_accounting",
-            "Sales": "allow_sales",
-            "Purchase": "allow_purchase",
-            "Expense": "allow_expense",
-            "Projects": "allow_project_accounting",
-            "Quotation": "allow_quotation",
-            "Support": "allow_support",
-            "Tools": "allow_excel_upload",
-            "Reports": "allow_master_group",
-        }
-
-        for group_name, modules in ONLINE_MODULE_GROUPS.items():
-            if group_name == "Dashboard":
-                continue
-            st.markdown(f"---\n#### {group_name}")
-            # Developer-only module text is RED, SAP blue, QuickBooks green, Tally orange, RBM purple.
-            tick_group = st.checkbox(f"Tick Full Group: {group_name}", value=False, key=f"cm_group_{group_name}")
-            selected_groups[group_name] = tick_group
-            cols = st.columns(4)
-            for i, module in enumerate(modules):
-                tag = module_source_tag(module)
-                color = {"Developer":"#e60000", "SAP":"#0057ff", "QuickBooks":"#009b3a", "Tally":"#ff8c00", "RBM":"#7a2cff"}.get(tag, "#111111")
-                prefix = {"Developer":"🔴", "SAP":"🔵", "QuickBooks":"🟢", "Tally":"🟠", "RBM":"🟣"}.get(tag, "")
-                with cols[i % 4]:
-                    checked = st.checkbox("", value=tick_group, key=f"cm_mod_{group_name}_{module}")
-                    st.markdown(f"<span style='color:{color};font-weight:700'>{prefix} {module}</span>", unsafe_allow_html=True)
-                    selected_modules[module] = checked
-
-        created_by = current_user()
-        submitted = st.form_submit_button("Save Client with Offline Style Group + Module Permissions", use_container_width=True)
-        if submitted:
-            if not company_code or not client_name:
-                st.error("Company Code and Client Name required")
-            else:
-                row = {"client_code": company_code, "client_name": client_name, "status": status}
-                # Keep backward compatibility with old client-master access columns.
-                for old_col in [
-                    "allow_master_group","allow_attendance","allow_inout","allow_visitor","allow_task","allow_appointment",
-                    "allow_stock_raw","allow_stock_fg","allow_stock_wip","allow_sales","allow_purchase","allow_expense",
-                    "allow_service_voucher","allow_fixed_assets","allow_accounting","allow_excel_upload","allow_google_sheet_import",
-                    "allow_quotation","allow_manufacturing","allow_project_accounting","allow_subscription","allow_support","allow_license_manager"
-                ]:
-                    row[old_col] = False
-                for g, old_col in group_to_old_flag.items():
-                    if selected_groups.get(g):
-                        row[old_col] = True
-                # More precise mapping for groups
-                if selected_groups.get("HR"):
-                    row.update({"allow_attendance": True, "allow_inout": True, "allow_visitor": True, "allow_task": True, "allow_appointment": True})
-                if selected_groups.get("Inventory"):
-                    row.update({"allow_stock_raw": True, "allow_stock_fg": True, "allow_stock_wip": True})
-                if selected_groups.get("Expense"):
-                    row.update({"allow_expense": True, "allow_service_voucher": True})
-                if selected_groups.get("Accounts"):
-                    row.update({"allow_accounting": True, "allow_fixed_assets": True})
-                if selected_groups.get("Support"):
-                    row.update({"allow_support": True, "allow_subscription": True})
-                if selected_groups.get("Tools"):
-                    row.update({"allow_excel_upload": True, "allow_google_sheet_import": True})
-
-                # Update if exists, else insert.
-                try:
-                    exists = safe_df(supabase.table("clients").select("id,client_code").eq("client_code", company_code).limit(1).execute().data)
-                    if not exists.empty and "id" in exists.columns:
-                        supabase.table("clients").update(row).eq("client_code", company_code).execute()
-                    else:
-                        insert_row("clients", row)
-                except Exception:
+            try:
+                exists = safe_df(supabase.table("clients").select("id,client_code").eq("client_code", company_code).limit(1).execute().data)
+                if not exists.empty and "id" in exists.columns:
+                    supabase.table("clients").update(row).eq("client_code", company_code).execute()
+                else:
                     insert_row("clients", row)
+            except Exception:
+                insert_row("clients", row)
 
-                # Optional detailed module permission table for new online full permission structure.
-                # SQL to create table is included in README; if table not yet created, old group flags still work.
-                try:
-                    supabase.table("client_module_permissions").delete().eq("client_code", company_code).execute()
-                    perm_rows = []
-                    for group_name, modules in ONLINE_MODULE_GROUPS.items():
-                        if group_name == "Dashboard":
-                            continue
-                        for module in modules:
-                            perm_rows.append({
-                                "client_code": company_code,
-                                "group_name": group_name,
-                                "module_name": module,
-                                "is_enabled": bool(selected_modules.get(module, False)),
-                                "source_tag": module_source_tag(module),
-                                "created_by": created_by,
-                            })
-                    if perm_rows:
-                        supabase.table("client_module_permissions").insert(perm_rows).execute()
-                except Exception as e:
-                    st.warning("Client saved. Detailed module permission table is not created yet in Supabase. Old group flags are saved. Create client_module_permissions table using included SQL for module-wise permissions.")
+            try:
+                supabase.table("client_module_permissions").delete().eq("client_code", company_code).execute()
+                perm_rows = []
+                for group_name, modules in ONLINE_MODULE_GROUPS.items():
+                    if group_name == "Dashboard":
+                        continue
+                    for module in modules:
+                        perm_rows.append({
+                            "client_code": company_code,
+                            "group_name": group_name,
+                            "module_name": module,
+                            "is_enabled": bool(selected_modules.get(module, False)),
+                            "source_tag": module_source_tag(module),
+                            "created_by": created_by,
+                        })
+                if perm_rows:
+                    supabase.table("client_module_permissions").insert(perm_rows).execute()
+            except Exception:
+                st.warning("Client saved. Detailed module permission table is not created yet in Supabase. Old group flags are saved. Create client_module_permissions table using included SQL for module-wise permissions.")
 
-                st.success("Client saved with Offline Desktop style group/module permissions.")
-                st.rerun()
+            st.success("Client saved with Offline Desktop style group/module permissions.")
+            st.rerun()
 
     show_table_with_edit_delete("clients", load_table("clients", 500), "Client List")
 
