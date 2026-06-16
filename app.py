@@ -893,6 +893,101 @@ def print_dataframe_preview(title, df, key_prefix='print_df'):
     except Exception as e:
         st.error(f'Print preview failed: {e}')
 
+
+
+def _rbm_saved_record_html(title, row):
+    """Professional single saved record print preview for any module, including payroll."""
+    try:
+        data = dict(row)
+    except Exception:
+        data = {}
+
+    def esc(v):
+        import html
+        if v is None:
+            return ""
+        try:
+            if pd.isna(v):
+                return ""
+        except Exception:
+            pass
+        return html.escape(str(v))
+
+    module_title = str(title or "Saved Record")
+    lower_title = module_title.lower()
+    is_payroll = "payroll" in lower_title or "payslip" in lower_title or "salary" in lower_title
+
+    # Pick common business fields for a cleaner payroll/payslip style print.
+    employee = data.get("employee_name") or data.get("employee") or data.get("name") or data.get("assigned_to") or ""
+    month = data.get("salary_month") or data.get("month") or data.get("pay_month") or data.get("period") or ""
+    gross = data.get("gross_salary") or data.get("gross") or data.get("gross_pay") or data.get("total_earning") or ""
+    net = data.get("net_salary") or data.get("net_pay") or data.get("net_amount") or data.get("total_value") or ""
+
+    rows_html = ""
+    for k, v in data.items():
+        rows_html += f"<tr><th>{esc(str(k).replace('_',' ').title())}</th><td>{esc(v)}</td></tr>"
+
+    title_text = "PAYSLIP" if "payslip" in lower_title else module_title.upper()
+    payroll_summary = ""
+    if is_payroll:
+        payroll_summary = f"""
+        <div class='paybox'>
+          <div><b>Employee:</b> {esc(employee)}</div>
+          <div><b>Month / Period:</b> {esc(month)}</div>
+          <div><b>Gross Salary:</b> {esc(gross)}</div>
+          <div><b>Net Salary:</b> {esc(net)}</div>
+        </div>
+        """
+
+    html = f"""
+    <html><head><meta charset='utf-8'>
+    <style>
+      body{{font-family:Arial, sans-serif; padding:22px; color:#111827;}}
+      .no-print{{margin-bottom:14px;}}
+      button{{background:#0f3b66;color:white;border:0;border-radius:8px;padding:10px 18px;font-weight:bold;cursor:pointer;}}
+      .top{{display:flex; justify-content:space-between; border-bottom:3px solid #0f3b66; padding-bottom:10px; margin-bottom:14px;}}
+      .brand{{font-size:28px; font-weight:900; color:#0f3b66;}}
+      .title{{background:#e0f2fe; border:1px solid #93c5fd; padding:10px; border-radius:8px; font-size:20px; font-weight:900; margin:14px 0; text-align:center;}}
+      .paybox{{display:grid; grid-template-columns:1fr 1fr; gap:8px; border:1px solid #cbd5e1; background:#f8fafc; padding:12px; border-radius:10px; margin-bottom:12px;}}
+      table{{border-collapse:collapse; width:100%;}}
+      th,td{{border:1px solid #cbd5e1; padding:7px; font-size:13px; text-align:left; vertical-align:top;}}
+      th{{background:#f1f5f9; width:32%;}}
+      .footer{{margin-top:28px; display:flex; justify-content:space-between;}}
+      .sign{{border-top:1px solid #111827; padding-top:8px; min-width:180px; text-align:center;}}
+      @media print{{.no-print{{display:none;}} body{{padding:0;}}}}
+    </style></head><body>
+      <div class='no-print'><button onclick='window.print()'>Print / Save PDF</button></div>
+      <div class='top'>
+        <div><div class='brand'>RBM ERP</div><div>Robotic Business Management</div></div>
+        <div style='text-align:right;font-size:12px;'><b>Printed:</b> {esc(india_now().strftime('%d-%m-%Y %H:%M'))}<br><b>Module:</b> {esc(module_title)}</div>
+      </div>
+      <div class='title'>{esc(title_text)}</div>
+      {payroll_summary}
+      <table>{rows_html}</table>
+      <div class='footer'><div>This is a computer-generated print preview.</div><div class='sign'>Authorised Signatory</div></div>
+    </body></html>
+    """
+    return html
+
+
+def print_saved_record_preview(title, row, key_prefix="saved_record_print"):
+    """Render selected saved row with browser print and HTML download."""
+    try:
+        html = _rbm_saved_record_html(title, row)
+        st.markdown("### Saved Data Print Preview")
+        with st.expander("👁️ Show / Hide Selected Saved Data Print Preview", expanded=True):
+            components.html(html, height=620, scrolling=True)
+        st.download_button(
+            "⬇ Download Selected Record HTML",
+            data=html.encode("utf-8"),
+            file_name=f"{key_prefix}.html",
+            mime="text/html",
+            use_container_width=True,
+            key=f"download_{key_prefix}"
+        )
+    except Exception as e:
+        st.error(f"Saved record print preview failed: {e}")
+
 def show_table_with_edit_delete(key, df, title):
     st.subheader(title)
 
@@ -934,6 +1029,40 @@ def show_table_with_edit_delete(key, df, title):
 
     if st.session_state.get(f"show_print_table_{key}", False):
         print_dataframe_preview(title, filtered, key_prefix=f"print_table_{key}")
+
+
+    # Saved Data Print Preview: select one saved record from any module and print it.
+    if (has_key_permission(key, "print") or is_super_admin()) and not filtered.empty:
+        st.divider()
+        st.subheader("Saved Data Print")
+        try:
+            print_df = filtered.copy()
+            if "id" in print_df.columns:
+                print_ids = print_df["id"].dropna().astype(str).tolist()
+                selected_print_id = st.selectbox(
+                    "Select Saved Record ID for Print Preview",
+                    print_ids,
+                    key=f"saved_print_id_{key}_{len(print_ids)}"
+                )
+                print_row_df = print_df[print_df["id"].astype(str) == str(selected_print_id)]
+                print_row = print_row_df.iloc[0].to_dict() if not print_row_df.empty else print_df.iloc[0].to_dict()
+            else:
+                row_numbers = list(range(len(print_df)))
+                selected_row_no = st.selectbox(
+                    "Select Saved Record for Print Preview",
+                    row_numbers,
+                    format_func=lambda i: f"Record {int(i)+1}",
+                    key=f"saved_print_row_{key}_{len(row_numbers)}"
+                )
+                print_row = print_df.iloc[int(selected_row_no)].to_dict()
+
+            if st.button("Print Selected Saved Data", use_container_width=True, key=f"print_saved_btn_{key}"):
+                st.session_state[f"show_saved_print_{key}"] = True
+
+            if st.session_state.get(f"show_saved_print_{key}", False):
+                print_saved_record_preview(title, print_row, key_prefix=f"{key}_saved_record")
+        except Exception as e:
+            st.warning(f"Saved record print selection not available: {e}")
 
     can_manage = (
         is_super_admin()
