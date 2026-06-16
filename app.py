@@ -1509,8 +1509,14 @@ def client_master():
                 row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
                 if not row_df.empty:
                     default_group_value = bool(row_df.iloc[0].get(old_flag, False))
-        if any(existing_perm.values()):
-            default_group_value = all(existing_perm.get(m, False) for m in modules)
+        # RBM RULE: Developer-only modules (red) must stay unticked by default.
+        # All other color modules must be ticked by default, same as offline desktop ERP.
+        non_developer_modules = [m for m in modules if module_tag(m) != "Developer"]
+        developer_modules = [m for m in modules if module_tag(m) == "Developer"]
+        if selected_existing == "New Client" or not existing_perm:
+            default_group_value = bool(non_developer_modules)
+        elif any(existing_perm.values()):
+            default_group_value = all(existing_perm.get(m, False) for m in non_developer_modules)
 
         tick_group = st.checkbox(f"Tick Full Group: {group_name}", value=default_group_value, key=f"cm_group_{group_name}_{selected_existing}")
         selected_groups[group_name] = tick_group
@@ -1518,7 +1524,12 @@ def client_master():
         for i, module in enumerate(modules):
             tag = module_tag(module)
             prefix = color_map.get(tag, "🟣")
-            default_module = existing_perm.get(module, tick_group)
+            if tag == "Developer":
+                # Red modules are Developer-only, so never auto-tick them for a client.
+                default_module = False
+            else:
+                # Non-red modules are active/ticked by default. Existing permissions are respected while editing.
+                default_module = existing_perm.get(module, True if selected_existing == "New Client" or not existing_perm else tick_group)
             with cols[i % 4]:
                 selected_modules[module] = st.checkbox(f"{prefix} {module}", value=default_module, key=f"cm_mod_{selected_existing}_{group_name}_{module}")
 
