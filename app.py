@@ -1448,20 +1448,24 @@ def client_master():
     existing_codes = clients_df_existing["client_code"].dropna().astype(str).tolist() if (not clients_df_existing.empty and "client_code" in clients_df_existing.columns) else []
 
     c1, c2, c3 = st.columns(3)
+    existing_codes = sorted(list(dict.fromkeys([str(x).strip().upper() for x in existing_codes if str(x).strip()])))
     selected_existing = c1.selectbox("Select Existing Company Code / New", ["New Client"] + existing_codes, key="cm_existing_code")
 
     default_code = "" if selected_existing == "New Client" else selected_existing
     default_name = ""
     default_status = "Active"
     if selected_existing != "New Client" and not clients_df_existing.empty:
-        row_df = clients_df_existing[clients_df_existing["client_code"].astype(str) == selected_existing]
+        row_df = clients_df_existing[clients_df_existing["client_code"].astype(str).str.upper() == selected_existing]
         if not row_df.empty:
             default_name = str(row_df.iloc[0].get("client_name", row_df.iloc[0].get("name", "")) or "")
             default_status = str(row_df.iloc[0].get("status", "Active") or "Active")
 
-    company_code = c1.text_input("Company Code", value=default_code, placeholder="Example: SJM01", key="cm_company_code").upper().strip()
-    client_name = c2.text_input("Client Name", value=default_name, placeholder="Example: Siyaram Silk Mills Limited", key="cm_client_name")
-    status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if default_status != "Inactive" else 1, key="cm_status")
+    if selected_existing == "New Client":
+        company_code = c1.text_input("New Company Code", value="", placeholder="Example: BWR01 / SJM01", key="cm_new_company_code").upper().strip()
+    else:
+        company_code = c1.text_input("Company Code", value=default_code, key=f"cm_existing_company_code_{selected_existing}", disabled=True).upper().strip()
+    client_name = c2.text_input("Client Name", value=default_name, placeholder="Example: Siyaram Silk Mills Limited", key=f"cm_client_name_{selected_existing}")
+    status = c3.selectbox("Status", ["Active", "Inactive"], index=0 if default_status != "Inactive" else 1, key=f"cm_status_{selected_existing}")
 
     st.markdown("### Client Group + Module Permission")
     st.caption("Offline Desktop ERP style: every group is shown with its modules. First tick group name; all modules tick automatically. Then untick any module manually if required.")
@@ -1620,21 +1624,24 @@ def client_master():
 def user_management():
     show_header("User Management", "section-admin")
 
-    if st.session_state.get("role") not in ["Admin", "Super Admin"]:
-        st.warning("Only Admin can access User Management.")
+    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
+        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access User Management.")
         return
 
     if is_super_admin():
-        clients_df = load_table("clients", 1000)
-        client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty else ["RBM"]
+        clients_df = load_table("clients", 2000)
+        client_codes = clients_df["client_code"].dropna().astype(str).str.upper().tolist() if (not clients_df.empty and "client_code" in clients_df.columns) else []
+        client_codes = sorted(list(dict.fromkeys([c for c in client_codes if c])))
         if "RBM" not in client_codes:
             client_codes = ["RBM"] + client_codes
+        else:
+            client_codes = ["RBM"] + [c for c in client_codes if c != "RBM"]
         selected_client_code = st.selectbox("Client Code", client_codes, key="um_client_code")
-        users_df = load_table("users", 1000)
+        users_df = load_table("users", 2000)
     else:
         selected_client_code = get_client_code()
         st.info(f"You are creating users only for your business: {selected_client_code}")
-        users_df = load_table("users", 1000)
+        users_df = load_table("users", 2000)
 
     with st.form("user_form"):
         c1, c2 = st.columns(2)
