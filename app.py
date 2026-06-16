@@ -5742,63 +5742,52 @@ _GENERIC_MODULE_FIELDS.update({
 # only Select Role dropdown must show USERNAME from User Management.
 
 def _rbm_username_list_for_client(selected_client):
-    """Return usernames for Role Based Security.
-    This is intentionally robust because old RBM ERP online code used different
-    column names in different versions (client_code/company_code/code).
-    If no user is found for selected client, it falls back to all usernames so
-    the Role Based Security screen never becomes blank.
+    """Username dropdown for Role Based Security.
+    RBM/developer company must show all usernames created in User Management.
+    Client login must show only that client's usernames and must hide Developer/Super Admin.
     """
     try:
-        df = safe_df(load_table("users", 5000))
+        df = safe_df(load_table("users", 10000))
         if df.empty or "username" not in df.columns:
             cu = str(current_user()).strip() if "current_user" in globals() else ""
             return [cu] if cu else []
 
-        # Hide developer/super admin usernames from client login.
-        if not is_super_admin() and "role" in df.columns:
+        # normalize columns
+        df["username"] = df["username"].astype(str).str.strip()
+        df = df[df["username"] != ""]
+
+        selected = str(selected_client or "").strip()
+        login_role = str(st.session_state.get("role", "")).strip()
+
+        # Client-side users must not see developer platform logins.
+        if login_role not in ["Developer", "Super Admin"] and "role" in df.columns:
             df = df[~df["role"].astype(str).isin(["Developer", "Super Admin"])]
 
-        original_df = df.copy()
-        sc = str(selected_client).strip()
-        if sc and sc != "All":
-            filtered = pd.DataFrame()
-            for col in ["client_code", "company_code", "code", "client", "client_name"]:
+        # For RBM / All platform selection, show all usernames from User Management.
+        # This fixes issue where only current login 'admin' was appearing.
+        if selected and selected not in ["All", "RBM"]:
+            matched = pd.DataFrame()
+            for col in ["client_code", "company_code", "code"]:
                 if col in df.columns:
-                    temp = df[df[col].astype(str).str.strip() == sc]
-                    if not temp.empty:
-                        filtered = temp
+                    tmp = df[df[col].astype(str).str.strip() == selected]
+                    if not tmp.empty:
+                        matched = tmp
                         break
-            if not filtered.empty:
-                df = filtered
+            if not matched.empty:
+                df = matched
             else:
-                # Important fallback: keep all usernames instead of showing blank screen.
-                df = original_df
+                # keep all usernames instead of blank/wrong only current user
+                pass
 
-        vals = [str(x).strip() for x in df["username"].dropna().unique().tolist() if str(x).strip()]
-        if not vals:
-            cu = str(current_user()).strip() if "current_user" in globals() else ""
-            vals = [cu] if cu else []
-        return vals
+        usernames = df["username"].dropna().astype(str).str.strip().unique().tolist()
+        usernames = [u for u in usernames if u]
+        return (["All"] + usernames) if usernames else []
     except Exception:
         try:
             cu = str(current_user()).strip()
-            return [cu] if cu else []
+            return ["All", cu] if cu else ["All"]
         except Exception:
-            return []
-
-
-def _rbm_client_code_options_for_security():
-    try:
-        if is_super_admin():
-            df = safe_df(load_table("clients", 2000))
-            vals = []
-            if not df.empty and "client_code" in df.columns:
-                vals = [str(x) for x in df["client_code"].dropna().unique().tolist() if str(x).strip()]
-            vals = list(dict.fromkeys(["RBM"] + vals))
-            return vals or ["RBM"]
-        return [get_client_code()]
-    except Exception:
-        return [st.session_state.get("client_code", "RBM")]
+            return ["All"]
 
 
 def _rbm_enabled_modules_for_permission(selected_client):
