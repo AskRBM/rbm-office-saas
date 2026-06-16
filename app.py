@@ -14,7 +14,40 @@ from zoneinfo import ZoneInfo
 from supabase import create_client, Client
 from streamlit_geolocation import streamlit_geolocation
 
+
 st.set_page_config(page_title="RBM ERP SaaS", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
+
+# ---------- RBM ERP GLOBAL DROPDOWN PATCH ----------
+# Requirement: every dropdown must show an "All" option.
+# This wrapper adds "All" automatically in every Streamlit selectbox without changing your old code.
+# It also preserves the old default selection by shifting the index by +1.
+_RBM_ORIGINAL_SELECTBOX = st.selectbox
+
+def _rbm_options_with_all(options):
+    try:
+        opts = list(options)
+    except TypeError:
+        opts = [options]
+    # Do not duplicate All if already available.
+    if "All" not in opts:
+        opts = ["All"] + opts
+    return opts
+
+def rbm_selectbox_with_all(label, options, index=0, *args, **kwargs):
+    opts = _rbm_options_with_all(options)
+    # Preserve old selected default. If old index=0, new index=1 so old first item remains selected.
+    if opts and opts[0] == "All":
+        try:
+            old_opts = list(options)
+            if "All" not in old_opts:
+                index = min(max(int(index) + 1, 0), len(opts) - 1)
+            else:
+                index = min(max(int(index), 0), len(opts) - 1)
+        except Exception:
+            index = 0
+    return _RBM_ORIGINAL_SELECTBOX(label, opts, index=index, *args, **kwargs)
+
+st.selectbox = rbm_selectbox_with_all
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 MAX_FILE_SIZE_MB = 2
@@ -5000,6 +5033,301 @@ def main_app():
         choice = st.session_state.get("active_choice", "Dashboard")
         render_current_page(mapping, choice)
 
+
+
+# ================= RBM ONLINE FINAL INTEGRATION PATCH 3 =================
+# Purpose: make online modules closer to offline desktop ERP: proper module dropdowns,
+# production order flow, printable preview, employee photo upload UI, and safer reports.
+
+def _rbm_safe_df(table, limit=1000):
+    try:
+        return load_table(table, limit)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _production_order_no_list():
+    try:
+        df = _rbm_safe_df("production_orders", 2000)
+        vals = []
+        if not df.empty and "order_no" in df.columns:
+            vals = [str(x) for x in df["order_no"].dropna().unique().tolist() if str(x).strip()]
+        return vals or ["No Production Order Found"]
+    except Exception:
+        return ["No Production Order Found"]
+
+
+def _consumption_entry_no_list():
+    try:
+        df = _rbm_safe_df("consumption_entries", 2000)
+        vals = []
+        if not df.empty and "entry_no" in df.columns:
+            vals = [str(x) for x in df["entry_no"].dropna().unique().tolist() if str(x).strip()]
+        return vals or ["No Consumption Entry Found"]
+    except Exception:
+        return ["No Consumption Entry Found"]
+
+
+def _module_names_for_group(group_name):
+    try:
+        return list(ONLINE_MODULE_GROUPS.get(str(group_name), [])) or ["No Module Found"]
+    except Exception:
+        return ["No Module Found"]
+
+
+def _render_print_preview_from_row(title, row):
+    html = f"""
+    <html><head><meta charset='utf-8'><title>{title}</title>
+    <style>
+      body{{font-family:Arial, sans-serif; padding:24px;}}
+      h2{{border-bottom:2px solid #111; padding-bottom:8px;}}
+      table{{border-collapse:collapse; width:100%;}}
+      td,th{{border:1px solid #777; padding:7px; font-size:13px;}}
+      th{{background:#f2f2f2; text-align:left;}}
+      .no-print{{margin-bottom:15px;}}
+      @media print{{.no-print{{display:none;}}}}
+    </style></head><body>
+    <div class='no-print'><button onclick='window.print()'>Print / Save PDF</button></div>
+    <h2>RBM ERP - {title}</h2>
+    <table><tbody>
+    """
+    for k,v in dict(row).items():
+        html += f"<tr><th>{str(k).replace('_',' ').title()}</th><td>{'' if v is None else v}</td></tr>"
+    html += "</tbody></table></body></html>"
+    st.components.v1.html(html, height=520, scrolling=True)
+
+
+def _generic_print_preview_ui(module_title, df):
+    if df is None or df.empty:
+        st.warning("Print Preview: first save or load at least one record.")
+        return
+    st.subheader(f"Print Preview - {module_title}")
+    rec_no = st.selectbox("Select record for print preview", list(range(len(df))), format_func=lambda i: f"Record {i+1}", key=f"pp_select_{module_title}")
+    row = df.iloc[int(rec_no)].to_dict()
+    _render_print_preview_from_row(module_title, row)
+
+
+# Override generic lookup with correct module list support.
+def _generic_lookup(kind):
+    try:
+        if kind == "company": return _company_codes()
+        if kind == "user":
+            df = load_table("users", 500); return [str(x) for x in df.get("username", pd.Series(dtype=str)).dropna().unique().tolist()] or [current_user()]
+        if kind == "employee":
+            df = load_table("employees", 500); return [str(x) for x in df.get("employee_name", pd.Series(dtype=str)).dropna().unique().tolist()] or ["Sample Employee"]
+        if kind == "stock_item": return get_stock_items() or ["Sample Item"]
+        if kind == "bom":
+            df = load_table("bom_headers", 500); return [str(x) for x in df.get("bom_no", pd.Series(dtype=str)).dropna().unique().tolist()] or ["BOM001"]
+        if kind == "production_order": return _production_order_no_list()
+        if kind == "consumption_entry": return _consumption_entry_no_list()
+        if kind == "plan":
+            recs = st.session_state.get(_SPECIAL_STORAGE_KEY, [])
+            vals=[r.get("plan_no") for r in recs if r.get("module_name")=="Production Planning" and r.get("plan_no")]
+            return vals or ["PLAN001"]
+        if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
+        if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
+    except Exception:
+        pass
+    return []
+
+# Improve field definitions for online generic modules where the old screen was too common.
+_GENERIC_MODULE_FIELDS.update({
+    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Status","status"),("remarks","Remarks","text")],
+    "Mandatory Field Settings": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status","status"),("remarks","Remarks","text")],
+    "Data Locking Period": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status",["Locked","Unlocked","Pending"]),("reason","Reason","text")],
+    "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("from_date","From Date","date"),("to_date","To Date","date"),("purge_status","Purge Status",["Requested","Approved","Rejected","Completed"]),("requested_by","Requested By","user"),("remarks","Remarks","text")],
+    "BOM Lines": [("company_code","Company Code","company"),("bom_no","BOM No","bom"),("rm_item","Raw Material Item","stock_item"),("unit","Unit","text"),("rm_qty","RM Qty","number"),("rm_rate","RM Rate","number"),("rm_amount","RM Amount","number"),("remarks","Remarks","text")],
+    "Production Planning": [("company_code","Company Code","company"),("plan_no","Plan No","text"),("plan_date","Plan Date","date"),("finished_item","Finished Item","stock_item"),("planned_qty","Planned Qty","number"),("bom_no","BOM No","bom"),("start_date","Start Date","date"),("end_date","End Date","date"),("machine_name","Machine Name","text"),("supervisor","Supervisor","employee"),("plan_status","Plan Status","status")],
+    "Production Schedule": [("company_code","Company Code","company"),("schedule_no","Schedule No","text"),("schedule_date","Schedule Date","date"),("production_order_no","Production Order No","production_order"),("finished_item","Finished Item","stock_item"),("qty_scheduled","Qty Scheduled","number"),("machine_name","Machine Name","text"),("shift_name","Shift Name",["Shift A","Shift B","Shift C","General"]),("schedule_status","Schedule Status","status")],
+    "Capacity Planning": [("company_code","Company Code","company"),("plan_date","Plan Date","date"),("machine_name","Machine Name","text"),("production_order_no","Production Order No","production_order"),("available_hours","Available Hours","number"),("planned_hours","Planned Hours","number"),("free_capacity","Free Capacity","number"),("status","Status","status"),("remarks","Remarks","text")],
+    "Payment Receipt Voucher": [("company_code","Company Code","company"),("voucher_no","Voucher No","text"),("voucher_date","Voucher Date","date"),("party_type","Party Type",["Customer","Vendor","Employee","Item","Other"]),("party_code","Customer/Vendor/Employee/Item Code","text"),("party_name","Customer/Vendor/Employee/Item Name","text"),("qty","Qty if Item","number"),("amount","Amount","number"),("payment_mode","Payment Mode","payment_mode"),("status","Status","status"),("remarks","Remarks","text")],
+    "Bank Payment Voucher": [("company_code","Company Code","company"),("voucher_no","Voucher No","text"),("voucher_date","Voucher Date","date"),("party_type","Party Type",["Vendor","Employee","Customer","Item","Other"]),("party_code","Customer/Vendor/Employee/Item Code","text"),("party_name","Customer/Vendor/Employee/Item Name","text"),("qty","Qty if Item","number"),("amount","Amount","number"),("payment_mode","Payment Mode","payment_mode"),("status","Status","status"),("remarks","Remarks","text")],
+    "Payroll Payslip": [("company_code","Company Code","company"),("payslip_no","Payslip No","text"),("salary_month","Salary Month","text"),("employee_name","Employee Name","employee"),("gross_salary","Gross Salary","number"),("deduction","Deduction","number"),("net_salary","Net Salary","number"),("payment_date","Payment Date","date"),("status","Status","status"),("remarks","Remarks","text")],
+    "Numbering Series Audit": [("company_code","Company Code","company"),("audit_date","Audit Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("series_name","Series Name","text"),("expected_next_no","Expected Next No","text"),("actual_next_no","Actual Next No","text"),("missing_numbers","Missing Numbers","text"),("duplicate_numbers","Duplicate Numbers","text"),("audit_status","Audit Status",["OK","Mismatch","Missing","Duplicate"]),("remarks","Remarks","text")],
+})
+
+
+def _render_generic_input(col, label, field, typ, module_title):
+    opts = _generic_options(typ) if isinstance(typ, str) else None
+    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY", key=f"gen_{module_title}_{field}"))
+    if typ == "time": return str(col.time_input(label, value=india_now().time(), key=f"gen_{module_title}_{field}"))
+    if typ == "number": return col.number_input(label, value=0.0, key=f"gen_{module_title}_{field}")
+    if typ == "bool": return col.checkbox(label, value=True, key=f"gen_{module_title}_{field}")
+    if typ == "password": return col.text_input(label, type="password", key=f"gen_{module_title}_{field}")
+    if typ == "module_name_by_group":
+        g = st.session_state.get(f"gen_{module_title}_group_name", "Dashboard")
+        values = _module_names_for_group(g)
+        return col.selectbox(label, values + ["Add New..."], key=f"gen_{module_title}_{field}")
+    if typ in ["company","user","employee","stock_item","bom","plan","production_order","consumption_entry","group","module_name"]:
+        values = _generic_lookup(typ)
+        if not values:
+            values = ["Add New..."]
+        else:
+            values = list(dict.fromkeys([str(v) for v in values if str(v).strip()])) + ["Add New..."]
+        return col.selectbox(label, values, key=f"gen_{module_title}_{field}")
+    if opts: return col.selectbox(label, opts + ["Add New..."], key=f"gen_{module_title}_{field}")
+    return col.text_input(label, key=f"gen_{module_title}_{field}")
+
+
+def online_generic_module(module_title):
+    tag = module_tag(module_title)
+    cls = {"SAP":"section-master", "QuickBooks":"section-hr", "Tally":"section-rep", "Developer":"section-admin", "RBM":"section-admin"}.get(tag, "section-admin")
+    show_header(f"{module_prefix(module_title)} {module_title}", cls)
+    st.info(f"{module_title} is now integrated with data entry, save, list, CSV export, import/help screen, permission menu and Print Preview.")
+    fields = _GENERIC_MODULE_FIELDS.get(module_title, [("company_code","Company Code","company"),("entry_date","Entry Date","date"),("document_no","Document No","text"),("party_name","Party / Employee / Item Name","text"),("amount","Amount","number"),("status","Status","status"),("remarks","Remarks","text")])
+    with st.expander("Module Information / Help", expanded=False):
+        st.write(f"**{module_title}** is used to capture and control related ERP records online. Dropdowns use master values; remarks remain free text; saved record can be printed or exported.")
+    with st.form(f"form_{module_title}"):
+        cols = st.columns(3)
+        row = {}
+        for i, (field, label, typ) in enumerate(fields):
+            row[field] = _render_generic_input(cols[i % 3], label, field, typ, module_title)
+        c1, c2, c3 = st.columns(3)
+        submitted = c1.form_submit_button(f"Save {module_title}", use_container_width=True)
+        calc = c2.form_submit_button("Calculate", use_container_width=True)
+        clear = c3.form_submit_button("Clear", use_container_width=True)
+    if submitted or calc:
+        for qty_name in ["qty","opening_qty","inward_qty","outward_qty","planned_qty","qty_scheduled","produced_qty","rm_qty"]:
+            for amt_name in ["value","amount","rm_amount"]:
+                if qty_name in row and "rate" in row and amt_name in row:
+                    row[amt_name] = float(row.get(qty_name) or 0) * float(row.get("rate") or row.get("rm_rate") or 0)
+        if {"gross_salary","deduction","net_salary"}.issubset(row):
+            row["net_salary"] = float(row.get("gross_salary") or 0)-float(row.get("deduction") or 0)
+        if {"available_hours","planned_hours","free_capacity"}.issubset(row):
+            row["free_capacity"] = float(row.get("available_hours") or 0)-float(row.get("planned_hours") or 0)
+        _generic_save(module_title, row)
+        st.success(f"{module_title} record saved."); st.rerun()
+    if module_title in ["Data Import", "Excel Import Wizard"]:
+        up = st.file_uploader("Upload CSV/Excel file", type=["csv","xlsx","xls"])
+        if up is not None:
+            try:
+                dfup = pd.read_csv(up) if up.name.lower().endswith('.csv') else pd.read_excel(up)
+                st.success(f"File loaded: {len(dfup)} rows"); st.dataframe(dfup.head(50), use_container_width=True)
+            except Exception as e: st.error(f"Import failed: {e}")
+    df = _generic_records_df(module_title)
+    st.subheader(f"Saved Records - {module_title}")
+    if df.empty:
+        sample = {label: f"Sample {label}" for _, label, typ in fields[:6]}
+        st.dataframe(pd.DataFrame([sample]), use_container_width=True)
+    else:
+        st.dataframe(df, use_container_width=True)
+        c1,c2 = st.columns(2)
+        c1.download_button("Export CSV", df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True)
+        with c2:
+            show_pp = st.button("Print Preview / PDF", use_container_width=True, key=f"pp_btn_{module_title}")
+        if show_pp:
+            _generic_print_preview_ui(module_title, df)
+
+
+def production_entry_module():
+    simple_module_form("production_entries", "Production Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("order_no", "Production Order No", _production_order_no_list()), ("fg_item", "Finished Goods", get_stock_items()), ("produced_qty", "Produced Qty", "number"), ("warehouse", "Warehouse", "text"), ("status", "Status", ["Draft", "Posted", "Cancelled"]), ("remarks", "Remarks", "text")], "section-inv")
+
+def consumption_entry_module():
+    simple_module_form("consumption_entries", "Consumption Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("order_no", "Production Order No", _production_order_no_list()), ("rm_item", "Raw Material", get_stock_items()), ("consumed_qty", "Consumed Qty", "number"), ("rate", "Rate", "number"), ("amount", "Amount", "number"), ("warehouse", "Warehouse", "text"), ("remarks", "Remarks", "text")], "section-inv")
+
+def finished_goods_entry_module():
+    simple_module_form("fg_entries", "Finished Goods Entry", [("entry_no", "Entry No", "text"), ("entry_date", "Entry Date", "date"), ("production_order_no", "Production Order No", _production_order_no_list()), ("consumption_entry_no", "Consumption Entry No", _consumption_entry_no_list()), ("fg_item", "Finished Goods", get_stock_items()), ("qty", "Qty", "number"), ("rate", "Rate", "number"), ("amount", "Amount", "number"), ("warehouse", "Warehouse", "text"), ("remarks", "Remarks", "text")], "section-inv")
+
+
+def bill_of_material_module():
+    show_header("Bill of Material (BOM)", "section-inv")
+    st.info("Same online screen for BOM Header and BOM Lines: finished goods recipe + raw material lines + cost per unit + print preview.")
+    if "bom_line_count" not in st.session_state: st.session_state["bom_line_count"] = 1
+    cadd, crem, creset = st.columns(3)
+    if cadd.button("➕ Add Raw Material Line", use_container_width=True, key="bom_add_line_final"):
+        st.session_state["bom_line_count"] += 1; st.rerun()
+    if crem.button("➖ Remove Last Line", use_container_width=True, key="bom_remove_line_final"):
+        if st.session_state["bom_line_count"] > 1: st.session_state["bom_line_count"] -= 1; st.rerun()
+    if creset.button("🔄 Reset BOM Lines", use_container_width=True, key="bom_reset_line_final"):
+        st.session_state["bom_line_count"] = 1; st.rerun()
+    stock_items = get_stock_items()
+    with st.form("bom_form_final"):
+        c1,c2,c3=st.columns(3)
+        bom_no=c1.text_input("BOM No")
+        bom_date=c2.date_input("BOM Date", value=india_now().date(), format="DD-MM-YYYY")
+        fg_item=c3.selectbox("Finished Goods Item", stock_items, key="bom_fg_item_final")
+        fg_qty=c1.number_input("FG Qty", min_value=0.0, value=1.0, step=1.0)
+        status=c2.selectbox("Status", ["Draft","Active","Inactive"])
+        remarks=c3.text_input("Remarks")
+        st.subheader("BOM Lines / Raw Material Consumption")
+        line_rows=[]; material_cost=0.0
+        for i in range(st.session_state["bom_line_count"]):
+            st.markdown(f"**Raw Material Line {i+1}**")
+            a,b,c,d,e=st.columns(5)
+            rm_item=a.selectbox("RM Item", stock_items, key=f"bom_rm_item_final_{i}")
+            unit=b.text_input("Unit", key=f"bom_unit_final_{i}")
+            rm_qty=c.number_input("Qty", min_value=0.0, value=0.0, step=1.0, key=f"bom_qty_final_{i}")
+            rm_rate=d.number_input("Rate", min_value=0.0, value=0.0, step=1.0, key=f"bom_rate_final_{i}")
+            rm_amount=rm_qty*rm_rate; e.metric("Amount", f"{rm_amount:,.2f}")
+            line_rows.append({"rm_item":rm_item,"unit":unit,"rm_qty":rm_qty,"rm_rate":rm_rate,"rm_amount":rm_amount}); material_cost += rm_amount
+        st.subheader("Costing")
+        d1,d2,d3,d4=st.columns(4)
+        labour_cost=d1.number_input("Labour Cost", min_value=0.0, value=0.0, step=100.0)
+        power_cost=d2.number_input("Power Cost", min_value=0.0, value=0.0, step=100.0)
+        packing_cost=d3.number_input("Packing Cost", min_value=0.0, value=0.0, step=100.0)
+        other_cost=d4.number_input("Other Cost", min_value=0.0, value=0.0, step=100.0)
+        total_cost=material_cost+labour_cost+power_cost+packing_cost+other_cost
+        cost_per_unit=total_cost/fg_qty if fg_qty else 0
+        st.info(f"Material Cost: {material_cost:,.2f} | Total Cost: {total_cost:,.2f} | Cost Per Unit: {cost_per_unit:,.2f}")
+        save=st.form_submit_button("Save BOM Header + Lines", use_container_width=True)
+    if save:
+        if not bom_no.strip(): st.error("BOM No is required.")
+        else:
+            res=insert_row("bom_headers", {"bom_no":bom_no.strip(),"bom_date":str(bom_date),"fg_item":fg_item,"fg_qty":fg_qty,"labour_cost":labour_cost,"power_cost":power_cost,"packing_cost":packing_cost,"other_cost":other_cost,"material_cost":material_cost,"total_cost":total_cost,"cost_per_unit":cost_per_unit,"status":status,"remarks":remarks,"created_by":current_user()})
+            header_id=""
+            try: header_id=res.data[0].get("id","") if res.data else ""
+            except Exception: header_id=""
+            for line in line_rows:
+                if float(line.get("rm_qty") or 0)>0:
+                    insert_row("bom_lines", {"bom_header_id":header_id,"bom_no":bom_no.strip(),"rm_item":line["rm_item"],"unit":line["unit"],"rm_qty":line["rm_qty"],"rm_rate":line["rm_rate"],"rm_amount":line["rm_amount"],"created_by":current_user()})
+            st.success("BOM saved successfully."); st.rerun()
+    tab1,tab2,tab3=st.tabs(["BOM Header Register","BOM Lines Register","Print Preview"])
+    with tab1: show_table_with_edit_delete("bom_headers", load_table("bom_headers",1000), "BOM Header Register")
+    with tab2: show_table_with_edit_delete("bom_lines", load_table("bom_lines",2000), "BOM Lines Register")
+    with tab3:
+        df=load_table("bom_headers",1000)
+        _generic_print_preview_ui("BOM", df)
+
+
+def employee_master():
+    show_header("Employee Master", "section-admin")
+    df = load_table("employees", 500)
+    next_id = "EMP001" if df.empty else f"EMP{len(df)+1:03d}"
+    with st.form("employee_form_photo_final"):
+        c1,c2 = st.columns(2)
+        employee_id = c1.text_input("Employee ID", value=next_id)
+        employee_name = c2.text_input("Employee Name")
+        mobile = c1.text_input("Mobile"); email = c2.text_input("Email")
+        department = c1.text_input("Department"); designation = c2.text_input("Designation")
+        branch_division = c1.text_input("Branch / Division"); status = c2.selectbox("Status", ["Active","Inactive"])
+        photo = st.file_uploader("Employee Photo (preview only unless photo columns are added in Supabase)", type=["png","jpg","jpeg"])
+        if st.form_submit_button("Save Employee", use_container_width=True):
+            if not employee_name: st.error("Employee Name required")
+            else:
+                insert_row("employees", {"employee_id":employee_id,"employee_name":employee_name,"mobile":mobile,"email":email,"department":department,"designation":designation,"branch_division":branch_division,"status":status,"created_by":current_user()})
+                st.success("Employee saved. Photo upload field is available; add photo columns in DB if permanent storage is required."); st.rerun()
+    if 'photo' in locals() and photo is not None:
+        st.image(photo, caption="Employee Photo Preview", width=160)
+    show_table_with_edit_delete("employees", df, "Employee List")
+
+# Rebuild mapping after patch so overridden functions are used.
+def render_current_page(mapping, choice):
+    try:
+        mapping = get_module_mapping()
+    except Exception:
+        pass
+    page_fn = mapping.get(choice)
+    if not callable(page_fn):
+        online_generic_module(choice); return
+    try:
+        page_fn()
+    except TypeError:
+        online_generic_module(choice)
+    except Exception as e:
+        st.error(f"Module error in {choice}: {e}")
+        st.info("Safe fallback opened. Please check Supabase table/columns if this module requires permanent save.")
+        online_generic_module(choice)
+# ================= END RBM ONLINE FINAL INTEGRATION PATCH 3 =================
 
 if "logged_in" not in st.session_state:
     login_page()
