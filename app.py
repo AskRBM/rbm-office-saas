@@ -1518,12 +1518,31 @@ def client_master():
         elif any(existing_perm.values()):
             default_group_value = all(existing_perm.get(m, False) for m in non_developer_modules)
 
-        tick_group = st.checkbox(f"Tick Full Group: {group_name}", value=default_group_value, key=f"cm_group_{group_name}_{selected_existing}")
+        group_key = f"cm_group_{group_name}_{selected_existing}"
+
+        # When group checkbox changes, immediately update all child module checkboxes.
+        # Red Developer-only modules always remain unticked for client permission.
+        def _sync_group_modules(g=group_name, mods=modules, gkey=group_key, selected=selected_existing):
+            group_value = bool(st.session_state.get(gkey, False))
+            for child_module in mods:
+                child_key = f"cm_mod_{selected}_{g}_{child_module}"
+                if module_tag(child_module) == "Developer":
+                    st.session_state[child_key] = False
+                else:
+                    st.session_state[child_key] = group_value
+
+        tick_group = st.checkbox(
+            f"Tick Full Group: {group_name}",
+            value=default_group_value,
+            key=group_key,
+            on_change=_sync_group_modules,
+        )
         selected_groups[group_name] = tick_group
         cols = st.columns(4)
         for i, module in enumerate(modules):
             tag = module_tag(module)
             prefix = color_map.get(tag, "🟣")
+            mod_key = f"cm_mod_{selected_existing}_{group_name}_{module}"
             if tag == "Developer":
                 # Red modules are Developer-only, so never auto-tick them for a client.
                 default_module = False
@@ -1531,7 +1550,7 @@ def client_master():
                 # Non-red modules are active/ticked by default. Existing permissions are respected while editing.
                 default_module = existing_perm.get(module, True if selected_existing == "New Client" or not existing_perm else tick_group)
             with cols[i % 4]:
-                selected_modules[module] = st.checkbox(f"{prefix} {module}", value=default_module, key=f"cm_mod_{selected_existing}_{group_name}_{module}")
+                selected_modules[module] = st.checkbox(f"{prefix} {module}", value=default_module, key=mod_key)
 
     st.markdown("---")
     submitted = st.button("Save Client with Offline Style Group + Module Permissions", use_container_width=True, type="primary")
