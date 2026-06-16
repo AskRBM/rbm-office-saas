@@ -5936,18 +5936,44 @@ def online_generic_module(module_title):
             except Exception as e: st.error(f"Import failed: {e}")
     df = _generic_records_df(module_title)
     st.subheader(f"Saved Records - {module_title}")
+
+    # PATCH23: Saved data print button must show in EVERY generic module,
+    # including HR Payroll Salary Structure, Payroll Processing and Payroll Payslip.
+    # Earlier the Print Preview button was inside the df.empty == False block,
+    # so when no saved record existed only the sample table showed and no print button appeared.
     if df.empty:
         sample = {label: f"Sample {label}" for _, label, typ in fields[:6]}
-        st.dataframe(pd.DataFrame([sample]), use_container_width=True)
+        display_df = pd.DataFrame([sample])
+        st.dataframe(display_df, use_container_width=True)
     else:
-        st.dataframe(df, use_container_width=True)
-        c1,c2,c3 = st.columns(3)
-        c1.download_button("Export CSV", df.to_csv(index=False).encode(), file_name=f"{module_title.replace(' ','_')}.csv", mime="text/csv", use_container_width=True)
-        c2.download_button("Export Excel", to_excel_bytes(df), file_name=f"{module_title.replace(' ','_')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-        with c3:
-            show_pp = st.button("Print Preview / PDF", use_container_width=True, key=f"pp_btn_{module_title}")
-        if show_pp:
-            _generic_print_preview_ui(module_title, df)
+        display_df = df.copy()
+        st.dataframe(display_df, use_container_width=True)
+
+    c1, c2, c3 = st.columns(3)
+    c1.download_button(
+        "Export CSV",
+        display_df.to_csv(index=False).encode(),
+        file_name=f"{module_title.replace(' ','_')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        key=f"csv_{module_title}"
+    )
+    c2.download_button(
+        "Export Excel",
+        to_excel_bytes(display_df),
+        file_name=f"{module_title.replace(' ','_')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key=f"xlsx_{module_title}"
+    )
+    with c3:
+        show_pp = st.button(
+            "Print Saved Data / PDF",
+            use_container_width=True,
+            key=f"saved_print_btn_{module_title}"
+        )
+    if show_pp:
+        _generic_print_preview_ui(module_title, display_df)
 
 
 def production_entry_module():
