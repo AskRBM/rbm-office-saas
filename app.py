@@ -5,6 +5,7 @@ import base64
 import json
 import string
 import smtplib
+import inspect
 from email.message import EmailMessage
 from urllib.parse import quote
 from datetime import datetime, date
@@ -358,8 +359,9 @@ def group_enabled_for_client(group_name):
         return True
 
     # Client Super Admin / Admin must see Admin group to create users and assign user permissions.
+    # Developer-only red modules are still hidden by role_can_see_module().
     if group_name == "Admin":
-        return st.session_state.get("role") in ["Client Super Admin", "Admin"] and _normal_feature_enabled_from_session()
+        return st.session_state.get("role") in ["Client Super Admin", "Admin"]
 
     keys = GROUP_ACCESS_KEYS.get(group_name, [])
     if not keys:
@@ -1547,24 +1549,25 @@ def client_master():
             default_group_value = all(existing_perm.get(m, False) for m in non_developer_modules)
 
         group_key = f"cm_group_{group_name}_{selected_existing}"
-
-        # When group checkbox changes, immediately update all child module checkboxes.
-        # Red Developer-only modules always remain unticked for client permission.
-        def _sync_group_modules(g=group_name, mods=modules, gkey=group_key, selected=selected_existing):
-            group_value = bool(st.session_state.get(gkey, False))
-            for child_module in mods:
-                child_key = f"cm_mod_{selected}_{g}_{child_module}"
-                if module_tag(child_module) == "Developer":
-                    st.session_state[child_key] = False
-                else:
-                    st.session_state[child_key] = group_value
+        prev_group_key = f"cm_group_prev_{group_name}_{selected_existing}"
 
         tick_group = st.checkbox(
             f"Tick Full Group: {group_name}",
             value=default_group_value,
             key=group_key,
-            on_change=_sync_group_modules,
         )
+
+        # IMPORTANT FIX: if full group tick is changed, immediately tick/untick all child modules.
+        # Red Developer-only modules always remain unticked for client permission.
+        previous_tick = st.session_state.get(prev_group_key, None)
+        if previous_tick is None:
+            st.session_state[prev_group_key] = tick_group
+        elif bool(previous_tick) != bool(tick_group):
+            for child_module in modules:
+                child_key = f"cm_mod_{selected_existing}_{group_name}_{child_module}"
+                st.session_state[child_key] = False if module_tag(child_module) == "Developer" else bool(tick_group)
+            st.session_state[prev_group_key] = tick_group
+
         selected_groups[group_name] = tick_group
         cols = st.columns(4)
         for i, module in enumerate(modules):
@@ -4656,13 +4659,18 @@ def _page(function_name, title):
     fn = globals().get(function_name)
     # IMPORTANT FIX:
     # online_generic_module needs one argument (module title).
-    # Streamlit menu calls page functions without arguments, so always wrap it in lambda.
-    # This fixes TypeError in User Password Change, Data Purge, Data Locking, CRM, Payroll,
-    # Barcode, Warehouse, Production Planning/Schedule and all other starter modules.
+    # Any other page function that requires an argument is also wrapped safely.
     if function_name == "online_generic_module":
         return lambda title=title: online_generic_module(title)
     if callable(fn):
-        return fn
+        try:
+            sig = inspect.signature(fn)
+            required = [p for p in sig.parameters.values() if p.default is inspect._empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
+            if required:
+                return lambda title=title, fn=fn: fn(title)
+            return fn
+        except Exception:
+            return lambda title=title: online_generic_module(title)
     return lambda title=title: online_generic_module(title)
 
 def get_module_mapping():
@@ -4871,6 +4879,23 @@ def get_module_mapping():
     }
 
 
+
+def render_current_page(mapping, choice):
+    page_fn = mapping.get(choice)
+    if not callable(page_fn):
+        online_generic_module(choice)
+        return
+    try:
+        page_fn()
+    except TypeError:
+        # If an older page function signature does not match Streamlit menu call, open integrated generic module instead.
+        online_generic_module(choice)
+    except Exception as e:
+        st.error(f"Module error in {choice}: {e}")
+        st.info("This module is protected by safe fallback so the full ERP will not stop. Please check related Supabase table/columns if save is required.")
+        online_generic_module(choice)
+
+
 def main_app():
     if "sidebar_open" not in st.session_state:
         st.session_state["sidebar_open"] = True
@@ -4890,7 +4915,7 @@ def main_app():
             group, choice = render_custom_menu()
         with content_col:
             rbm_header()
-            mapping.get(choice, placeholder_denied)()
+            render_current_page(mapping, choice)
     else:
         # When hidden, show the unhide button, but keep the same current module open.
         if st.button("☰ Show Menu", key="show_menu_when_hidden"):
@@ -4899,7 +4924,7 @@ def main_app():
         rbm_header()
         st.info("Menu is hidden. Click ☰ Show Menu to show it again.")
         choice = st.session_state.get("active_choice", "Dashboard")
-        mapping.get(choice, placeholder_denied)()
+        render_current_page(mapping, choice)
 
 
 if "logged_in" not in st.session_state:
