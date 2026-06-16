@@ -4389,13 +4389,13 @@ def filter_modules_by_permission(modules):
 
 
 def role_based_security_control():
-    """Username-wise security screen. This is different from Role Permission Control."""
-    show_header("Username-wise Role Based Security", "section-admin")
+    """Role Based Security screen: same layout as Role Permission Control, but Select Role dropdown shows USERNAMES."""
+    show_header("Role-wise Permission Control", "section-admin")
     if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
         st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Based Security.")
         return
 
-    st.info("Role Based Security = username wise permission. Select one username, then tick/untick View/Add/Edit/Delete/Reverse/Approve/Print/Export.")
+    st.info("Role Based Security = username wise permission. Here the Select Role dropdown shows USERNAMES/login IDs. बाकी सब Role Permission Control जैसा ही रहेगा.")
 
     if is_super_admin():
         clients_df = load_table("clients", 1000)
@@ -4421,7 +4421,9 @@ def role_based_security_control():
         return
 
     usernames = users_df["username"].dropna().astype(str).unique().tolist()
-    selected_username = st.selectbox("Select Username", usernames, key="usersec_username")
+    # User requirement: in Role Based Security screen, label must remain Select Role,
+    # but dropdown values must be usernames/login IDs.
+    selected_username = st.selectbox("Select Role", usernames, key="usersec_username")
     role_show = ""
     if "role" in users_df.columns:
         role_rows = users_df[users_df["username"].astype(str) == str(selected_username)]
@@ -4438,7 +4440,7 @@ def role_based_security_control():
 
     perm_rows = []
     with st.form("username_security_form"):
-        st.markdown("### Username Module Permissions")
+        st.markdown("### Module Permissions")
         header = st.columns([2.5,1,1,1,1,1,1,1,1])
         header[0].markdown("**Module**")
         for i, act in enumerate(PERMISSION_ACTIONS, start=1):
@@ -4468,15 +4470,15 @@ def role_based_security_control():
                 if rows:
                     supabase.table("user_permissions").insert(rows).execute()
                 write_audit_log("Role Based Security", "UPDATE", "", f"Saved username permissions for {selected_client} / {selected_username}")
-                st.success("Username security saved successfully.")
+                st.success("Role Based Security saved successfully for selected username.")
                 st.rerun()
             except Exception as e:
                 st.error(f"Unable to save username security. Please run updated SQL patch. Error: {e}")
     st.divider()
     try:
-        show_table_with_edit_delete("user_permissions", load_table("user_permissions", 2000), "Saved Username Security")
+        show_table_with_edit_delete("user_permissions", load_table("user_permissions", 2000), "Saved Role Based Security")
     except Exception:
-        st.info("Saved Username Security list will show after user_permissions table is created.")
+        st.info("Saved Role Based Security list will show after user_permissions table is created.")
 
 def role_permission_control():
     show_header("Role-wise Permission Control", "section-admin")
@@ -5714,12 +5716,4 @@ _GENERIC_MODULE_FIELDS.update({
     "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("from_date","From Date","date"),("to_date","To Date","date"),("purge_status","Purge Status",["All","Requested","Approved","Rejected","Completed"]),("requested_by","Requested By","user"),("remarks","Remarks","text")],
     "Data Locking Period": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status",["All","Locked","Not Locked","Pending"]),("reason","Reason","text")],
     "Mandatory Field Settings": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
-    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
-})
-
-# ================= END PATCH 6 =================
-
-if "logged_in" not in st.session_state:
-    login_page()
-else:
-    main_app()
+    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Stat
