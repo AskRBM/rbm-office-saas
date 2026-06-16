@@ -5329,6 +5329,291 @@ def render_current_page(mapping, choice):
         online_generic_module(choice)
 # ================= END RBM ONLINE FINAL INTEGRATION PATCH 3 =================
 
+
+_PATCH5_OLD_GET_MODULE_MAPPING = get_module_mapping
+
+
+# ================= RBM ONLINE FINAL PATCH 5: OFFLINE-LIKE MASTER LINKING / PATH / WHATSAPP =================
+
+def _clean_opts(vals, fallback=None):
+    out=[]
+    for v in (vals or []):
+        sv=str(v).strip()
+        if sv and sv.lower() not in ["nan", "none"] and sv not in out:
+            out.append(sv)
+    if not out and fallback:
+        out=list(fallback)
+    return out or ["All"]
+
+def _table_values(table_key, column, fallback=None):
+    try:
+        df=load_table(table_key, 2000)
+        if not df.empty and column in df.columns:
+            return _clean_opts(df[column].dropna().astype(str).tolist(), fallback)
+    except Exception:
+        pass
+    return _clean_opts([], fallback)
+
+DEFAULT_UNITS = ["PCS","MTR","KG","GMS","LTR","BOX","BAG","ROLL","SET","NOS"]
+DEFAULT_PAYMENT_MODES = ["Cash","Bank","UPI","Cheque","NEFT","RTGS","IMPS","Credit Card","Debit Card","Wallet"]
+STOCK_VOUCHER_TYPES = ["Contra","Payment","Receipt","Journal","Sales","Purchase","Credit Note","Debit Note","Purchase Order","Sales Order","Receipt Note","Delivery Note","Stock Journal","Physical Stock","Rejections In","Rejections Out","Payroll","Attendance","Memorandum","Reversing Journal","Optional Voucher","Material In","Material Out"]
+DEFAULT_SHIFTS = ["General","Shift A","Shift B","Shift C","Night Shift"]
+
+def _stock_details_by_item(item_name):
+    try:
+        if not item_name or str(item_name) in ["All", "Add New...", "No Item Found"]:
+            return {}
+        df=load_table("stock_ledgers", 2000)
+        if df.empty or "item_name" not in df.columns:
+            return {}
+        m=df[df["item_name"].astype(str)==str(item_name)]
+        if m.empty:
+            return {}
+        r=m.iloc[0].to_dict()
+        return {"item_code":r.get("item_code",""),"unit":r.get("unit",""),"hsn_code":r.get("hsn_code",""),"gst_rate":r.get("gst_rate",0),"rate":r.get("opening_rate",0),"available_qty":r.get("opening_qty",0)}
+    except Exception:
+        return {}
+
+def _ledger_details_by_name(name):
+    try:
+        if not name or str(name) in ["All", "Add New..."]:
+            return {}
+        df=load_table("ledgers", 2000)
+        if df.empty or "ledger_name" not in df.columns:
+            return {}
+        m=df[df["ledger_name"].astype(str)==str(name)]
+        if m.empty:
+            return {}
+        r=m.iloc[0].to_dict()
+        return {"party_code":r.get("ledger_code", r.get("id","")),"gst_no":r.get("gst_no",""),"pan_no":r.get("pan_no",""),"address":r.get("address",""),"mobile":r.get("contact_no","")}
+    except Exception:
+        return {}
+
+def _all_module_names_for_group(group_name):
+    try:
+        if str(group_name) in ["All", "", "None"]:
+            return all_online_module_names()
+        mods = ONLINE_MODULE_GROUPS.get(str(group_name), []) if 'ONLINE_MODULE_GROUPS' in globals() else []
+        return _clean_opts(mods, ["Dashboard"])
+    except Exception:
+        return ["Dashboard"]
+
+def _generic_lookup(kind):
+    try:
+        if kind == "company": return _company_codes()
+        if kind == "user": return _table_values("users", "username", [current_user()])
+        if kind == "employee": return _table_values("employees", "employee_name", ["Sample Employee"])
+        if kind in ["stock_item", "finished_item", "raw_material"]: return get_stock_items()
+        if kind == "unit": return _table_values("stock_ledgers", "unit", DEFAULT_UNITS)
+        if kind == "bom": return _table_values("bom_headers", "bom_no", ["BOM001"])
+        if kind == "production_order": return _table_values("production_orders", "order_no", ["PO-001"])
+        if kind == "consumption_entry": return _table_values("consumption_entries", "entry_no", ["CE-001"])
+        if kind == "fg_entry": return _table_values("fg_entries", "entry_no", ["FG-001"])
+        if kind == "plan": return _table_values("mrp", "plan_no", ["PLAN001"])
+        if kind == "schedule": return _table_values("generic_erp_records", "schedule_no", ["SCH001"])
+        if kind == "group": return list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"]
+        if kind == "module_name": return all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"]
+        if kind == "ledger": return get_ledger_names(None)
+        if kind == "customer": return get_ledger_names("Sundry Debtors")
+        if kind == "supplier": return get_ledger_names("Sundry Creditors")
+        if kind == "payment_mode": return DEFAULT_PAYMENT_MODES
+        if kind == "shift": return DEFAULT_SHIFTS
+    except Exception:
+        pass
+    return []
+
+def _selected_value(module_title, field):
+    return st.session_state.get(f"gen_{module_title}_{field}")
+
+def _render_generic_input(col, label, field, typ, module_title):
+    opts = _generic_options(typ) if isinstance(typ, str) else None
+    k=f"gen_{module_title}_{field}"
+    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY", key=k))
+    if typ == "time": return str(col.time_input(label, value=india_now().time(), key=k))
+    if typ == "number": return col.number_input(label, value=0.0, key=k)
+    if typ == "bool": return col.checkbox(label, value=True, key=k)
+    if typ == "password": return col.text_input(label, type="password", key=k)
+    if typ == "module_name_by_group":
+        g = _selected_value(module_title, "group_name") or "Dashboard"
+        return col.selectbox(label, _all_module_names_for_group(g)+["Add New..."], key=k)
+    if typ in ["company","user","employee","stock_item","finished_item","raw_material","unit","bom","plan","schedule","production_order","consumption_entry","fg_entry","group","module_name","ledger","customer","supplier","payment_mode","shift"]:
+        values=_generic_lookup(typ)
+        values=list(dict.fromkeys([str(v) for v in values if str(v).strip()]))+["Add New..."]
+        return col.selectbox(label, values, key=k)
+    # Auto-fill linked fields from selected stock item / party
+    if field in ["item_code","hsn_code","unit","gst_rate","rate","available_qty"]:
+        item = _selected_value(module_title,"item_name") or _selected_value(module_title,"finished_item") or _selected_value(module_title,"rm_item") or _selected_value(module_title,"raw_material")
+        det=_stock_details_by_item(item)
+        val=det.get(field, "")
+        if field in ["gst_rate","rate","available_qty"]:
+            try: return col.number_input(label, value=float(val or 0), key=k)
+            except Exception: pass
+        return col.text_input(label, value=str(val or ""), key=k)
+    if field in ["customer_code","vendor_code","party_code","gst_no","pan_no"]:
+        party = _selected_value(module_title,"customer_name") or _selected_value(module_title,"supplier_name") or _selected_value(module_title,"party_name") or _selected_value(module_title,"ledger_name")
+        det=_ledger_details_by_name(party)
+        val=det.get("party_code" if field in ["customer_code","vendor_code","party_code"] else field, "")
+        return col.text_input(label, value=str(val or ""), key=k)
+    if opts: return col.selectbox(label, opts + ["Add New..."], key=k)
+    return col.text_input(label, key=k)
+
+# More offline-style fields for modules mentioned by user.
+_GENERIC_MODULE_FIELDS.update({
+    "OneDrive Backup": [("company_code","Company Code","company"),("backup_date","Backup Date","date"),("backup_type","Backup Type",["Manual","Auto","Daily","Weekly","Monthly","Before Data Purge","Before Sync"]),("onedrive_folder_path","OneDrive Folder Path","text"),("backup_file_name","Backup File Name","text"),("backup_status","Backup Status",["Pending","Completed","Failed"]),("remarks","Remarks","text")],
+    "OneDrive Backup Advanced": [("company_code","Company Code","company"),("backup_date","Backup Date","date"),("backup_type","Backup Type",["Full Backup","Database Backup","Reports Backup","Invoice Backup","Master Backup"]),("local_folder_path","Local Folder Path","text"),("onedrive_folder_path","OneDrive Folder Path","text"),("sync_direction","Sync Direction",["Local to OneDrive","OneDrive to Local","Two Way"]),("backup_status","Backup Status",["Pending","Completed","Failed"]),("remarks","Remarks","text")],
+    "Data Export": [("company_code","Company Code","company"),("export_date","Export Date","date"),("module_name","Module Name","module_name"),("export_type","Export Type",["CSV","Excel","PDF","JSON","Full Backup"]),("export_folder_path","Export Folder Path","text"),("file_name","File Name","text"),("from_date","From Date","date"),("to_date","To Date","date"),("status","Status","status"),("remarks","Remarks","text")],
+    "Export All Data": [("company_code","Company Code","company"),("export_date","Export Date","date"),("export_type","Export Type",["All CSV","All Excel","All JSON","Full ERP Backup"]),("export_folder_path","Export Folder Path","text"),("file_name","File Name","text"),("status","Status","status"),("remarks","Remarks","text")],
+    "Data Import": [("company_code","Company Code","company"),("import_date","Import Date","date"),("module_name","Module Name","module_name"),("file_name","File Name","text"),("total_rows","Total Rows","number"),("success_rows","Success Rows","number"),("failed_rows","Failed Rows","number"),("status","Status","status"),("remarks","Remarks","text")],
+    "WhatsApp Integration": [("company_code","Company Code","company"),("provider","WhatsApp Provider",["WhatsApp Web","Meta WhatsApp Cloud API","Twilio WhatsApp","Manual Link"]),("mobile_no","Mobile No","text"),("template_name","Template Name","text"),("message","Message","text"),("send_status","Send Status",["Draft","Ready","Sent","Failed"]),("remarks","Remarks","text")],
+    "Email Integration": [("company_code","Company Code","company"),("email_provider","Email Provider",["Gmail SMTP","Office365 SMTP","Custom SMTP"]),("to_email","To Email","text"),("subject","Subject","text"),("message","Message","text"),("send_status","Send Status",["Draft","Ready","Sent","Failed"]),("remarks","Remarks","text")],
+    "Email Utility": [("company_code","Company Code","company"),("email_type","Email Type",["Invoice","Payment Reminder","Quotation","Report","General"]),("to_email","To Email","text"),("subject","Subject","text"),("message","Message","text"),("attachment_path","Attachment Path","text"),("send_status","Send Status",["Draft","Ready","Sent","Failed"]),("remarks","Remarks","text")],
+    "Stock Voucher": [("company_code","Company Code","company"),("voucher_no","Voucher No","text"),("voucher_date","Voucher Date","date"),("voucher_type","Voucher Type",STOCK_VOUCHER_TYPES),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("qty","Qty","number"),("rate","Rate","number"),("value","Value","number"),("status","Status","status"),("remarks","Remarks","text")],
+    "Barcode Master": [("company_code","Company Code","company"),("barcode_no","Barcode No","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("hsn_code","HSN Code","text"),("gst_rate","GST Rate %","number"),("batch_no","Batch No","text"),("mfg_date","MFG Date","date"),("expiry_date","Expiry Date","date"),("mrp","MRP","number"),("selling_rate","Selling Rate","number"),("qty","Qty","number"),("status","Status","status")],
+    "Warehouse Stock": [("company_code","Company Code","company"),("warehouse_name","Warehouse Name","text"),("item_name","Item Name","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("available_qty","Available Qty","number"),("opening_qty","Opening Qty","number"),("inward_qty","Inward Qty","number"),("outward_qty","Outward Qty","number"),("closing_qty","Closing Qty","number"),("rate","Rate","number"),("value","Value","number")],
+    "BOM Lines": [("company_code","Company Code","company"),("bom_no","BOM No","bom"),("rm_item","Raw Material Item","stock_item"),("item_code","Item Code","text"),("unit","Unit","unit"),("available_qty","Available Qty","number"),("rm_qty","RM Qty","number"),("rm_rate","RM Rate","number"),("rm_amount","RM Amount","number"),("remarks","Remarks","text")],
+    "Production Schedule": [("company_code","Company Code","company"),("schedule_no","Schedule No","text"),("schedule_date","Schedule Date","date"),("production_order_no","Production Order No","production_order"),("finished_item","Finished Item","stock_item"),("item_code","Item Code","text"),("qty_scheduled","Qty Scheduled","number"),("machine_name","Machine Name","text"),("shift_name","Shift Name","shift"),("schedule_status","Schedule Status","status")],
+    "Capacity Planning": [("company_code","Company Code","company"),("plan_date","Plan Date","date"),("production_order_no","Production Order No","production_order"),("machine_name","Machine Name","text"),("shift","Shift","shift"),("available_hours","Available Hours","number"),("planned_hours","Planned Hours","number"),("free_capacity","Free Capacity","number"),("status","Status","status"),("remarks","Remarks","text")],
+})
+
+def whatsapp_integration_page():
+    show_header("✅✅ WhatsApp Integration", "section-tools")
+    st.info("WhatsApp setting email jaisa nahi hai. Yahan WhatsApp Web link / WhatsApp Business API provider configure hota hai.")
+    c1,c2=st.columns(2)
+    provider=c1.selectbox("Provider", ["WhatsApp Web", "Meta WhatsApp Cloud API", "Twilio WhatsApp", "Manual Only"])
+    mobile=c2.text_input("Test Mobile No with country code", placeholder="9198xxxxxxxx")
+    msg=st.text_area("Test Message", value="Namaste, this is test message from RBM ERP.")
+    if st.button("Open WhatsApp Test Message", use_container_width=True):
+        url=f"https://wa.me/{mobile}?text={quote(msg)}" if mobile else ""
+        if url: st.markdown(f"[Open WhatsApp]({url})")
+        else: st.warning("Mobile no required.")
+    online_generic_module("WhatsApp Integration")
+
+def email_integration_page():
+    email_sms_settings()
+    online_generic_module("Email Integration")
+
+def get_module_mapping():
+    m = globals().get('_ORIGINAL_GET_MODULE_MAPPING_FOR_PATCH5')
+    # Build from prior function saved below if available, otherwise use existing body through old reference.
+    base = _PATCH5_OLD_GET_MODULE_MAPPING()
+    base["WhatsApp Integration"] = whatsapp_integration_page
+    base["Email Integration"] = email_integration_page
+    base["Email Utility"] = email_integration_page
+    base["OneDrive Backup"] = lambda: online_generic_module("OneDrive Backup")
+    base["OneDrive Backup Advanced"] = lambda: online_generic_module("OneDrive Backup Advanced")
+    base["Data Export"] = lambda: online_generic_module("Data Export")
+    base["Export All Data"] = lambda: online_generic_module("Export All Data")
+    base["Stock Voucher"] = lambda: online_generic_module("Stock Voucher")
+    return base
+
+# ================= END PATCH 5 =================
+
+
+
+# ================= PATCH 6: ALL OPTION + GROUP-WISE MODULE DROPDOWN FIX =================
+# Fix requested screens: Data Purge Control, Data Locking Period, Mandatory Field Settings,
+# Client Module Permission. Group dropdown has All, and Module Name dropdown shows modules of
+# selected Group, not only Dashboard / not group names.
+
+def _with_all(options):
+    out = []
+    for x in (options or []):
+        sx = str(x).strip()
+        if sx and sx not in out:
+            out.append(sx)
+    if "All" not in out:
+        out.insert(0, "All")
+    return out
+
+
+def _all_module_names_for_group(group_name):
+    try:
+        group_name = str(group_name or "All").strip()
+        if group_name in ["All", "", "None"]:
+            return _with_all(all_online_module_names())
+        mods = ONLINE_MODULE_GROUPS.get(group_name, []) if 'ONLINE_MODULE_GROUPS' in globals() else []
+        return _with_all(mods)
+    except Exception:
+        return ["All", "Dashboard"]
+
+
+def _generic_lookup(kind):
+    try:
+        if kind == "company": return _with_all(_company_codes())
+        if kind == "user": return _with_all(_table_values("users", "username", [current_user()]))
+        if kind == "employee": return _with_all(_table_values("employees", "employee_name", ["Sample Employee"]))
+        if kind in ["stock_item", "finished_item", "raw_material"]: return _with_all(get_stock_items())
+        if kind == "unit": return _with_all(_table_values("stock_ledgers", "unit", DEFAULT_UNITS))
+        if kind == "bom": return _with_all(_table_values("bom_headers", "bom_no", ["BOM001"]))
+        if kind == "production_order": return _with_all(_table_values("production_orders", "order_no", ["PO-001"]))
+        if kind == "consumption_entry": return _with_all(_table_values("consumption_entries", "entry_no", ["CE-001"]))
+        if kind == "fg_entry": return _with_all(_table_values("fg_entries", "entry_no", ["FG-001"]))
+        if kind == "plan": return _with_all(_table_values("mrp", "plan_no", ["PLAN001"]))
+        if kind == "schedule": return _with_all(_table_values("generic_erp_records", "schedule_no", ["SCH001"]))
+        if kind == "group": return _with_all(list(ONLINE_MODULE_GROUPS.keys()) if 'ONLINE_MODULE_GROUPS' in globals() else ["Admin","Master","CRM","HR"])
+        if kind == "module_name": return _with_all(all_online_module_names() if 'ONLINE_MODULE_GROUPS' in globals() else ["Dashboard","User Management","Company Profile"])
+        if kind == "ledger": return _with_all(get_ledger_names(None))
+        if kind == "customer": return _with_all(get_ledger_names("Sundry Debtors"))
+        if kind == "supplier": return _with_all(get_ledger_names("Sundry Creditors"))
+        if kind == "payment_mode": return _with_all(DEFAULT_PAYMENT_MODES)
+        if kind == "shift": return _with_all(DEFAULT_SHIFTS)
+    except Exception:
+        pass
+    return ["All"]
+
+
+def _render_generic_input(col, label, field, typ, module_title):
+    opts = _generic_options(typ) if isinstance(typ, str) else None
+    k=f"gen_{module_title}_{field}"
+    if typ == "date": return str(col.date_input(label, value=india_now().date(), format="DD-MM-YYYY", key=k))
+    if typ == "time": return str(col.time_input(label, value=india_now().time(), key=k))
+    if typ == "number": return col.number_input(label, value=0.0, key=k)
+    if typ == "bool": return col.checkbox(label, value=True, key=k)
+    if typ == "password": return col.text_input(label, type="password", key=k)
+    if typ == "module_name_by_group":
+        # Read current Group Name selectbox value. If user changes group, Streamlit reruns and this
+        # list will automatically become that group's modules.
+        g = st.session_state.get(f"gen_{module_title}_group_name", "All")
+        values = _all_module_names_for_group(g)
+        values = values + (["Add New..."] if "Add New..." not in values else [])
+        return col.selectbox(label, values, key=k)
+    if typ in ["company","user","employee","stock_item","finished_item","raw_material","unit","bom","plan","schedule","production_order","consumption_entry","fg_entry","group","module_name","ledger","customer","supplier","payment_mode","shift"]:
+        values=_generic_lookup(typ)
+        values=list(dict.fromkeys([str(v) for v in values if str(v).strip()]))
+        if "Add New..." not in values:
+            values.append("Add New...")
+        return col.selectbox(label, values, key=k)
+    # Auto-fill linked fields from selected stock item / party
+    if field in ["item_code","hsn_code","unit","gst_rate","rate","available_qty"]:
+        item = _selected_value(module_title,"item_name") or _selected_value(module_title,"finished_item") or _selected_value(module_title,"rm_item") or _selected_value(module_title,"raw_material")
+        det=_stock_details_by_item(item)
+        val=det.get(field, "")
+        if field in ["gst_rate","rate","available_qty"]:
+            try: return col.number_input(label, value=float(val or 0), key=k)
+            except Exception: pass
+        return col.text_input(label, value=str(val or ""), key=k)
+    if field in ["customer_code","vendor_code","party_code","gst_no","pan_no"]:
+        party = _selected_value(module_title,"customer_name") or _selected_value(module_title,"supplier_name") or _selected_value(module_title,"party_name") or _selected_value(module_title,"ledger_name")
+        det=_ledger_details_by_name(party)
+        val=det.get("party_code" if field in ["customer_code","vendor_code","party_code"] else field, "")
+        return col.text_input(label, value=str(val or ""), key=k)
+    if opts:
+        values = _with_all(opts)
+        if "Add New..." not in values:
+            values.append("Add New...")
+        return col.selectbox(label, values, key=k)
+    return col.text_input(label, key=k)
+
+# Force these Admin screens to use group-wise module dropdown after all older patches.
+_GENERIC_MODULE_FIELDS.update({
+    "Data Purge Control": [("company_code","Company Code","company"),("request_date","Request Date","date"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("from_date","From Date","date"),("to_date","To Date","date"),("purge_status","Purge Status",["All","Requested","Approved","Rejected","Completed"]),("requested_by","Requested By","user"),("remarks","Remarks","text")],
+    "Data Locking Period": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("lock_from_date","Lock From Date","date"),("lock_to_date","Lock To Date","date"),("lock_status","Lock Status",["All","Locked","Not Locked","Pending"]),("reason","Reason","text")],
+    "Mandatory Field Settings": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("field_name","Field Name","text"),("is_mandatory","Is Mandatory","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
+    "Client Module Permission": [("company_code","Company Code","company"),("group_name","Group Name","group"),("module_name","Module Name","module_name_by_group"),("allowed","Allowed","bool"),("status","Status",["All","Active","Inactive"]),("remarks","Remarks","text")],
+})
+
+# ================= END PATCH 6 =================
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
