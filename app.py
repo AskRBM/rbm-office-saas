@@ -1580,8 +1580,9 @@ def get_saved_invoice_preview_html(key, title, party_col):
 # ---------- LOGIN / SIDEBAR ----------
 def rbm_header():
     name = st.session_state.get("client_name", get_client_code())
-    logo64 = rbm_logo_base64()
-    logo_html = f'<img src="data:image/png;base64,{logo64}" style="height:74px;max-width:260px;object-fit:contain;border-radius:10px;background:white;padding:3px;">' if logo64 else '<div class="rbm-title">RBM AI</div>'
+    # Logo intentionally NOT shown inside ERP after login.
+    # Logo is shown only on login window/page as per requirement.
+    logo_html = '<div class="rbm-title">RBM AI</div>'
     html = f"""<div class="rbm-header">
         <div>{logo_html}</div>
         <div class="rbm-divider">|</div>
@@ -1684,8 +1685,8 @@ def sidebar_toggle_top():
 
 def compact_sidebar():
     role = st.session_state.get("role", "")
-    logo64 = rbm_logo_base64()
-    sidebar_logo_html = f'<img src="data:image/png;base64,{logo64}" style="width:100%;max-width:210px;border-radius:8px;background:white;padding:3px;margin-bottom:8px;">' if logo64 else "<div class='erp-name'>RBM AI</div>"
+    # Logo intentionally NOT shown in sidebar after login.
+    sidebar_logo_html = "<div class='erp-name'>RBM AI</div>"
     st.sidebar.markdown(f"""
     <div class='erp-box'>
       {sidebar_logo_html}
