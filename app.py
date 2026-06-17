@@ -425,6 +425,12 @@ def group_enabled_for_client(group_name):
     if is_developer_or_super_admin():
         return True
 
+    # Detailed Client Module Permission table is now the FIRST source of truth.
+    # If client has only Admin + HR ticked, only Admin + HR will be shown.
+    det = detailed_group_allowed(group_name, get_client_code())
+    if det is not None:
+        return bool(det)
+
     # Client Super Admin / Admin must see Admin group to create users and assign user permissions.
     # Developer-only red modules are still hidden by role_can_see_module().
     if group_name == "Admin":
@@ -1631,6 +1637,73 @@ def load_client_permissions(client_code):
             st.session_state[p] = bool(row[p]) if p in row.index and pd.notna(row[p]) else False
     return name
 
+
+# ---------- STRICT CLIENT GROUP / MODULE PERMISSION FIX PATCH40 ----------
+def _truthy(v):
+    try:
+        if pd.isna(v):
+            return False
+    except Exception:
+        pass
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ["true", "1", "yes", "y", "active", "allowed"]
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _client_module_permission_rows_cached(client_code):
+    """Read detailed client module permissions.
+    This is the source of truth when the table has rows for the client.
+    """
+    try:
+        data = supabase.table("client_module_permissions").select("group_name,module_name,is_enabled").eq("client_code", str(client_code)).execute().data
+        return data or []
+    except Exception:
+        return []
+
+def client_detailed_permission_map(client_code=None):
+    code = str(client_code or get_client_code()).strip()
+    rows = _client_module_permission_rows_cached(code)
+    mp = {}
+    for r in rows:
+        m = str(r.get("module_name", "")).strip()
+        if m:
+            mp[m] = _truthy(r.get("is_enabled", False))
+    return mp
+
+def client_has_detailed_permissions(client_code=None):
+    return len(client_detailed_permission_map(client_code)) > 0
+
+def detailed_module_allowed(module_name, client_code=None):
+    """Return True/False when detailed permission exists; return None when table/rows absent."""
+    code = str(client_code or get_client_code()).strip()
+    if str(code).upper() == "RBM" and is_super_admin():
+        return True
+    mp = client_detailed_permission_map(code)
+    if not mp:
+        return None
+    module_name = str(module_name).strip()
+    if module_name == "Dashboard":
+        return True
+    return bool(mp.get(module_name, False))
+
+def detailed_group_allowed(group_name, client_code=None):
+    """Group is visible only if at least one module of that group is enabled for client."""
+    code = str(client_code or get_client_code()).strip()
+    if str(code).upper() == "RBM" and is_super_admin():
+        return True
+    if str(group_name) == "Dashboard":
+        return True
+    mp = client_detailed_permission_map(code)
+    if not mp:
+        return None
+    if str(group_name) == "Admin":
+        if st.session_state.get("role") not in ["Client Super Admin", "Admin", "Super Admin", "Developer"]:
+            return False
+    for m in ONLINE_MODULE_GROUPS.get(group_name, []):
+        if mp.get(m, False):
+            return True
+    return False
+
 def login_page():
     rbm_header()
     logo64 = rbm_logo_base64()
@@ -1777,6 +1850,10 @@ def client_master():
         "Expense": "allow_expense",
         "Projects": "allow_project_accounting",
         "Quotation": "allow_quotation",
+    "Quotation Negotiations": "allow_quotation",
+    "Quotation Requirements": "allow_quotation",
+    "Quotation Business Users": "allow_quotation",
+    "Quotation Access": "allow_quotation",
         "Support": "allow_support",
         "Tools": "allow_excel_upload",
         "Reports": "allow_master_group",
@@ -4460,6 +4537,10 @@ MODULE_FEATURE_FLAGS = {
     # Optional modules
     "Project Accounting": "allow_project_accounting",
     "Quotation": "allow_quotation",
+    "Quotation Negotiations": "allow_quotation",
+    "Quotation Requirements": "allow_quotation",
+    "Quotation Business Users": "allow_quotation",
+    "Quotation Access": "allow_quotation",
     "Support Desk": "allow_support",
     "AMC / Subscription": "allow_subscription",
     "License Manager": "allow_license_manager",
@@ -4542,11 +4623,16 @@ def _quotation_only_from_session():
 
 
 def module_enabled_for_current_client(module_name):
-    """Client-wise feature gate. If client is assigned only Quotation, nothing else appears."""
+    """Client-wise feature gate. Detailed Client Module Permission is first priority."""
     if is_super_admin():
         return True
     if _quote_role():
         return module_name == "Quotation"
+
+    det_allowed = detailed_module_allowed(module_name, get_client_code())
+    if det_allowed is not None:
+        return bool(det_allowed)
+
     # Highest priority security rule:
     # If client is assigned only Quotation, no Dashboard/Admin/Projects/Manufacturing/Reports/Tools must appear.
     if _quotation_only_from_session():
@@ -4645,6 +4731,10 @@ def module_enabled_for_client_code(module_name, client_code):
     """Used by Role Permission Control. Shows only modules enabled for selected client."""
     if str(client_code).upper() == "RBM" and is_super_admin():
         return True
+
+    det_allowed = detailed_module_allowed(module_name, client_code)
+    if det_allowed is not None:
+        return bool(det_allowed)
 
     row = _client_feature_row(client_code)
     if _quotation_only_from_row(row):
@@ -4929,6 +5019,13 @@ def get_menu_modules(group):
     # Client cannot see developer-only modules.
     modules = [m for m in modules if role_can_see_module(m)]
 
+    # Detailed Client Module Permission table is first priority for client logins.
+    # Example: SJM01 ticked Admin + HR only => only those group modules appear.
+    if not is_developer_or_super_admin():
+        mp = client_detailed_permission_map(get_client_code())
+        if mp:
+            modules = [m for m in modules if m == "Dashboard" or bool(mp.get(m, False))]
+
     # For normal client login, show group only when its client feature is enabled.
     # Developer/Super Admin see all modules.
     if not is_developer_or_super_admin() and group != "Dashboard":
@@ -4941,20 +5038,29 @@ def get_menu_modules(group):
 
 
 def build_group_list():
-    """Latest offline desktop groups for online RBM ERP."""
+    """Latest offline desktop groups for online RBM ERP with strict client permissions."""
+    # Quotation-only user fallback.
+    if _quote_role() or ((not is_developer_or_super_admin()) and _quotation_only_from_session()):
+        return ["Quotation"]
+
     groups = []
+    mp = client_detailed_permission_map(get_client_code()) if not is_developer_or_super_admin() else {}
     for g in ONLINE_MODULE_GROUPS.keys():
         if g == "Dashboard":
             groups.append(g)
             continue
-        if group_enabled_for_client(g):
-            visible_modules = [m for m in ONLINE_MODULE_GROUPS[g] if role_can_see_module(m)]
+        if mp:
+            # If detailed client permissions exist, ignore old boolean flags completely.
+            if g == "Admin" and st.session_state.get("role") not in ["Client Super Admin", "Admin"]:
+                continue
+            visible_modules = [m for m in ONLINE_MODULE_GROUPS[g] if role_can_see_module(m) and bool(mp.get(m, False))]
             if visible_modules:
                 groups.append(g)
-
-    # Quotation-only user fallback.
-    if _quote_role() or ((not is_developer_or_super_admin()) and _quotation_only_from_session()):
-        return ["Quotation"]
+        else:
+            if group_enabled_for_client(g):
+                visible_modules = [m for m in ONLINE_MODULE_GROUPS[g] if role_can_see_module(m)]
+                if visible_modules:
+                    groups.append(g)
 
     return groups or ["Dashboard"]
 
