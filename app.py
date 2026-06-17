@@ -17,6 +17,18 @@ from streamlit_geolocation import streamlit_geolocation
 
 st.set_page_config(page_title="RBM ERP SaaS", page_icon="🏢", layout="wide", initial_sidebar_state="expanded")
 
+# ---------- RBM LOGO BRANDING PATCH ----------
+def rbm_logo_base64():
+    """Return RBM logo as base64 for safe display on Streamlit Cloud."""
+    for path in ["rbm_logo.png", "1. RBM Logo(1).png"]:
+        try:
+            with open(path, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+        except Exception:
+            pass
+    return ""
+
+
 # ---------- RBM ERP GLOBAL DROPDOWN PATCH ----------
 # Requirement: every dropdown must show an "All" option.
 # This wrapper adds "All" automatically in every Streamlit selectbox without changing your old code.
@@ -1568,10 +1580,12 @@ def get_saved_invoice_preview_html(key, title, party_col):
 # ---------- LOGIN / SIDEBAR ----------
 def rbm_header():
     name = st.session_state.get("client_name", get_client_code())
+    logo64 = rbm_logo_base64()
+    logo_html = f'<img src="data:image/png;base64,{logo64}" style="height:74px;max-width:260px;object-fit:contain;border-radius:10px;background:white;padding:3px;">' if logo64 else '<div class="rbm-title">RBM AI</div>'
     html = f"""<div class="rbm-header">
-        <div class="rbm-title">RBM AI</div>
+        <div>{logo_html}</div>
         <div class="rbm-divider">|</div>
-        <div><div class="rbm-subtitle">Robotic Business Management</div><div style="font-size:11px;color:#e0f2fe;font-weight:700;margin-top:2px;letter-spacing:.5px;">स्वदेशी • Made in India</div></div>
+        <div><div class="rbm-subtitle">Robotics Business Management</div><div style="font-size:11px;color:#e0f2fe;font-weight:700;margin-top:2px;letter-spacing:.5px;">स्वदेशी • Made in India</div></div>
         <div class="rbm-client">RBM ERP SaaS | {name}</div>
     </div>"""
     st.markdown(html, unsafe_allow_html=True)
@@ -1617,7 +1631,11 @@ def load_client_permissions(client_code):
     return name
 
 def login_page():
-    rbm_header(); show_header("Secure Login", "section-admin")
+    rbm_header()
+    logo64 = rbm_logo_base64()
+    if logo64:
+        st.markdown(f'<div style="text-align:center;margin:4px 0 12px 0;"><img src="data:image/png;base64,{logo64}" style="max-width:360px;width:45%;border-radius:14px;background:white;padding:6px;box-shadow:0 8px 22px rgba(15,23,42,.12);"></div>', unsafe_allow_html=True)
+    show_header("Secure Login", "section-admin")
     users = init_users()
     c1, c2, c3 = st.columns([1,2,1])
     with c2:
@@ -1666,9 +1684,11 @@ def sidebar_toggle_top():
 
 def compact_sidebar():
     role = st.session_state.get("role", "")
+    logo64 = rbm_logo_base64()
+    sidebar_logo_html = f'<img src="data:image/png;base64,{logo64}" style="width:100%;max-width:210px;border-radius:8px;background:white;padding:3px;margin-bottom:8px;">' if logo64 else "<div class='erp-name'>RBM AI</div>"
     st.sidebar.markdown(f"""
     <div class='erp-box'>
-      <div class='erp-name'>RBM AI</div>
+      {sidebar_logo_html}
       <div class='erp-small'><b>Name:</b> {st.session_state.get('client_name','RBM')}</div>
       <div class='erp-small'><b>Code:</b> {get_client_code()} | <b>Role:</b> {role}</div>
       <div class='erp-small'><b>User:</b> {st.session_state.get('full_name','')}</div>
