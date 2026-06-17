@@ -7540,6 +7540,185 @@ except Exception:
     pass
 # ================= END PATCH 38 ONLINE =================
 
+
+
+# ================= RBM ONLINE PATCH 41: STRICT CLIENT + QUOTATION SECURITY FIX =================
+# Fixes:
+# 1) Client Module Permission reads both old column 'is_enabled' and new column 'allowed'.
+# 2) If client has only Admin + HR ticked, no other group/module will appear.
+# 3) Quotation User/Vendor login opens only Quotation group without crashing in custom menu.
+
+def _rbm_p41_bool(v):
+    try:
+        if pd.isna(v):
+            return False
+    except Exception:
+        pass
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ["true", "1", "yes", "y", "active", "allowed", "checked", "tick"]
+
+@st.cache_data(ttl=5, show_spinner=False)
+def _client_module_permission_rows_cached(client_code):
+    code = str(client_code or "").strip()
+    rows = []
+    try:
+        data = supabase.table("client_module_permissions").select("*").eq("client_code", code).execute().data
+        rows.extend(data or [])
+    except Exception:
+        pass
+    try:
+        data = supabase.table("m_client_module_permissions").select("*").eq("company_code", code).execute().data
+        rows.extend(data or [])
+    except Exception:
+        pass
+    return rows
+
+def client_detailed_permission_map(client_code=None):
+    code = str(client_code or get_client_code()).strip()
+    mp = {}
+    for r in _client_module_permission_rows_cached(code):
+        m = str(r.get("module_name", "") or "").strip()
+        if not m:
+            continue
+        val = r.get("allowed", r.get("is_enabled", r.get("allow", r.get("status", False))))
+        mp[m] = _rbm_p41_bool(val)
+    return mp
+
+def client_detailed_group_map(client_code=None):
+    code = str(client_code or get_client_code()).strip()
+    gm = {}
+    for table, code_col in [("client_group_permissions", "client_code"), ("m_client_group_permissions", "company_code")]:
+        try:
+            data = supabase.table(table).select("*").eq(code_col, code).execute().data or []
+            for r in data:
+                g = str(r.get("group_name", "") or "").strip()
+                if g:
+                    gm[g] = _rbm_p41_bool(r.get("allowed", r.get("is_enabled", r.get("status", False))))
+        except Exception:
+            pass
+    return gm
+
+def detailed_module_allowed(module_name, client_code=None):
+    code = str(client_code or get_client_code()).strip()
+    if str(code).upper() == "RBM" and is_super_admin():
+        return True
+    if str(module_name).strip() == "Dashboard":
+        return True
+    mp = client_detailed_permission_map(code)
+    if not mp:
+        return None
+    return bool(mp.get(str(module_name).strip(), False))
+
+def detailed_group_allowed(group_name, client_code=None):
+    code = str(client_code or get_client_code()).strip()
+    group_name = str(group_name).strip()
+    if str(code).upper() == "RBM" and is_super_admin():
+        return True
+    if group_name == "Dashboard":
+        return True
+    gm = client_detailed_group_map(code)
+    if gm and group_name in gm and not gm[group_name]:
+        return False
+    mp = client_detailed_permission_map(code)
+    if mp:
+        return any(bool(mp.get(m, False)) for m in ONLINE_MODULE_GROUPS.get(group_name, []))
+    if gm and group_name in gm:
+        return bool(gm[group_name])
+    return None
+
+def build_group_list():
+    role = str(st.session_state.get("role", ""))
+    if role in ["Quotation User", "Vendor", "Supplier", "Business User"]:
+        return ["Quotation"]
+    if (not is_developer_or_super_admin()) and _quotation_only_from_session():
+        return ["Quotation"]
+    if is_developer_or_super_admin():
+        return list(ONLINE_MODULE_GROUPS.keys())
+    code = get_client_code()
+    mp = client_detailed_permission_map(code)
+    groups = []
+    for g, mods in ONLINE_MODULE_GROUPS.items():
+        if g == "Dashboard":
+            groups.append(g)
+            continue
+        det = detailed_group_allowed(g, code)
+        if det is False:
+            continue
+        if mp:
+            visible = [m for m in mods if role_can_see_module(m) and bool(mp.get(m, False)) and has_permission(m, "view")]
+            if visible:
+                groups.append(g)
+        else:
+            if group_enabled_for_client(g):
+                visible = [m for m in mods if role_can_see_module(m) and module_enabled_for_current_client(m) and has_permission(m, "view")]
+                if visible:
+                    groups.append(g)
+    return groups or ["Dashboard"]
+
+def get_menu_modules(group):
+    role = str(st.session_state.get("role", ""))
+    group = str(group or "Dashboard")
+    if role in ["Quotation User", "Vendor", "Supplier", "Business User"]:
+        modules = [m for m in ONLINE_MODULE_GROUPS.get("Quotation", []) if has_permission(m, "view") or m == "Quotation"]
+        return modules or ["Quotation"]
+    modules = list(ONLINE_MODULE_GROUPS.get(group, []))
+    modules = [m for m in modules if role_can_see_module(m)]
+    if not is_developer_or_super_admin():
+        mp = client_detailed_permission_map(get_client_code())
+        if mp:
+            modules = [m for m in modules if m == "Dashboard" or bool(mp.get(m, False))]
+        else:
+            modules = [m for m in modules if module_enabled_for_current_client(m)]
+        modules = [m for m in modules if has_permission(m, "view")]
+    return modules or (["Dashboard"] if group == "Dashboard" else [])
+
+def render_custom_menu():
+    st.markdown("""
+    <div class='erp-box'>
+      <div class='erp-name'>RBM AI</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class='erp-box'>
+      <div class='erp-small'><b>Name:</b> {st.session_state.get('client_name','RBM')}</div>
+      <div class='erp-small'><b>Code:</b> {get_client_code()}</div>
+      <div class='erp-small'><b>Role:</b> {st.session_state.get('role','')}</div>
+      <div class='erp-small'><b>User:</b> {st.session_state.get('full_name','')}</div>
+      <div class='erp-small'><b>Date:</b> {india_now().strftime('%d-%m-%Y')} | IST</div>
+    </div>
+    """, unsafe_allow_html=True)
+    groups = build_group_list() or ["Dashboard"]
+    active_group = st.session_state.get("active_group", groups[0])
+    if active_group not in groups:
+        active_group = groups[0]
+    group = st.selectbox("Group", groups, index=groups.index(active_group), key="menu_group_p41")
+    modules = get_menu_modules(group)
+    if not modules:
+        st.warning("No module permission found for this login. Please check Client Module Permission / User Permission.")
+        choice = "Dashboard"
+    else:
+        active_choice = st.session_state.get("active_choice", modules[0])
+        if active_choice not in modules:
+            active_choice = modules[0]
+        display_modules = [module_label(m) for m in modules]
+        display_active = module_label(active_choice)
+        idx = display_modules.index(display_active) if display_active in display_modules else 0
+        display_choice = st.radio("Module", display_modules, index=idx, key="menu_module_p41")
+        choice = strip_module_label(display_choice)
+    st.session_state["active_group"] = group
+    st.session_state["active_choice"] = choice
+    c1, c2 = st.columns(2)
+    if c1.button("◀ Hide", use_container_width=True, key="custom_hide_menu_p41"):
+        st.session_state["sidebar_open"] = False
+        st.rerun()
+    if c2.button("Logout", use_container_width=True, key="custom_logout_p41"):
+        st.session_state.clear()
+        st.rerun()
+    return group, choice
+
+# ================= END PATCH 41 =================
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
