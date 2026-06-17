@@ -4780,13 +4780,15 @@ def default_permission(module_name, action):
     if role == "Admin":
         return True
     if role == "Accounts User":
-        return module_name in GROUP_MODULES.get("Accounts", []) and action in ["view", "add", "edit", "print", "export"]
+        return module_name in ONLINE_MODULE_GROUPS.get("Accounts", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "HR User":
-        return module_name in GROUP_MODULES.get("HR", []) and action in ["view", "add", "edit", "print", "export"]
+        return module_name in ONLINE_MODULE_GROUPS.get("HR", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "Inventory User":
-        return module_name in GROUP_MODULES.get("Inventory", []) and action in ["view", "add", "edit", "print", "export"]
+        return module_name in ONLINE_MODULE_GROUPS.get("Inventory", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "Quotation User":
-        return module_name in GROUP_MODULES.get("Quotation", []) and action in ["view", "add", "print", "export"]
+        return module_name in ONLINE_MODULE_GROUPS.get("Quotation", []) and action in ["view", "add", "edit", "print", "export"]
+    if role in ["Vendor", "Supplier", "Business User"]:
+        return module_name in ONLINE_MODULE_GROUPS.get("Quotation", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "User":
         return action in ["view", "print", "export"]
     return action == "view"
