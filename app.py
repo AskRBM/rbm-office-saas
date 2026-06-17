@@ -7085,6 +7085,355 @@ except Exception:
     pass
 # ================= END PATCH 28 ONLINE =================
 
+
+
+# ================= PATCH 38 ONLINE: ADD MISSING REPORTS =================
+# Added without removing old code/features:
+# 1) Ledger Report with Dr / Cr / Net Balance
+# 2) Stock Detail Report
+# 3) Consumption Report
+# 4) Purchase Report
+# 5) Sales Report
+
+def _p38_num(x):
+    try:
+        if x is None:
+            return 0.0
+        return float(str(x).replace(',', '').strip() or 0)
+    except Exception:
+        return 0.0
+
+def _p38_date_ok(value, from_dt, to_dt):
+    try:
+        if value in [None, '']:
+            return True
+        d = pd.to_datetime(value, dayfirst=True, errors='coerce')
+        if pd.isna(d):
+            return True
+        return pd.to_datetime(from_dt) <= d <= pd.to_datetime(to_dt)
+    except Exception:
+        return True
+
+def _p38_first(row, names, default=''):
+    try:
+        for n in names:
+            if n in row and str(row.get(n, '')).strip() not in ['', 'None', 'nan', 'NaT']:
+                return row.get(n, '')
+    except Exception:
+        pass
+    return default
+
+def _p38_safe_load(table_key, limit=50000):
+    try:
+        return load_table(table_key, limit)
+    except Exception:
+        try:
+            return raw_table(table_key, limit)
+        except Exception:
+            return pd.DataFrame()
+
+def _p38_filter_client(df):
+    try:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        if is_super_admin():
+            return df
+        if 'client_code' in df.columns:
+            return df[df['client_code'].astype(str).str.upper().str.strip() == str(get_client_code()).upper().strip()]
+        return df
+    except Exception:
+        return df if df is not None else pd.DataFrame()
+
+def p38_ledger_report_df(ledger_name='All', from_dt=None, to_dt=None):
+    rows = []
+    ledger_name = str(ledger_name or 'All').strip()
+
+    # Opening balance from Ledger Master
+    try:
+        ldf = _p38_filter_client(_p38_safe_load('ledgers'))
+        if not ldf.empty and ledger_name != 'All' and 'ledger_name' in ldf.columns:
+            ldf1 = ldf[ldf['ledger_name'].astype(str) == ledger_name]
+            if not ldf1.empty:
+                r = ldf1.iloc[0]
+                ob = _p38_num(r.get('opening_balance', 0))
+                bt = str(r.get('balance_type', 'Dr'))
+                rows.append({
+                    'Date': '', 'Voucher Type': 'Opening Balance', 'Voucher No': '',
+                    'Ledger Name': ledger_name, 'Particulars': 'Opening Balance',
+                    'Dr Amount': ob if bt.lower().startswith('d') else 0.0,
+                    'Cr Amount': ob if bt.lower().startswith('c') else 0.0,
+                    'Remarks': ''
+                })
+    except Exception:
+        pass
+
+    # Accounting lines table: Dr/Cr exact ledger lines
+    try:
+        lines = _p38_filter_client(_p38_safe_load('accounting_entry_lines'))
+        heads = _p38_filter_client(_p38_safe_load('accounting_entries'))
+        head_map = {}
+        if not heads.empty and 'id' in heads.columns:
+            for _, h in heads.iterrows():
+                head_map[str(h.get('id', ''))] = h.to_dict()
+        if not lines.empty:
+            for _, l in lines.iterrows():
+                led = str(_p38_first(l, ['ledger_name', 'ledger', 'account_name'], '')).strip()
+                if not led:
+                    continue
+                if ledger_name != 'All' and led != ledger_name:
+                    continue
+                h = head_map.get(str(l.get('entry_id', '')), {})
+                dt = _p38_first(h, ['entry_date', 'date'], _p38_first(l, ['entry_date', 'date'], ''))
+                if from_dt and to_dt and not _p38_date_ok(dt, from_dt, to_dt):
+                    continue
+                side = str(_p38_first(l, ['dr_cr', 'side', 'type'], '')).lower()
+                amt = _p38_num(_p38_first(l, ['amount', 'total_amount'], 0))
+                rows.append({
+                    'Date': dt, 'Voucher Type': _p38_first(h, ['voucher_type'], 'Journal'),
+                    'Voucher No': _p38_first(h, ['voucher_no', 'document_no'], ''),
+                    'Ledger Name': led,
+                    'Particulars': _p38_first(l, ['remarks'], _p38_first(h, ['narration'], '')),
+                    'Dr Amount': amt if side.startswith('d') else 0.0,
+                    'Cr Amount': amt if side.startswith('c') else 0.0,
+                    'Remarks': _p38_first(h, ['narration', 'remarks'], '')
+                })
+    except Exception:
+        pass
+
+    # Fallback from simple accounting entry header
+    try:
+        acc = _p38_filter_client(_p38_safe_load('accounting_entries'))
+        if not acc.empty:
+            for _, r in acc.iterrows():
+                dt = _p38_first(r, ['entry_date', 'date'], '')
+                if from_dt and to_dt and not _p38_date_ok(dt, from_dt, to_dt):
+                    continue
+                amt = _p38_num(_p38_first(r, ['amount', 'total_amount'], 0))
+                dr = str(_p38_first(r, ['debit_account', 'dr_ledger'], '')).strip()
+                cr = str(_p38_first(r, ['credit_account', 'cr_ledger'], '')).strip()
+                if dr and (ledger_name == 'All' or dr == ledger_name):
+                    rows.append({'Date': dt, 'Voucher Type': _p38_first(r, ['voucher_type'], 'Journal'), 'Voucher No': _p38_first(r, ['voucher_no'], ''), 'Ledger Name': dr, 'Particulars': 'Debit', 'Dr Amount': amt, 'Cr Amount': 0.0, 'Remarks': _p38_first(r, ['narration', 'remarks'], '')})
+                if cr and (ledger_name == 'All' or cr == ledger_name):
+                    rows.append({'Date': dt, 'Voucher Type': _p38_first(r, ['voucher_type'], 'Journal'), 'Voucher No': _p38_first(r, ['voucher_no'], ''), 'Ledger Name': cr, 'Particulars': 'Credit', 'Dr Amount': 0.0, 'Cr Amount': amt, 'Remarks': _p38_first(r, ['narration', 'remarks'], '')})
+    except Exception:
+        pass
+
+    # Sales / Purchase / Expense / Service party impact
+    sources = [
+        ('sales', 'Sales Invoice', ['invoice_date', 'date'], ['invoice_no', 'voucher_no'], ['customer_name', 'party_name', 'ledger_name'], 'Dr', ['total_value', 'total_amount', 'amount', 'taxable_value']),
+        ('purchase', 'Purchase Invoice', ['invoice_date', 'date'], ['invoice_no', 'voucher_no', 'bill_no'], ['supplier_name', 'vendor_name', 'party_name', 'ledger_name'], 'Cr', ['total_value', 'total_amount', 'amount', 'taxable_value']),
+        ('expenses', 'Expense Voucher', ['expense_date', 'voucher_date', 'date'], ['invoice_no', 'voucher_no'], ['vendor_name', 'supplier_name', 'expense_head', 'party_name'], 'Cr', ['total_value', 'total_amount', 'amount', 'taxable_value']),
+        ('service_vouchers', 'Service Voucher', ['voucher_date', 'date'], ['voucher_no'], ['customer_name', 'party_name'], 'Dr', ['total_value', 'total_amount', 'amount', 'taxable_value']),
+    ]
+    for key, vtype, date_cols, doc_cols, party_cols, side, amt_cols in sources:
+        try:
+            df = _p38_filter_client(_p38_safe_load(key))
+            if df.empty:
+                continue
+            for _, r in df.iterrows():
+                party = str(_p38_first(r, party_cols, '')).strip()
+                if not party:
+                    continue
+                if ledger_name != 'All' and party != ledger_name:
+                    continue
+                dt = _p38_first(r, date_cols, '')
+                if from_dt and to_dt and not _p38_date_ok(dt, from_dt, to_dt):
+                    continue
+                amt = _p38_num(_p38_first(r, amt_cols, 0))
+                rows.append({
+                    'Date': dt, 'Voucher Type': vtype, 'Voucher No': _p38_first(r, doc_cols, ''),
+                    'Ledger Name': party, 'Particulars': vtype,
+                    'Dr Amount': amt if side == 'Dr' else 0.0,
+                    'Cr Amount': amt if side == 'Cr' else 0.0,
+                    'Remarks': _p38_first(r, ['remarks', 'narration'], '')
+                })
+        except Exception:
+            pass
+
+    df = pd.DataFrame(rows, columns=['Date','Voucher Type','Voucher No','Ledger Name','Particulars','Dr Amount','Cr Amount','Net Balance','Balance Type','Remarks'])
+    if df.empty:
+        return pd.DataFrame(columns=['Date','Voucher Type','Voucher No','Ledger Name','Particulars','Dr Amount','Cr Amount','Net Balance','Balance Type','Remarks'])
+    # running balance
+    running = 0.0
+    out = []
+    for _, r in df.fillna('').iterrows():
+        running += _p38_num(r.get('Dr Amount', 0)) - _p38_num(r.get('Cr Amount', 0))
+        d = r.to_dict(); d['Net Balance'] = round(abs(running), 2); d['Balance Type'] = 'Dr' if running >= 0 else 'Cr'; out.append(d)
+    total_dr = sum(_p38_num(x.get('Dr Amount', 0)) for x in out)
+    total_cr = sum(_p38_num(x.get('Cr Amount', 0)) for x in out)
+    net = total_dr - total_cr
+    out.append({'Date': 'TOTAL', 'Voucher Type': '', 'Voucher No': '', 'Ledger Name': ledger_name, 'Particulars': 'Net Balance', 'Dr Amount': round(total_dr,2), 'Cr Amount': round(total_cr,2), 'Net Balance': round(abs(net),2), 'Balance Type': 'Dr' if net >= 0 else 'Cr', 'Remarks': ''})
+    return pd.DataFrame(out)
+
+def p38_stock_detail_df(item='All', from_dt=None, to_dt=None):
+    data = {}
+    def ensure(it, code='', group='', unit=''):
+        it = str(it or '').strip()
+        if not it:
+            return None
+        if item != 'All' and it != item:
+            return None
+        data.setdefault(it, {'Item Name': it, 'Item Code': code, 'Stock Group': group, 'Unit': unit, 'Opening Qty':0.0, 'Inward Qty':0.0, 'Outward Qty':0.0, 'Closing Qty':0.0, 'Rate':0.0, 'Value':0.0})
+        return data[it]
+    try:
+        masters = _p38_filter_client(_p38_safe_load('stock_ledgers'))
+        for _, r in masters.iterrows():
+            rec = ensure(_p38_first(r, ['item_name'], ''), _p38_first(r, ['item_code'], ''), _p38_first(r, ['stock_group'], ''), _p38_first(r, ['unit'], ''))
+            if rec is not None:
+                rec['Opening Qty'] += _p38_num(_p38_first(r, ['opening_qty'], 0)); rec['Rate'] = _p38_num(_p38_first(r, ['opening_rate','rate'], rec['Rate']))
+    except Exception: pass
+    source_specs = [
+        ('purchase', ['invoice_date','date'], ['item_name'], 'Inward Qty', ['qty'], ['rate']),
+        ('sales', ['invoice_date','date'], ['item_name'], 'Outward Qty', ['qty'], ['rate']),
+        ('consumption_entries', ['entry_date','date'], ['rm_item','item_name'], 'Outward Qty', ['consumed_qty','qty'], ['rate']),
+        ('fg_entries', ['entry_date','date'], ['fg_item','item_name'], 'Inward Qty', ['qty','produced_qty'], ['rate']),
+        ('stock_raw', ['entry_date','date'], ['item_name'], None, None, ['rate']),
+        ('stock_fg', ['entry_date','date'], ['item_name'], None, None, ['rate']),
+        ('stock_vouchers', ['voucher_date','entry_date','date'], ['item_name'], None, None, ['rate']),
+    ]
+    for key, date_cols, item_cols, qty_side, qty_cols, rate_cols in source_specs:
+        try:
+            df = _p38_filter_client(_p38_safe_load(key))
+            if df.empty: continue
+            for _, r in df.iterrows():
+                dt = _p38_first(r, date_cols, '')
+                if from_dt and to_dt and not _p38_date_ok(dt, from_dt, to_dt): continue
+                rec = ensure(_p38_first(r, item_cols, ''), _p38_first(r, ['item_code'], ''), _p38_first(r, ['stock_group'], ''), _p38_first(r, ['unit'], ''))
+                if rec is None: continue
+                if qty_side:
+                    rec[qty_side] += _p38_num(_p38_first(r, qty_cols, 0))
+                else:
+                    rec['Opening Qty'] += _p38_num(_p38_first(r, ['opening_qty'], 0))
+                    rec['Inward Qty'] += _p38_num(_p38_first(r, ['inward_qty','production_qty','input_qty'], 0))
+                    rec['Outward Qty'] += _p38_num(_p38_first(r, ['outward_qty','sales_qty','output_qty'], 0))
+                rate = _p38_num(_p38_first(r, rate_cols, 0))
+                if rate: rec['Rate'] = rate
+        except Exception: pass
+    for rec in data.values():
+        rec['Closing Qty'] = round(rec['Opening Qty'] + rec['Inward Qty'] - rec['Outward Qty'], 2)
+        rec['Value'] = round(rec['Closing Qty'] * rec.get('Rate', 0), 2)
+    return pd.DataFrame(list(data.values())) if data else pd.DataFrame(columns=['Item Name','Item Code','Stock Group','Unit','Opening Qty','Inward Qty','Outward Qty','Closing Qty','Rate','Value'])
+
+def p38_consumption_report_df(item='All', from_dt=None, to_dt=None):
+    rows=[]
+    try:
+        df=_p38_filter_client(_p38_safe_load('consumption_entries'))
+        for _, r in df.iterrows():
+            dt=_p38_first(r,['entry_date','date'],'')
+            if from_dt and to_dt and not _p38_date_ok(dt,from_dt,to_dt): continue
+            it=str(_p38_first(r,['rm_item','item_name'],'')).strip()
+            if item!='All' and it!=item: continue
+            rows.append({'Date':dt,'Entry No':_p38_first(r,['entry_no','document_no'],''),'Production Order No':_p38_first(r,['order_no','production_order_no'],''),'Raw Material / Item':it,'Consumed Qty':_p38_num(_p38_first(r,['consumed_qty','qty'],0)),'Rate':_p38_num(_p38_first(r,['rate'],0)),'Amount':_p38_num(_p38_first(r,['amount'],0)),'Warehouse':_p38_first(r,['warehouse'],''),'Remarks':_p38_first(r,['remarks'],'')})
+    except Exception: pass
+    return pd.DataFrame(rows, columns=['Date','Entry No','Production Order No','Raw Material / Item','Consumed Qty','Rate','Amount','Warehouse','Remarks'])
+
+def p38_purchase_report_df(party='All', from_dt=None, to_dt=None):
+    rows=[]
+    try:
+        df=_p38_filter_client(_p38_safe_load('purchase'))
+        for _, r in df.iterrows():
+            dt=_p38_first(r,['invoice_date','date'],'')
+            if from_dt and to_dt and not _p38_date_ok(dt,from_dt,to_dt): continue
+            p=str(_p38_first(r,['supplier_name','vendor_name','party_name'],'')).strip()
+            if party!='All' and p!=party: continue
+            rows.append({'Date':dt,'Purchase Bill No':_p38_first(r,['invoice_no','bill_no','voucher_no'],''),'Vendor / Supplier':p,'GSTIN':_p38_first(r,['gstin','gst_no'],''),'Item':_p38_first(r,['item_name'],''),'Qty':_p38_num(_p38_first(r,['qty'],0)),'Rate':_p38_num(_p38_first(r,['rate'],0)),'Taxable Value':_p38_num(_p38_first(r,['taxable_value'],0)),'CGST':_p38_num(_p38_first(r,['cgst'],0)),'SGST':_p38_num(_p38_first(r,['sgst'],0)),'IGST':_p38_num(_p38_first(r,['igst'],0)),'Total Value':_p38_num(_p38_first(r,['total_value','total_amount'],0)),'Remarks':_p38_first(r,['remarks'],'')})
+    except Exception: pass
+    return pd.DataFrame(rows)
+
+def p38_sales_report_df(party='All', from_dt=None, to_dt=None):
+    rows=[]
+    try:
+        df=_p38_filter_client(_p38_safe_load('sales'))
+        for _, r in df.iterrows():
+            dt=_p38_first(r,['invoice_date','date'],'')
+            if from_dt and to_dt and not _p38_date_ok(dt,from_dt,to_dt): continue
+            p=str(_p38_first(r,['customer_name','party_name'],'')).strip()
+            if party!='All' and p!=party: continue
+            rows.append({'Date':dt,'Sales Invoice No':_p38_first(r,['invoice_no','voucher_no'],''),'Customer':p,'GSTIN':_p38_first(r,['gstin','gst_no'],''),'Item':_p38_first(r,['item_name'],''),'Qty':_p38_num(_p38_first(r,['qty'],0)),'Rate':_p38_num(_p38_first(r,['rate'],0)),'Taxable Value':_p38_num(_p38_first(r,['taxable_value'],0)),'CGST':_p38_num(_p38_first(r,['cgst'],0)),'SGST':_p38_num(_p38_first(r,['sgst'],0)),'IGST':_p38_num(_p38_first(r,['igst'],0)),'Total Value':_p38_num(_p38_first(r,['total_value','total_amount'],0)),'Remarks':_p38_first(r,['remarks'],'')})
+    except Exception: pass
+    return pd.DataFrame(rows)
+
+def _p38_options_from_table(table_key, cols):
+    opts=['All']
+    try:
+        df=_p38_filter_client(_p38_safe_load(table_key))
+        vals=[]
+        if not df.empty:
+            for c in cols:
+                if c in df.columns:
+                    vals += df[c].dropna().astype(str).tolist()
+        opts += sorted(list(dict.fromkeys([v for v in vals if v.strip() and v!='All'])))
+    except Exception:
+        pass
+    return opts
+
+def p38_report_screen(report_title):
+    show_header(f"{module_prefix(report_title)} {report_title}", "section-rep")
+    c1,c2,c3=st.columns(3)
+    from_dt=c1.date_input('From Date', value=india_now().date().replace(day=1), format='DD-MM-YYYY', key=f'p38_from_{report_title}')
+    to_dt=c2.date_input('To Date', value=india_now().date(), format='DD-MM-YYYY', key=f'p38_to_{report_title}')
+    search=c3.text_input('Search / Ledger / Party / Item', key=f'p38_search_{report_title}')
+
+    selected='All'
+    if report_title == 'Ledger Report':
+        selected = st.selectbox('Select Ledger', _p38_options_from_table('ledgers', ['ledger_name']), key='p38_ledger_select')
+        df = p38_ledger_report_df(selected, from_dt, to_dt)
+        if not df.empty:
+            total_dr = round(df[df['Date'].astype(str)!='TOTAL']['Dr Amount'].apply(_p38_num).sum(),2)
+            total_cr = round(df[df['Date'].astype(str)!='TOTAL']['Cr Amount'].apply(_p38_num).sum(),2)
+            net = total_dr-total_cr
+            st.info(f"Ledger: {selected} | Total Dr: ₹ {total_dr:,.2f} | Total Cr: ₹ {total_cr:,.2f} | Net Balance: ₹ {abs(net):,.2f} {'Dr' if net >= 0 else 'Cr'}")
+    elif report_title == 'Stock Detail Report':
+        selected = st.selectbox('Select Item', _p38_options_from_table('stock_ledgers', ['item_name']), key='p38_stock_select')
+        df = p38_stock_detail_df(selected, from_dt, to_dt)
+        if not df.empty:
+            st.info(f"Closing Qty: {df['Closing Qty'].apply(_p38_num).sum():,.2f} | Stock Value: ₹ {df['Value'].apply(_p38_num).sum():,.2f}")
+    elif report_title == 'Consumption Report':
+        selected = st.selectbox('Select Raw Material / Item', _p38_options_from_table('stock_ledgers', ['item_name']), key='p38_cons_select')
+        df = p38_consumption_report_df(selected, from_dt, to_dt)
+        if not df.empty:
+            st.info(f"Total Consumption Qty: {df['Consumed Qty'].apply(_p38_num).sum():,.2f} | Amount: ₹ {df['Amount'].apply(_p38_num).sum():,.2f}")
+    elif report_title == 'Purchase Report':
+        selected = st.selectbox('Select Vendor / Supplier', _p38_options_from_table('purchase', ['supplier_name','vendor_name','party_name']), key='p38_purchase_select')
+        df = p38_purchase_report_df(selected, from_dt, to_dt)
+        if not df.empty:
+            st.info(f"Total Purchase Value: ₹ {df['Total Value'].apply(_p38_num).sum():,.2f}")
+    elif report_title == 'Sales Report':
+        selected = st.selectbox('Select Customer', _p38_options_from_table('sales', ['customer_name','party_name']), key='p38_sales_select')
+        df = p38_sales_report_df(selected, from_dt, to_dt)
+        if not df.empty:
+            st.info(f"Total Sales Value: ₹ {df['Total Value'].apply(_p38_num).sum():,.2f}")
+    else:
+        return report_module_screen(report_title)
+
+    if search and not df.empty:
+        df = filter_dataframe(df, search)
+    st.caption(f"Report: {report_title} | Selected: {selected} | Rows: {len(df)}")
+    st.dataframe(df, use_container_width=True)
+    c1,c2,c3=st.columns(3)
+    c1.download_button('Export CSV', df.to_csv(index=False).encode('utf-8'), f"{report_title.replace(' ','_')}.csv", 'text/csv', use_container_width=True, key=f'p38_csv_{report_title}')
+    c2.download_button('Export Excel', to_excel_bytes(df), f"{report_title.replace(' ','_')}.xlsx", 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', use_container_width=True, key=f'p38_xlsx_{report_title}')
+    if c3.button('Print Report', use_container_width=True, key=f'p38_print_{report_title}'):
+        print_dataframe_preview(report_title, df, key_prefix=f'p38_print_{report_title}')
+
+try:
+    for _r in ['Ledger Report','Stock Detail Report','Consumption Report','Purchase Report','Sales Report']:
+        if _r not in ONLINE_MODULE_GROUPS.get('Reports', []):
+            ONLINE_MODULE_GROUPS.setdefault('Reports', []).append(_r)
+except Exception:
+    pass
+
+try:
+    _OLD_GET_MODULE_MAPPING_PATCH38_ONLINE = get_module_mapping
+    def get_module_mapping():
+        base = _OLD_GET_MODULE_MAPPING_PATCH38_ONLINE()
+        for _r in ['Ledger Report','Stock Detail Report','Consumption Report','Purchase Report','Sales Report']:
+            base[_r] = (lambda title=_r: p38_report_screen(title))
+        return base
+except Exception:
+    pass
+# ================= END PATCH 38 ONLINE =================
+
 if "logged_in" not in st.session_state:
     login_page()
 else:
