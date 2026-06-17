@@ -3153,11 +3153,34 @@ def calculation_book():
     show_table_with_edit_delete("calculation_books", load_table("calculation_books", 100), "Saved Calculation Books")
 
 
-def _quote_role():
-    """Vendor/business-user quotation portal role only.
-    IMPORTANT: Quotation User is an internal client role, so it must NOT be locked to only Quotation module.
+def _rbm_is_business_vendor_login():
+    """True only for quotation business/vendor usernames created in Quotation Business Users.
+    This separates real vendors from internal/client users who may have role name 'Quotation User'.
     """
-    return st.session_state.get("role") in ["Vendor", "Supplier", "Business User"]
+    try:
+        role = str(st.session_state.get("role", "") or "").strip()
+        username = str(st.session_state.get("username", "") or "").strip()
+        if role in ["Vendor", "Supplier", "Business User"]:
+            return True
+        if not username:
+            return False
+        q = supabase.table(TABLES["quotation_business_users"]).select("username,status").eq("username", username)
+        if not is_super_admin():
+            q = q.eq("client_code", get_client_code())
+        df = safe_df(q.limit(1).execute().data)
+        if df.empty:
+            return False
+        if "status" in df.columns:
+            status = str(df.iloc[0].get("status", "Active") or "Active").strip().lower()
+            if status in ["inactive", "deleted", "disabled", "no", "false", "0"]:
+                return False
+        return True
+    except Exception:
+        return str(st.session_state.get("role", "") or "").strip() in ["Vendor", "Supplier", "Business User"]
+
+def _quote_role():
+    # Vendor/business portal access. Do NOT lock every internal 'Quotation User' role.
+    return _rbm_is_business_vendor_login()
 
 
 def _quotation_file_download(row):
@@ -3319,7 +3342,7 @@ def quotation_module():
     role = st.session_state.get("role", "")
     username = current_user()
 
-    if role in ["Admin", "Super Admin"]:
+    if role in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "Our Requirements",
             "Business Users",
@@ -4789,9 +4812,7 @@ def default_permission(module_name, action):
     if role == "Inventory User":
         return module_name in ONLINE_MODULE_GROUPS.get("Inventory", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "Quotation User":
-        # Quotation User is an internal client user. Do not restrict menu to only Quotation.
-        # Client Master tick + Role Permission / Role Based Security will decide final access.
-        return action in ["view", "add", "edit", "print", "export"]
+        return module_name in ONLINE_MODULE_GROUPS.get("Quotation", []) and action in ["view", "add", "edit", "print", "export"]
     if role in ["Vendor", "Supplier", "Business User"]:
         return module_name in ONLINE_MODULE_GROUPS.get("Quotation", []) and action in ["view", "add", "edit", "print", "export"]
     if role == "User":
@@ -4881,17 +4902,7 @@ def role_based_security_control():
         st.warning("No username found for this client. First create username in User Management.")
         return
 
-    # Show only active, non-deleted usernames in Role Based Security dropdown.
-    try:
-        if "status" in users_df.columns:
-            users_df = users_df[users_df["status"].astype(str).str.lower().eq("active")]
-        if "is_deleted" in users_df.columns:
-            users_df = users_df[~users_df["is_deleted"].astype(str).str.lower().isin(["true", "1", "yes", "deleted"])]
-        if "deleted" in users_df.columns:
-            users_df = users_df[~users_df["deleted"].astype(str).str.lower().isin(["true", "1", "yes", "deleted"])]
-    except Exception:
-        pass
-    usernames = [u for u in users_df["username"].dropna().astype(str).unique().tolist() if u.strip() and not u.strip().lower().startswith("sample username")]
+    usernames = users_df["username"].dropna().astype(str).unique().tolist()
     if not usernames:
         st.warning("No username found for this client. First create username in User Management.")
         return
@@ -7646,7 +7657,7 @@ def detailed_group_allowed(group_name, client_code=None):
 
 def build_group_list():
     role = str(st.session_state.get("role", ""))
-    if role in ["Vendor", "Supplier", "Business User"]:
+    if role in ["Quotation User", "Vendor", "Supplier", "Business User"]:
         return ["Quotation"]
     if (not is_developer_or_super_admin()) and _quotation_only_from_session():
         return ["Quotation"]
@@ -7676,10 +7687,9 @@ def build_group_list():
 def get_menu_modules(group):
     role = str(st.session_state.get("role", ""))
     group = str(group or "Dashboard")
-    if role in ["Vendor", "Supplier", "Business User"]:
-        # Vendor/business login must see only one sidebar module: Quotation.
-        # Assigned Requirements / Submitted Quotations / Negotiation Requests remain tabs inside Quotation.
-        return ["Quotation"]
+    if role in ["Quotation User", "Vendor", "Supplier", "Business User"]:
+        modules = [m for m in ONLINE_MODULE_GROUPS.get("Quotation", []) if has_permission(m, "view") or m == "Quotation"]
+        return modules or ["Quotation"]
     modules = list(ONLINE_MODULE_GROUPS.get(group, []))
     modules = [m for m in modules if role_can_see_module(m)]
     if not is_developer_or_super_admin():
@@ -7736,6 +7746,306 @@ def render_custom_menu():
     return group, choice
 
 # ================= END PATCH 41 =================
+
+
+# ================= RBM ONLINE PATCH 46: ROLE PERMISSION FULL MODULE RESTORE =================
+# Fixes:
+# 1) Developer / Super Admin: Role Permission Control shows ALL modules, even when selected client has only Quotation enabled.
+# 2) Client Super Admin / Admin: Role Permission Control remains limited to client enabled/ticked modules.
+# 3) Role Based Security username dropdown shows only Active users and hides deleted/inactive/sample users.
+# 4) Vendor / Business User login shows only one module: Quotation. Tabs remain inside Quotation Portal.
+
+RBM_SAMPLE_USERNAMES_PATCH46 = {"sample username 1", "sample username 2", "sample user", "sample"}
+
+def _rbm_patch46_is_active_user_row(row):
+    try:
+        status = str(row.get("status", "Active") or "Active").strip().lower()
+        username = str(row.get("username", "") or "").strip()
+        role = str(row.get("role", "") or "").strip().lower()
+        if not username:
+            return False
+        if username.lower() in RBM_SAMPLE_USERNAMES_PATCH46:
+            return False
+        if status in ["inactive", "deleted", "delete", "removed", "disabled", "no", "false", "0"]:
+            return False
+        # Hide vendor/business users from internal permission username list only when assigning employee/user security.
+        # They are controlled inside Quotation Portal.
+        return True
+    except Exception:
+        return False
+
+def _rbm_patch46_all_modules_for_admin_permission():
+    modules = []
+    try:
+        if "ERP_MODULES" in globals() and ERP_MODULES:
+            modules.extend([m for m in ERP_MODULES if m and m != "No module available"])
+    except Exception:
+        pass
+    try:
+        for g, mods in ONLINE_MODULE_GROUPS.items():
+            modules.extend(list(mods or []))
+    except Exception:
+        pass
+    # Keep order, remove blanks.
+    return list(dict.fromkeys([str(m).strip() for m in modules if str(m).strip() and str(m).strip() != "No module available"])) or ["Dashboard"]
+
+def _rbm_patch46_modules_for_role_permission(selected_client):
+    # IMPORTANT: Developer/Super Admin must see full list here to assign permissions.
+    # Do not filter by selected client module permissions.
+    if is_developer_or_super_admin():
+        return _rbm_patch46_all_modules_for_admin_permission()
+
+    out = []
+    for module in _rbm_patch46_all_modules_for_admin_permission():
+        if module in SUPER_ADMIN_ONLY_MODULES or module in DEVELOPER_ONLY_MODULES:
+            continue
+        try:
+            if not module_enabled_for_client_code(module, selected_client):
+                continue
+        except Exception:
+            pass
+        out.append(module)
+    return out or ["Dashboard"]
+
+def _rbm_username_list_for_client(selected_client):
+    """Active usernames only for Role Based Security dropdown."""
+    usernames = []
+    try:
+        data = supabase.table("users").select("username,client_code,role,status").execute().data or []
+        df = safe_df(data)
+    except Exception:
+        try:
+            df = safe_df(load_table("users", 5000))
+        except Exception:
+            df = pd.DataFrame()
+
+    if not df.empty and "username" in df.columns:
+        try:
+            df2 = df.copy()
+            if "client_code" in df2.columns and str(selected_client) not in ["", "All"]:
+                df2 = df2[df2["client_code"].astype(str).str.strip() == str(selected_client).strip()]
+            if not is_super_admin() and "role" in df2.columns:
+                df2 = df2[~df2["role"].astype(str).isin(["Developer", "Super Admin"])]
+            rows = df2.to_dict("records")
+            usernames = [str(r.get("username", "")).strip() for r in rows if _rbm_patch46_is_active_user_row(r)]
+        except Exception:
+            usernames = []
+    return list(dict.fromkeys(usernames))
+
+def role_permission_control():
+    show_header("Role-wise Permission Control", "section-admin")
+    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
+        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Permission Control.")
+        return
+
+    if is_super_admin():
+        try:
+            clients_df = load_table("clients", 1000)
+            client_codes = clients_df["client_code"].dropna().astype(str).tolist() if not clients_df.empty and "client_code" in clients_df.columns else ["RBM"]
+        except Exception:
+            client_codes = ["RBM"]
+        if "RBM" not in client_codes:
+            client_codes = ["RBM"] + client_codes
+        selected_client = st.selectbox("Select Client", list(dict.fromkeys(client_codes)), key="perm_client_patch46")
+    else:
+        selected_client = get_client_code()
+        st.info(f"Permission setting for your own business only: {selected_client}")
+
+    current_role = st.session_state.get("role", "")
+    if current_role in ["Developer", "Super Admin"]:
+        assignable_roles = ["Client Super Admin", "Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Manager", "Approver", "Viewer"]
+    elif current_role == "Client Super Admin":
+        assignable_roles = ["Admin", "User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Manager", "Approver", "Viewer"]
+    else:
+        assignable_roles = ["User", "Quotation User", "Accounts User", "HR User", "Inventory User", "Viewer"]
+
+    role_name = st.selectbox("Select Role", assignable_roles, key="perm_role_patch46")
+
+    try:
+        existing = safe_df(supabase.table("role_permissions").select("*").eq("client_code", selected_client).eq("role_name", role_name).execute().data)
+    except Exception:
+        existing = pd.DataFrame()
+        st.warning("role_permissions table missing/not accessible. Run SQL patch if save is required.")
+
+    modules = _rbm_patch46_modules_for_role_permission(selected_client)
+    perm_rows = []
+    with st.form("role_permission_form_patch46"):
+        st.markdown("### Module Permissions")
+        header = st.columns([2.5,1,1,1,1,1,1,1,1])
+        header[0].markdown("**Module**")
+        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+            header[i].markdown(f"**{act.title()}**")
+
+        for module in modules:
+            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES and module != "Client Master":
+                continue
+            current = existing[existing["module_name"].astype(str) == str(module)] if (not existing.empty and "module_name" in existing.columns) else pd.DataFrame()
+            cols = st.columns([2.5,1,1,1,1,1,1,1,1])
+            cols[0].write(module)
+            row = {"module_name": module}
+            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+                colname = f"can_{act}"
+                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if (not current.empty and colname in current.columns) else default_permission(module, act)
+                row[colname] = cols[i].checkbox("", value=default_val, key=f"perm46_{selected_client}_{role_name}_{module}_{act}")
+            perm_rows.append(row)
+
+        save_btn = st.form_submit_button("Save Role Permissions", use_container_width=True)
+
+    if save_btn:
+        try:
+            supabase.table("role_permissions").delete().eq("client_code", selected_client).eq("role_name", role_name).execute()
+            rows = []
+            for r in perm_rows:
+                rec = {"client_code": selected_client, "role_name": role_name, "created_by": current_user()}
+                rec.update(r)
+                rows.append(rec)
+            if rows:
+                supabase.table("role_permissions").insert(rows).execute()
+            write_audit_log("Role Permission Control", "UPDATE", "", f"Saved role permissions for {selected_client} / {role_name}")
+            st.success("Role permissions saved successfully.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Unable to save Role Permission Control: {e}")
+
+    st.divider()
+    try:
+        show_table_with_edit_delete("role_permissions", load_table("role_permissions", 2000), "Saved Role Permissions")
+    except Exception:
+        st.info("Saved Role Permissions list will show after role_permissions table is created.")
+
+def role_based_security_control():
+    show_header("Role Based Security", "section-admin")
+    if st.session_state.get("role") not in ["Developer", "Super Admin", "Client Super Admin", "Admin"]:
+        st.warning("Only Developer, Super Admin, Client Super Admin or Admin can access Role Based Security.")
+        return
+
+    st.info("Role Based Security = username/login wise permission. Same as Role Permission Control; Select Role dropdown shows only ACTIVE usernames created in User Management.")
+
+    selected_client = st.selectbox("Select Client", _rbm_client_code_options_for_security(), key="rbs_fixed_client_patch46")
+    usernames = _rbm_username_list_for_client(selected_client)
+    if not usernames:
+        st.warning("No active username found for this client. First create active username in User Management.")
+        return
+
+    selected_username = st.selectbox("Select Username", usernames, key="rbs_fixed_username_patch46")
+
+    try:
+        udata = supabase.table("users").select("username,role,status").eq("client_code", selected_client).eq("username", selected_username).limit(1).execute().data or []
+        udf = safe_df(udata)
+        if not udf.empty and "role" in udf.columns:
+            st.caption(f"Selected Username: {selected_username} | Actual Role: {udf.iloc[0].get('role','')}")
+    except Exception:
+        pass
+
+    try:
+        existing = safe_df(supabase.table("user_permissions").select("*").eq("client_code", selected_client).eq("username", selected_username).execute().data)
+    except Exception:
+        existing = pd.DataFrame()
+        st.warning("user_permissions table missing or not accessible. Run supabase SQL patch once if save is required.")
+
+    modules = _rbm_patch46_modules_for_role_permission(selected_client)
+    perm_rows = []
+    with st.form("role_based_security_exact_username_form_patch46"):
+        st.markdown("### Module Permissions")
+        header = st.columns([2.5,1,1,1,1,1,1,1,1])
+        header[0].markdown("**Module**")
+        for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+            header[i].markdown(f"**{act.title()}**")
+
+        for module in modules:
+            if (not is_super_admin()) and module in SUPER_ADMIN_ONLY_MODULES and module != "Client Master":
+                continue
+            current = existing[existing["module_name"].astype(str) == str(module)] if (not existing.empty and "module_name" in existing.columns) else pd.DataFrame()
+            cols = st.columns([2.5,1,1,1,1,1,1,1,1])
+            cols[0].write(module)
+            row = {"module_name": module}
+            for i, act in enumerate(PERMISSION_ACTIONS, start=1):
+                colname = f"can_{act}"
+                default_val = bool(current.iloc[0].get(colname, default_permission(module, act))) if (not current.empty and colname in current.columns) else default_permission(module, act)
+                row[colname] = cols[i].checkbox("", value=default_val, key=f"rbs46_{selected_client}_{selected_username}_{module}_{act}")
+            perm_rows.append(row)
+        save_btn = st.form_submit_button("Save Role Based Security", use_container_width=True)
+
+    if save_btn:
+        try:
+            supabase.table("user_permissions").delete().eq("client_code", selected_client).eq("username", selected_username).execute()
+            rows = []
+            for r in perm_rows:
+                rec = {"client_code": selected_client, "username": selected_username, "created_by": current_user()}
+                rec.update(r)
+                rows.append(rec)
+            if rows:
+                supabase.table("user_permissions").insert(rows).execute()
+            write_audit_log("Role Based Security", "UPDATE", "", f"Saved username wise permission for {selected_client} / {selected_username}")
+            st.success("Role Based Security saved successfully for selected username.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Unable to save Role Based Security: {e}")
+
+    st.divider()
+    try:
+        show_table_with_edit_delete("user_permissions", load_table("user_permissions", 2000), "Saved Role Based Security")
+    except Exception:
+        st.info("Saved Role Based Security list will show after user_permissions table is created.")
+
+def build_group_list():
+    role = str(st.session_state.get("role", ""))
+    # Vendor/Business login must show only one group: Quotation.
+    if _quote_role():
+        return ["Quotation"]
+    # Internal client users show groups/modules allowed by permissions, not vendor lockdown.
+    if is_developer_or_super_admin():
+        return list(ONLINE_MODULE_GROUPS.keys())
+    code = get_client_code()
+    mp = client_detailed_permission_map(code)
+    groups = []
+    for g, mods in ONLINE_MODULE_GROUPS.items():
+        if g == "Dashboard":
+            groups.append(g)
+            continue
+        det = detailed_group_allowed(g, code)
+        if det is False:
+            continue
+        if mp:
+            visible = [m for m in mods if role_can_see_module(m) and bool(mp.get(m, False)) and has_permission(m, "view")]
+            if visible:
+                groups.append(g)
+        else:
+            if group_enabled_for_client(g):
+                visible = [m for m in mods if role_can_see_module(m) and module_enabled_for_current_client(m) and has_permission(m, "view")]
+                if visible:
+                    groups.append(g)
+    return groups or ["Dashboard"]
+
+def get_menu_modules(group):
+    role = str(st.session_state.get("role", ""))
+    group = str(group or "Dashboard")
+    # Vendor/Business User must see only Quotation module. Its tabs are inside the Quotation screen.
+    if _quote_role():
+        return ["Quotation"]
+    modules = list(ONLINE_MODULE_GROUPS.get(group, []))
+    modules = [m for m in modules if role_can_see_module(m)]
+    if is_developer_or_super_admin():
+        return modules or (["Dashboard"] if group == "Dashboard" else [])
+    mp = client_detailed_permission_map(get_client_code())
+    if mp:
+        modules = [m for m in modules if m == "Dashboard" or bool(mp.get(m, False))]
+    else:
+        modules = [m for m in modules if module_enabled_for_current_client(m)]
+    modules = [m for m in modules if has_permission(m, "view")]
+    return modules or (["Dashboard"] if group == "Dashboard" else [])
+
+try:
+    _OLD_GET_MODULE_MAPPING_PATCH46 = get_module_mapping
+    def get_module_mapping():
+        base = _OLD_GET_MODULE_MAPPING_PATCH46()
+        base["Role Permission Control"] = role_permission_control
+        base["Role Based Security"] = role_based_security_control
+        return base
+except Exception:
+    pass
+
+# ================= END RBM ONLINE PATCH 46 =================
 
 if "logged_in" not in st.session_state:
     login_page()
